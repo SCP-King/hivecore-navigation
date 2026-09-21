@@ -1,0 +1,20 @@
+# dynacbf_gate 定位就绪门控参数（真机）
+# cmd_vel_in  = 乙方控制器输出的速度（本节点输入，由 launch 重映射）
+# cmd_vel_out = 底盘实际接收的 /cmd_vel（本节点输出）
+/**:
+  ros__parameters:
+    cmd_vel_in: "/cmd_vel_nav"
+    cmd_vel_out: "/cmd_vel"
+
+    # 甲方 SLAM 定位消息（需 source 甲方 overlay 才能导入类型）
+    localization_topic: "/localization_status"
+    map_frame: "map"
+    base_frame: "base_footprint"
+
+    tf_freshness_sec: 1.0
+    odom_freshness_sec: 1.0
+
+    # 配准拟合误差门限：fitness_mse 超过该值视为定位未就绪
+    max_fitness_mse: 0.5
+
+    tick_hz: 10.0
