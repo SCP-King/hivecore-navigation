@@ -275,6 +275,17 @@ class LocalPlanner(Node):
         self.declare_parameter('safe_dist', 1.0)
         self.safe_dist = self.get_parameter('safe_dist').value
 
+        # 【真机机身】平滑超椭圆机身参数（前轴/后轴/半宽/指数），barrier.py 按朝向展开。
+        # 数值来自实测 footprint + 真实 TF，保守包住 0.94m 长机身（见 dcbf_params.yaml）。
+        self.declare_parameter('robot_a_front', 0.73)
+        self.robot_a_front = self.get_parameter('robot_a_front').value
+        self.declare_parameter('robot_a_rear', 0.89)
+        self.robot_a_rear = self.get_parameter('robot_a_rear').value
+        self.declare_parameter('robot_b', 0.30)
+        self.robot_b = self.get_parameter('robot_b').value
+        self.declare_parameter('robot_p', 4.0)
+        self.robot_p = self.get_parameter('robot_p').value
+
         self.declare_parameter('gamma_k', 0.0)
         self.gamma_k = self.get_parameter('gamma_k').value
 
@@ -309,6 +320,15 @@ class LocalPlanner(Node):
                 ('goal_tolerance', self.goal_tolerance)):
             if not np.isfinite(value) or value <= 0.0:
                 raise ValueError('%s must be finite and positive' % name)
+        for name, value in (
+                ('robot_a_front', self.robot_a_front),
+                ('robot_a_rear', self.robot_a_rear),
+                ('robot_b', self.robot_b),
+                ('robot_p', self.robot_p)):
+            if not np.isfinite(value) or value <= 0.0:
+                raise ValueError('%s must be finite and positive' % name)
+        if self.robot_p < 2.0 or self.robot_b >= self.robot_a_rear:
+            raise ValueError('robot_p must be >= 2 and robot_b < robot_a_rear')
 
         self.init_control = np.zeros([self.init_N,2])
 
@@ -359,7 +379,9 @@ class LocalPlanner(Node):
         def f(x_, u_): return ca.vertcat(*[u_[0] * ca.cos(x_[2]), u_[0] * ca.sin(x_[2]), u_[1]])
 
         def h(curpos_, ob_):
-            return ellipse_barrier(curpos_, ob_, self.safe_dist)
+            return ellipse_barrier(curpos_, ob_, self.safe_dist,
+                                   self.robot_a_front, self.robot_a_rear,
+                                   self.robot_b, self.robot_p)
 
         def o(curpos_, ob_):
             ob_vec = ca.MX([ob_[0], ob_[1]])

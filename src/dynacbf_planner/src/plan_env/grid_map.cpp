@@ -54,6 +54,9 @@ void GridMap::initMap(rclcpp::Node *node)
   load_parameter(node_, "grid_map.obstacles_inflation_z_down", mp_.obstacles_inflation_z_down, -1.0);
   load_parameter(node_, "grid_map.double_cylinder_radius", mp_.double_cylinder_radius_, -1.0);
   load_parameter(node_, "grid_map.double_cylinder_offset", mp_.double_cylinder_offset_, 0.0);
+  // 【真机机身】默认回退到旧的对称双圆盘 offset（兼容未配置时的旧行为）
+  load_parameter(node_, "grid_map.footprint_x_min", mp_.footprint_x_min_, -mp_.double_cylinder_offset_);
+  load_parameter(node_, "grid_map.footprint_x_max", mp_.footprint_x_max_, mp_.double_cylinder_offset_);
   load_parameter(node_, "grid_map.map_sliding_en", mp_.map_sliding_en_, true);
   load_parameter(node_, "grid_map.map_sliding_thresh", mp_.map_sliding_thresh_, mp_.resolution_);
 
@@ -119,6 +122,8 @@ void GridMap::initMap(rclcpp::Node *node)
   require_finite_in_range("grid_map.obstacles_inflation_z_down", mp_.obstacles_inflation_z_down, 0.0, z_size);
   require_finite_in_range("grid_map.double_cylinder_radius", mp_.double_cylinder_radius_, 0.0, 1e3);
   require_finite_in_range("grid_map.double_cylinder_offset", mp_.double_cylinder_offset_, 0.0, 1e3);
+  require_finite_in_range("grid_map.footprint_x_min", mp_.footprint_x_min_, -1e3, 0.0);
+  require_finite_in_range("grid_map.footprint_x_max", mp_.footprint_x_max_, 0.0, 1e3);
   require_finite_in_range("grid_map.map_sliding_thresh", mp_.map_sliding_thresh_, 0.0, 1e3);
   require_finite_in_range("grid_map.ground_height", mp_.ground_height_, -1e4, 1e4);
   require_finite_in_range("grid_map.max_ray_length", mp_.max_ray_length_, 1e-3, 1e4);

@@ -44,9 +44,22 @@
     MPC_N: 25
     MPC_step_size: 0.25
 
-    # Clearance from the predicted ellipse boundary, not from its center.
-    # 0.30 m covers the Burger footprint and a conservative tracking margin.
-    safe_dist: 0.3
+    # 【真机机身】障碍椭圆偏置 = 机体朝向相关半径 + safe_dist。
+    # 机体用平滑超椭圆(squircle)表示，前/后/侧不同，保守包住实测
+    # 0.94m长×0.49m宽机身（参考基座 base_link，前后缘由测量+真实TF得出）。
+    # barrier.py 的 ellipse_barrier 按“障碍→机器人”方向在机体坐标系取半径。
+    # 数值经数值验证：squircle 各方向均 ≥ 碰撞胶囊，且平滑可导（供 MPC/IPOPT）。
+    # 前半径(相对 base_link)： front 0.386+余量 → 0.73（含胶囊半径 0.28+0.02 包络）
+    # 后半径：                  rear  0.552+余量 → 0.89
+    # 侧半径（半宽 0.243+余量):                     → 0.30
+    robot_a_front: 0.73
+    robot_a_rear: 0.89
+    robot_b: 0.30
+    robot_p: 4.0
+
+    # 附加安全余量（旧 safe_dist=0.3 是"圆盘机身半径"；现机身由上面 squircle 承担，
+    # 此值仅作跟踪/TF 误差的冗余余量）。须 >0。
+    safe_dist: 0.1
     gamma_k: 0.3
     goal_tolerance: 0.1
 

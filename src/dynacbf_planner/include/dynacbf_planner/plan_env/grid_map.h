@@ -63,6 +63,10 @@ struct MappingParameters {
   double resolution_, resolution_inv_;
   double obstacles_inflation_z_up, obstacles_inflation_z_down;
   double double_cylinder_radius_, double_cylinder_offset_;
+  // 【真机机身】机器人沿航向的前/后缘（相对 base_link，m）。用于 getInflateOccupancy
+  // 的胶囊机身采样：中心线 [footprint_x_min_, footprint_x_max_]，宽度由
+  // double_cylinder_radius_（障碍膨胀半径=半宽）承担。
+  double footprint_x_min_, footprint_x_max_;
   bool map_sliding_en_;
   double map_sliding_thresh_;
   int map_sliding_thresh_vox_;
@@ -371,14 +375,21 @@ inline int GridMap::getOccupancy(Eigen::Vector3d pos) {
 }
 
 inline int GridMap::getInflateOccupancy(Eigen::Vector3d pos, double yaw) {
+  // 【真机机身】机器人沿航向的前/后缘（相对 base_link，len=0.94m 实测），
+  // 宽度由障碍膨胀 double_cylinder_radius（=机身半宽）承担 —— "胶囊"模型。
+  // 沿中心线按栅格分辨率逐点采样，任一点落入障碍膨胀区即判碰撞。
   Eigen::Vector3d heading(std::cos(yaw), std::sin(yaw), 0.0);
-  Eigen::Vector3d front = pos + mp_.double_cylinder_offset_ * heading;
-  Eigen::Vector3d rear = pos - mp_.double_cylinder_offset_ * heading;
-
-  int front_occ = getInflateOccupancyFromBuffer(front, md_.occupancy_buffer_inflate_);
-  if (front_occ != 0) return front_occ;
-
-  return getInflateOccupancyFromBuffer(rear, md_.occupancy_buffer_inflate_);
+  const double xmin = mp_.footprint_x_min_;
+  const double xmax = mp_.footprint_x_max_;
+  const double span = xmax - xmin;
+  const int n = std::max(1, static_cast<int>(std::ceil(span / mp_.resolution_)));
+  for (int i = 0; i <= n; ++i) {
+    const double t = xmin + span * static_cast<double>(i) / n;
+    const int occ = getInflateOccupancyFromBuffer(pos + t * heading,
+                                                  md_.occupancy_buffer_inflate_);
+    if (occ != 0) return occ;
+  }
+  return 0;
 }
 
 inline int GridMap::getInflateOccupancyFromBuffer(Eigen::Vector3d pos, const std::vector<char>& buffer) {

@@ -38,6 +38,12 @@
     grid_map.frame_id: "map"
     grid_map.sliding_map_frame_id: "sliding_map"
 
+    # 【真机机身】机器人胶囊碰撞模型（测量+真实TF，参考基座 base_link）
+    #   双圆柱半径 = 障碍膨胀 = 半宽(0.243)+余量；前/后缘见 planner.yaml。
+    grid_map.double_cylinder_radius: 0.28
+    grid_map.footprint_x_min: -0.59
+    grid_map.footprint_x_max: 0.43
+
     # 与运动需求对齐：规划限速 ≤ 1.0 m/s
     manager.max_vel: 1.0
     optimization.max_vel: 1.0

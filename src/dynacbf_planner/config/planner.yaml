@@ -47,9 +47,14 @@ dynacbf_planner_node:
     grid_map.map_sliding_en: true
     # 触发地图滑动的阈值
     grid_map.map_sliding_thresh: 0.2
-    # 双圆柱近似机身模型：在机器人航向前/后各偏移 grid_map.double_cylinder_offset 处，放置半径为 grid_map.double_cylinder_radius 的圆柱近似机身
-    grid_map.double_cylinder_radius: 0.25
-    # 圆柱相对机器人航向的前/后偏移距离
+    # 【真机机身】机器人胶囊模型（相对 base_link，由测量+真实TF得出，len≈0.94m）：
+    #   * 双圆柱半径 = 障碍膨胀半径 = 机身半宽(0.243) + 安全余量(0.037)
+    #   * 前/后缘 = 实际 footprint 前端(+0.386)/后端(-0.552) + 安全余量(0.04)
+    # 碰撞判定见 grid_map.h getInflateOccupancy：沿中心线采样，宽度由膨胀半径承担。
+    grid_map.double_cylinder_radius: 0.28
+    grid_map.footprint_x_min: -0.59
+    grid_map.footprint_x_max: 0.43
+    # 圆柱相对机器人航向的前/后偏移距离（旧双圆盘语义，getInflateOccupancy 已改用 footprint_x_*；仅保留用于兼容/可视化）
     grid_map.double_cylinder_offset: 0.18
     # 机身高度
     grid_map.body_height: 0.4
