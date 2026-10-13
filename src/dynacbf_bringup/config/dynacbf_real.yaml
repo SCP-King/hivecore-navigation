@@ -19,14 +19,18 @@
   ros__parameters:
     # ---- 感知：dynacbf_perception/local_map ----
     # 优先用甲方 SLAM 预处理后的过滤点云；若未起预处理，回落 raw /livox/lidar。
-    # 现场实测无 /livox/lidar/geo_filtered 时，改回 "/livox/lidar"。
-    lidar_topic: "/livox/lidar/geo_filtered"
+    # 甲方 Livox 驱动原始点云（frame=livox_frame）。/livox/lidar/geo_filtered 是
+    # SLAM 栈 preprocessor 产物（需 SLAM 栈+GUI+enable_forward:true），无 SLAM 时不存在。
+    lidar_topic: "/livox/lidar"
 
     # HiveCore 车身 frame 名（以现场 URDF / RSP 为准）
     base_link: "base_link"
-    base_scan: "base_link"
     # PointCloud2 数据本身的 frame_id。已从甲方 preprocessor 配置确认：
     #   scan_frame: "lidar_link"（/livox/lidar/geo_filtered 的输出 frame）
+    # 说明：不再使用仿真残留的 base_scan —— 甲方 URDF 的 TF 链为
+    #   map→base_footprint→base_link→lidar_link，无 base_scan 帧。
+    #   local_map 的 updateTF() 在查不到 map→lidar_frame 时会用
+    #   base_link→lidar_frame 静态 TF 兜底组装，无需额外帧。
     lidar_frame: "lidar_link"
 
     # 全局定位 frame：甲方 SLAM 地图系
@@ -59,9 +63,30 @@
     # bspline_path_sampler 的位姿来源 = 定位 odometry（与 controller 同源）
     odom_topic: "/robot_pose"
 
-    # controller：真机底盘 0.2s 命令超时自动停车。
-    # 阈值必须 < 0.2s，避免"导航觉得还在下指令、底盘却已急停"的振荡。
+    # controller：@deprecated 仅「回退分支」使用（use_plan_sequence=false 时）。
+    # 【2026-10-12 顿挫修复】controller 现按「整条 MPC 控制序列 + 时间索引」执行，
+    # 失效判据改为「序列耗尽（MPC_N × MPC_step_size = 25 × 0.25 = 6.25s）
+    # + plan_hold_extra」，不再用 0.15s 的瞬时新鲜度 —— 实测 100% 的 MPC 更新
+    # 间隔都 > 0.15s，用旧判据必然表现为「动 0.15s → 停几秒」的顿挫。
+    # 需要临时回退到旧行为时把下面的 use_plan_sequence 置 false。
     command_timeout: 0.15
+
+    # ---- 【2026-10-12 顿挫修复】控制序列推进与求解器上限 ----
+    # controller：按时间索引执行整条序列；false = 回退到「只取第 0 拍 + command_timeout」
+    use_plan_sequence: true
+    # 序列耗尽后对末拍线性衰减的余量（秒），避免瞬时急停
+    plan_hold_extra: 0.5
+
+    # local_planner：IPOPT wall-clock 上限（秒），截断最坏情况（实测 max 7.11s）
+    ipopt_max_cpu_time: 0.2
+    # 求解抛异常时取当前迭代点当可用解；仍失败则保留上次可行解（不清零）
+    use_iterate_on_fail: true
+    keep_last_on_fail: true
+    # 连续失败多少次才把 cmd_move 置 False（下游 controller 据此停车）
+    fail_tolerance: 3
 
     # 强制需求限速 1.0 m/s（甲方底盘 max_linear_speed 需同步 ≤1.0）
     max_linear_speed: 1.0
+    # Hive3 全向底盘角速度上限。
+    max_angular_speed: 1.25
+    omega_max: 1.25

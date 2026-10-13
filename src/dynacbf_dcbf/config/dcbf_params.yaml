@@ -28,18 +28,21 @@
 #      因此必须让预测发布方的 (每条步数, dt) 与 (kalman_N, MPC_step_size) 对齐。
 #   2) global_path 由 bspline_path_sampler 提供：它把 planning/bspline 的 B 样条按
 #      **弧长**几何采样后发布到同名话题（详见该文件顶部注释）。
-#   3) controller_node 需要 TF 'world' → 'base_link' 才能发布 curr_state；
+#   3) controller_node 需要 TF 'map' → 'base_link' 才能发布 curr_state；
 #      没有这条 TF 时它静默跳过，local_planner_node 收不到 curr_state 就完全不动作。
 # =============================================================================
 
 /**:
   ros__parameters:
     replan_period: 0.1
-    v_max: 0.5
-    # Zero is required for a safety-critical controller to stop when no
-    # forward motion satisfies the D-CBF constraints.
+    # HiveCore全向底盘合速度上限：sqrt(vx^2 + vy^2) <= 1.0 m/s。
+    v_max: 1.0
+    # v_min 保留为兼容参数；全向模型不施加前向最低速度。
     v_min: 0.0
-    omega_max: 0.3
+    omega_max: 1.25
+
+    # Three-component body-frame initial controls: [vx, vy, omega].
+    # init_v_* remains the backward-compatible vx parameter; init_vy_* is lateral.
 
     MPC_N: 25
     MPC_step_size: 0.25
@@ -67,12 +70,15 @@
 
     MPC_constraint: "CBF"  #    None Euclidean CBF
 
-    init_N: 2
+    # Hot-start warm solve makes multiple explicit initial guesses unnecessary.
+    init_N: 1
 
     init_v_0: 0.01
+    init_vy_0: 0.0
     init_omega_0: 0.3
 
     init_v_1: 0.01
+    init_vy_1: 0.0
     init_omega_1: -0.3
 
     # -------------------------------------------------------------------------
@@ -87,9 +93,9 @@
     # 因此三个节点之间**不需要任何 remap**。
     out_topic: global_path
 
-    # B 样条与输出 Path 的坐标系。参考实现把 local_path 的 frame_id 硬编码为
-    # "world"，controller.py 也是查 'world'→'base_link' 的 TF，故默认 world。
-    frame_id: world
+    # B 样条与输出 Path 的坐标系。真机统一用甲方全局 frame "map"（map_frame），
+    # 与 controller / bspline / planner / local_map 一致；不再使用仿真残留的 "world"。
+    frame_id: map
 
     # 每次采样输出的路点数。必须 >= MPC_N（25），否则 MPC 的参考窗被截短。
     path_points: 120

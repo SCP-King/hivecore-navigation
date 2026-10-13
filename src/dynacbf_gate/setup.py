@@ -26,6 +26,7 @@ setup(
     entry_points={
         "console_scripts": [
             "gate_node = dynacbf_gate.gate_node:main",
+            "pose_tf_bridge = dynacbf_gate.pose_tf_bridge:main",
         ],
     },
 )

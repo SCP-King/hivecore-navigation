@@ -81,7 +81,8 @@ void GridMap::initMap(rclcpp::Node *node)
   load_parameter(node_, "grid_map.vis_height", mp_.vis_height_, 0.3);
   load_parameter(node_, "grid_map.show_occ_time", mp_.show_occ_time_, false);
 
-  load_parameter(node_, "grid_map.frame_id", mp_.frame_id_, string("world"));
+  load_parameter(node_, "grid_map.frame_id", mp_.frame_id_, string("map"));
+  // 【对接甲方 TF 树】frame_id 默认 map（甲方 SLAM 全局系）；真机单包跑也落在甲方树上。
   load_parameter(node_, "grid_map.sliding_map_frame_id", mp_.sliding_map_frame_id_, string("sliding_map"));
   load_parameter(node_, "grid_map.ground_height", mp_.ground_height_, 0.0);
 

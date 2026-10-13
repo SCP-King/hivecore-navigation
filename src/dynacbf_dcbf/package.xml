@@ -7,11 +7,10 @@
     MPC-D-CBF 局部规划层（Python/ament_python）。
 
     节点：
-      * local_planner_node  —— MPC-D-CBF 本体（CasADi Opti + IPOPT，unicycle 模型，
-        椭圆 D-CBF 约束）。逐字复制自已验证跑通的参考实现，逻辑零改动，
-        话题名/消息类型/参数名/类名/节点名均未改。
+      * local_planner_node  —— MPC-D-CBF 本体（CasADi Opti + IPOPT，全向模型，
+        body-frame [vx, vy, omega] 控制，椭圆 D-CBF 约束）。
       * controller_node     —— local_plan + cmd_move → cmd_vel 转发，并用 TF
-        ('world' → 'base_link') 发布 curr_state。同样逐字复制。
+        ('map' → 'base_link') 发布 curr_state。同样逐字复制。
       * bspline_path_sampler —— 本项目新写的唯一对接逻辑（融合缝）：把
         planning/bspline 的名义 B 样条按弧长几何采样成 nav_msgs/Path 发布到
         global_path，供 local_planner_node 直接消费，无需任何 remap。

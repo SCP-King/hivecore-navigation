@@ -30,8 +30,8 @@ dynacbf_gate  —— HiveCore 定位就绪门控节点（/cmd_vel 透传互锁�
 `hivecore_slam3d.msg.LocalizationStatus`。为避免本包在未 source 甲方 overlay
 时启动即崩溃，这里用 try/except 兜底：
   * 能导入 → 按 LocalizationStatus 判据门控（推荐，甲方 overlay 已加载）。
-  * 不能导入 → 降级为「TF map→base_footprint 新鲜度 + /robot_pose 有数据」
-    判据门控，并持续告警，提示需 source 甲方 overlay。
+  * 不能导入 → 降级为「/robot_pose 新鲜度（首选）或 TF map→base_footprint
+    新鲜度（次选）」判据门控，并持续告警，提示需 source 甲方 overlay。
 
 退出语义
 ========
@@ -42,6 +42,7 @@ import rclpy
 from rclpy.node import Node
 
 from geometry_msgs.msg import Twist
+from nav_msgs.msg import Odometry
 from std_msgs.msg import Bool
 
 # ---------------------------------------------------------------------------
@@ -66,6 +67,7 @@ class GateNode(Node):
         self.declare_parameter("cmd_vel_in", "/cmd_vel_nav")       # 控制器输出（本节点输入）
         self.declare_parameter("cmd_vel_out", "/cmd_vel")          # 底盘实际话题（本节点输出）
         self.declare_parameter("localization_topic", "/localization_status")
+        self.declare_parameter("pose_topic", "/robot_pose")        # 降级模式首选位姿源
         self.declare_parameter("map_frame", "map")
         self.declare_parameter("base_frame", "base_footprint")
         self.declare_parameter("tf_freshness_sec", 1.0)            # TF 新鲜度门限
@@ -74,10 +76,14 @@ class GateNode(Node):
         self.declare_parameter("tick_hz", 10.0)
         # 不依赖甲方消息的降级门限：要求最近的定位位姿非零（相对起点）
         self.declare_parameter("require_odom", True)
+        # 【M1 / 离线模式】true=必须甲方 LocalizationStatus 判就绪（真机默认）；
+        # false=完全跳过甲方定位判据，只看位姿话题新鲜度（用 /odom 跑 M1 链路）。
+        self.declare_parameter("require_slam_ready", True)
 
         self.cmd_vel_in = self.get_parameter("cmd_vel_in").value
         self.cmd_vel_out = self.get_parameter("cmd_vel_out").value
         self.loc_topic = self.get_parameter("localization_topic").value
+        self.pose_topic = self.get_parameter("pose_topic").value
         self.map_frame = self.get_parameter("map_frame").value
         self.base_frame = self.get_parameter("base_frame").value
         self.tf_fresh = float(self.get_parameter("tf_freshness_sec").value)
@@ -85,6 +91,8 @@ class GateNode(Node):
         self.max_fitness = float(self.get_parameter("max_fitness_mse").value)
         self.tick = float(self.get_parameter("tick_hz").value)
         self.require_odom = bool(self.get_parameter("require_odom").value)
+        self.require_slam_ready = bool(
+            self.get_parameter("require_slam_ready").value)
 
         # ---------------- 状态 ----------------
         self._loc_ok = False           # 门控最终就绪标志
@@ -92,6 +100,7 @@ class GateNode(Node):
         self._loc_msg_stamp = 0.0      # 最近定位消息时刻（s, 墙钟）
         self._last_cmd = Twist()       # 最近收到的控制器速度（透传用）
         self._have_cmd = False
+        self._pose_msg_stamp = 0.0     # 最近 /robot_pose 时刻（单调钟）
 
         # ---------------- 发布器 / 订阅器 ----------------
         self.cmd_vel_pub = self.create_publisher(Twist, self.cmd_vel_out, 1)
@@ -99,6 +108,11 @@ class GateNode(Node):
 
         self.cmd_sub = self.create_subscription(
             Twist, self.cmd_vel_in, self._cb_cmd, 1)
+        # 降级模式的首选位姿源：/robot_pose（map 系 Odometry）。
+        # 刻意不依赖 TF —— 现场实测 map 系位姿 TF 不可靠（树裂成两棵不连通），
+        # 若降级判据还挂在 TF 上，一旦断链就永远不放行（静默死锁）。
+        self.pose_sub = self.create_subscription(
+            Odometry, self.pose_topic, self._cb_pose, 10)
         if _HAVE_SLAM_MSG:
             self.loc_sub = self.create_subscription(
                 LocalizationStatus, self.loc_topic, self._cb_loc, 1)
@@ -137,8 +151,16 @@ class GateNode(Node):
         self._loc_msg_stamp = time.monotonic()
         self._loc_ok = bool(published and tracking and fit_ok)
 
+    def _cb_pose(self, msg: Odometry):
+        self._pose_msg_stamp = time.monotonic()
+
+    def _pose_fresh(self) -> bool:
+        """降级判据（首选）：/robot_pose 是否新鲜。不依赖 TF。"""
+        return (self._pose_msg_stamp > 0.0 and
+                (time.monotonic() - self._pose_msg_stamp) <= self.odom_fresh)
+
     def _tf_fresh(self) -> bool:
-        """降级判据：map→base_footprint TF 是否新鲜存在。"""
+        """降级判据（次选）：map→base_footprint TF 是否新鲜存在。"""
         try:
             buf = self._tf_buffer
         except AttributeError:
@@ -156,9 +178,15 @@ class GateNode(Node):
 
     # ---------------- 主循环 ----------------
     def _tick(self):
-        if _HAVE_SLAM_MSG:
+        if not self.require_slam_ready:
+            # 【M1 / 离线模式】完全不看甲方定位状态，只要求位姿新鲜。
+            # 用于无 SLAM（/robot_pose 与 map 系位姿 TF 都不可用）时，用底盘 /odom
+            # 在 odom 系把整链跑通（SOP 的 M1）。此模式下门控是**放行**的，
+            # 一旦下发目标机器人就会动 —— 测试前必须确认场地安全。
+            ready = self._pose_fresh() or self._tf_fresh()
+        elif _HAVE_SLAM_MSG:
             if not self._loc_msg_valid:
-                self.get_logger().warn_once(
+                self.get_logger().warn(
                     f"等待甲方定位消息 {self.loc_topic} ...")
                 ready = False
             else:
@@ -166,8 +194,9 @@ class GateNode(Node):
                 fresh = (time.monotonic() - self._loc_msg_stamp) <= self.odom_fresh
                 ready = self._loc_ok and fresh
         else:
-            # 降级模式：仅靠 TF 新鲜度
-            ready = self._tf_fresh()
+            # 降级模式：位姿话题新鲜度（首选）或 TF 新鲜度（次选）。
+            # 只靠 TF 会死锁：现场 map→base_footprint 断链时永远不放行。
+            ready = self._pose_fresh() or self._tf_fresh()
 
         # 输出：就绪透传输入速度，否则零速
         if ready and self._have_cmd:

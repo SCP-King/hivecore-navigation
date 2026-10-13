@@ -57,7 +57,7 @@ namespace dynacbf
     self_double_cylinder_radius_ = load_parameter<double>(node_, "grid_map.double_cylinder_radius", 0.0);
     self_double_cylinder_offset_ = load_parameter<double>(node_, "grid_map.double_cylinder_offset", 0.0);
     body_height_ = load_parameter<double>(node_, "grid_map.body_height", 0.4);
-    self_inflation_frame_id_ = load_parameter<std::string>(node_, "grid_map.frame_id", "world");
+    self_inflation_frame_id_ = load_parameter<std::string>(node_, "grid_map.frame_id", "map");
 
     // 移植修正：上游用 -1.0 哨兵默认值读取上述 fsm 参数，缺键或写入非法值时既不报错也不校验，
     // 会让状态机在错误的阈值/视界下运行（例如 thresh_replan 为负时"抑制重规划"判定完全失效，
@@ -560,7 +560,7 @@ namespace dynacbf
     const double height = std::max(1e-3, z_up + z_down);
 
     visualization_msgs::msg::Marker marker;
-    marker.header.frame_id = self_inflation_frame_id_.empty() ? "world" : self_inflation_frame_id_;
+    marker.header.frame_id = self_inflation_frame_id_.empty() ? "map" : self_inflation_frame_id_;
     marker.header.stamp = node_->now();
     marker.ns = "self_inflation";
     marker.type = visualization_msgs::msg::Marker::CYLINDER;

@@ -63,7 +63,9 @@ dynacbf_planner_node:
     # 障碍物沿 z 轴向下的膨胀量
     grid_map.obstacles_inflation_z_down: 0.4
     # 栅格地图所在参考坐标系（frame id）
-    grid_map.frame_id: world
+    # 【对接甲方 TF 树】甲方全局系为 map（SLAM map_frame）；真机统一用 map，
+    # 不再用仿真残留的 world。单包跑此 config 也落在甲方树上。
+    grid_map.frame_id: map
     # 滑动地图的坐标系（frame id）
     grid_map.sliding_map_frame_id: sliding_map
     # 地面高度

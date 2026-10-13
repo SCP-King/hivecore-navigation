@@ -67,8 +67,8 @@ class BsplineCurve:
         有效参数域   = [knots[order], knots[m_ - order]]
         求值时把 t 平移成 u = t + knots[order]（positionAt 的约定）
 
-    只保留二维（x, y）：DCBF-MPC 是世界系平面上的 unicycle 模型，
-    消息 pos_pts 的 z 分量被忽略（参考实现同样只读 Path 的 x/y）。
+    只保留二维（x, y）：DCBF-MPC 在全局系中规划平面位置，全向控制由其
+    body-frame [vx, vy, omega] 模型执行。消息 pos_pts 的 z 分量被忽略（参考实现同样只读 Path 的 x/y）。
     """
 
     # 与 C++ 版一致的节点分母保护阈值（dcbf_math.cpp:198、331）
@@ -242,10 +242,9 @@ class BsplinePathSampler(Node):
         self.declare_parameter('out_topic', 'global_path')
         self.out_topic = self.get_parameter('out_topic').value
 
-        # B 样条 / Path 所在坐标系（参考实现里 local_planner.py 把 local_path 的
-        # frame_id 硬编码为 "world"，controller.py 也是查 'world'→'base_link'，
-        # 故这里默认 "world"，与它们保持一致）
-        self.declare_parameter('frame_id', 'world')
+        # B 样条 / Path 所在坐标系。真机统一用甲方全局 frame "map"（map_frame），
+        # 与 controller / planner / local_map 一致；不再使用仿真残留的 "world"。
+        self.declare_parameter('frame_id', 'map')
         self.frame_id = self.get_parameter('frame_id').value
 
         # 每次采样输出的路点数；必须 >= MPC_N（默认 25），否则 MPC 的参考窗被截短

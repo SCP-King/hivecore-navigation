@@ -1,0 +1,73 @@
+# =============================================================================
+# dynacbf_real.yaml —— 真机 bringup 的覆盖参数
+# =============================================================================
+# 各节点继续从各包自带 config 读取默认参数（单一来源不变）；
+# 这里只覆盖「真机/仿真不一致、且随环境可变」的对接项：
+#   感知层     lidar 话题、机身/雷达 TF frame、全局 frame
+#   规划器     frame_id（map）/ body_pose / sensor_pose / cloud 话题
+#   DCBF 层    frame_id、参考路径位姿话题、控制超时与限速
+#
+# 注意：多个节点同读 `/**` 顶层键。ROS 2 对节点未声明的键一律忽略（不报错），
+# 所以把感知/规划/控制参数合并在一个 `/**` 块里是安全的。
+# ---------------------------------------------------------------------------
+# 真机默认假设（缺省值；launch 参数可在启动时覆盖）：
+#   * 甲方 SLAM 发布 map -> base_link（/robot_pose 或 TF），点云在 /livox/lidar
+#   * 甲方底盘收 /cmd_vel、发 /odom
+#   * HiveCore 全向轮默认速度 2.0 m/s，这里强制收敛到需求 ≤ 1.0 m/s
+# ---------------------------------------------------------------------------
+/**:
+  ros__parameters:
+    # ---- 感知：dynacbf_perception/local_map ----
+    # 优先用甲方 SLAM 预处理后的过滤点云；若未起预处理，回落 raw /livox/lidar。
+    # 现场实测无 /livox/lidar/geo_filtered 时，改回 "/livox/lidar"。
+    lidar_topic: "/livox/lidar/geo_filtered"
+
+    # HiveCore 车身 frame 名（以现场 URDF / RSP 为准）
+    base_link: "base_link"
+    # PointCloud2 数据本身的 frame_id。已从甲方 preprocessor 配置确认：
+    #   scan_frame: "lidar_link"（/livox/lidar/geo_filtered 的输出 frame）
+    # 说明：不再使用仿真残留的 base_scan —— 甲方 URDF 的 TF 链为
+    #   map→base_footprint→base_link→lidar_link，无 base_scan 帧。
+    #   local_map 的 updateTF() 在查不到 map→lidar_frame 时会用
+    #   base_link→lidar_frame 静态 TF 兜底组装，无需额外帧。
+    lidar_frame: "lidar_link"
+
+    # 全局定位 frame：甲方 SLAM 地图系
+    map_frame: "map"
+
+    # ---- 规划层：dynacbf_planner_node ----
+    # planner.yaml 已设 cloud_is_world: true（点云按世界系射线投射）。
+    # 真机点云必须在 map 系（由甲方 SLAM/预处理保证）或经 local_map 转到 map。
+    grid_map.frame_id: "map"
+    grid_map.sliding_map_frame_id: "sliding_map"
+
+    # 【真机机身】机器人胶囊碰撞模型（测量+真实TF，参考基座 base_link）
+    #   双圆柱半径 = 障碍膨胀 = 半宽(0.243)+余量；前/后缘见 planner.yaml。
+    grid_map.double_cylinder_radius: 0.28
+    grid_map.footprint_x_min: -0.59
+    grid_map.footprint_x_max: 0.43
+
+    # 与运动需求对齐：规划限速 ≤ 1.0 m/s
+    manager.max_vel: 1.0
+    optimization.max_vel: 1.0
+
+    # ---- MPC-D-CBF 层：local_planner_node / controller_node / bspline_path_sampler ----
+    # controller 的 TF 查询参数
+    global_frame: "map"
+    base_frame: "base_link"
+
+    # 真机定位 frame 统一为 map
+    frame_id: "map"
+
+    # bspline_path_sampler 的位姿来源 = 定位 odometry（与 controller 同源）
+    odom_topic: "/robot_pose"
+
+    # controller：真机底盘 0.2s 命令超时自动停车。
+    # 阈值必须 < 0.2s，避免"导航觉得还在下指令、底盘却已急停"的振荡。
+    command_timeout: 0.15
+
+    # 强制需求限速 1.0 m/s（甲方底盘 max_linear_speed 需同步 ≤1.0）
+    max_linear_speed: 1.0
+    # Hive3 全向底盘角速度上限。
+    max_angular_speed: 1.25
+    omega_max: 1.25

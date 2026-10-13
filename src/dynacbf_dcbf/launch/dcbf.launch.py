@@ -6,12 +6,12 @@
 #                            global_path；发布 local_plan / local_path /
 #                            pub_path_vis / cmd_move）
 #   controller_node       —— local_plan + cmd_move → cmd_vel 转发；同时用 TF
-#                            ('world' → 'base_link') 查位姿并发布 curr_state
+#                            ('map' → 'base_link') 查位姿并发布 curr_state
 #   bspline_path_sampler  —— 融合缝：planning/bspline（B 样条）按弧长几何采样后
 #                            发布到 global_path，供 local_planner_node 直接消费
 #
 # 话题全部使用参考实现的原始名字（相对名/绝对名均未改），因此**没有任何 remap**。
-# 唯一的运行前提是 TF 'world' → 'base_link' 存在（由仿真/里程计侧提供）。
+# 唯一的运行前提是 TF 'map' → 'base_link' 存在（真机由甲方 SLAM 定位提供）。
 # =============================================================================
 
 import os

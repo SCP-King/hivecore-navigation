@@ -67,11 +67,14 @@ private:
         // 机体碰撞高度 → 处处都是障碍 → A* 永远搜不到路 → 规划器不出轨迹。
         // VLP-16 是 360° 3D 雷达、地面回波极多，必须在感知层就滤掉。
         // 取 0.1 的依据：此值**必须低于雷达自身的安装高度**，否则连打向障碍物的点
-        // 都会被一起滤掉。实测 base_scan 安装高度为 0.172 m
-        // （turtlebot3_burger.urdf 的 joint base_scan_joint: origin xyz="-0.032 0 0.172"），
-        // 而 VLP-16 接近水平扫描、打在障碍物上的点 z≈0.17 —— 先前误取 0.2 时实测
-        // obs=0、椭圆数=0，障碍物被整个滤除，D-CBF 因此拿不到任何障碍输入。
-        // 0.1 可滤掉地面回波（world 系 z≈0，5 m 外甚至为负），同时完整保留障碍物点。
+        // 都会被一起滤掉。原 TurtleBot3 雷达安装高度 0.172 m、先前误取 0.2 时实测
+        // obs=0、椭圆数=0，障碍物被整个滤除；0.1 可滤掉地面回波（世界系 z≈0，
+        // 5 m 外甚至为负），同时完整保留障碍物点。
+        // 对接甲方 HiveCore：甲方 /tf_static 提供 base_footprint→base_link
+        //   与 base_link→lidar_link=(0.295,0,0)（见 参数文本.txt，高度由甲方静态链
+        //   决定）。本节点不凭空生成任何 frame/TF，只读取甲方静态链。
+        //   0.1 仍低于雷达安装高度、高于地面回波，保留沿用；若现场雷达装得更低，
+        //   需再调小此值（原则：min_pass_z < 雷达安装高度）。
         this->declare_parameter<float>("min_pass_z", 0.1);
         this->declare_parameter<float>("DBSCAN_R", 5.0);
         this->declare_parameter<int>("DBSCAN_N", 5);
@@ -81,9 +84,18 @@ private:
 
         this->declare_parameter<std::string>("lidar_topic", "/livox/lidar");
         this->declare_parameter<std::string>("base_link", "base_link");
-        this->declare_parameter<std::string>("base_scan", "base_scan");
-        this->declare_parameter<std::string>("lidar_frame", "base_scan");
-        this->declare_parameter<std::string>("map_frame", "world");
+        // 【本项目对接甲方 TF 树】lidar_frame 默认对齐甲方 URDF 的 lidar_link
+        // （map→base_footprint→base_link→lidar_link 链，lidar_link 为点云 frame_id）。
+        // 不再使用仿真残留的 base_scan（甲方树上没有该 frame）。
+        // updateTF() 对 base_link→lidar_link 静态外参的组装，
+        // 保证单包 config 也能跑在甲方 TF 树上。
+        this->declare_parameter<std::string>("lidar_frame", "lidar_link");
+        // 【改动 6（2026-10-13，M1 数据流重构）】前端不再依赖任何
+        //   odom→base_footprint / odom→base_link 动态 TF。
+        //   本参数 = 乙方前端随恒位姿（真机 /robot_pose；M1 /odom）话题，
+        //   controller / local_map 直接从该话题拿位置/姿态。
+        this->declare_parameter<std::string>("odom_topic", "/odom");
+        this->declare_parameter<std::string>("map_frame", "map");
 
         // ----------------------------------------------------------------
         this->get_parameter<float>("localmap_x_size", localmap_x_size);
@@ -103,9 +115,9 @@ private:
         
         this->get_parameter<std::string>("lidar_topic", lidar_topic);
         this->get_parameter<std::string>("base_link", base_link);
-        this->get_parameter<std::string>("base_scan", base_scan);
         this->get_parameter<std::string>("lidar_frame", lidar_frame);
         this->get_parameter<std::string>("map_frame", map_frame);
+        this->get_parameter<std::string>("odom_topic", odom_topic);
 
         _inv_resolution = 1 / resolution;
         map_index_len = localmap_x_size * _inv_resolution;
@@ -150,6 +162,12 @@ private:
         velodyne_sub = this->create_subscription<sensor_msgs::msg::PointCloud2>(
             lidar_topic, rclcpp::SensorDataQoS(), std::bind(&LocalMapPubNode::PointCloudCallback, this, std::placeholders::_1));
 
+        // 【改动 6（2026-10-13，M1 数据流重构）】前端随恒位姿话题（真机
+        // /robot_pose；M1 /odom，甲方底盘里程计 ~50Hz RELIABLE）。
+        // 直接缓存其 pose，不再查询任何乙方补发的 odom→base_footprint TF。
+        odom_sub = this->create_subscription<nav_msgs::msg::Odometry>(
+            odom_topic, rclcpp::QoS(10), std::bind(&LocalMapPubNode::OdomCallback, this, std::placeholders::_1));
+
         // obs_pc_pub = this->create_publisher<sensor_msgs::msg::PointCloud2>("obs_pc", 1);
 
         gridmap_pub = this->create_publisher<grid_map_msgs::msg::GridMap>("gridmap", 1);
@@ -159,7 +177,7 @@ private:
         RCLCPP_INFO(this->get_logger(), "init subscribe/publish complete");
     }
 
-    // 初始化tf获取
+    // 初始化tf获取（仅用于读甲方 /tf_static 静态外参）
     void InitializeTFListener()
     {
         tf_buffer = std::make_shared<tf2_ros::Buffer>(this->get_clock());
@@ -167,28 +185,77 @@ private:
         RCLCPP_INFO(this->get_logger(), "init tf complete");
     }
 
+    void OdomCallback(const nav_msgs::msg::Odometry::SharedPtr msg)
+    {
+        std::lock_guard<std::mutex> lock(point_cloud_mutex);
+        latest_odom_ = msg;
+    }
+
     bool updateTF()
     {
+        // 【改动 6】机器人位置直接取前端随恒位姿（M1=/odom，nav 系）的 pose.xy，
+        // 不再依赖 map→base_link 动态 TF。位姿未到 → 视为"数据未就绪"。
+        if (!latest_odom_)
+        {
+            RCLCPP_ERROR(this->get_logger(), "wait for odom: %s", odom_topic.c_str());
+            return false;
+        }
+        robot_position2d << latest_odom_->pose.pose.position.x,
+                           latest_odom_->pose.pose.position.y;
+
+        // 静态外参：child→点云 frame。甲方 /tf_static 提供 base_footprint→base_link
+        // 与 base_link→lidar_link（见 参数文本.txt：base_footprint→base_link=(0,0,0.900)
+        // 恒等旋转；base_link→lidar_link=(0.295,0,0) 恒等旋转）。tf2 会经静态边
+        // 自动组装 child→cloud_frame，时间无关，无外推/过期问题。
+        // 目标 frame 取**实际点云**的 frame_id（geo_filtered 为 lidar_link；若现场
+        // 发的是原始 livox_frame，则依赖甲方是否提供 child→livox_frame 静态边）。
+        std::string odom_child = latest_odom_->child_frame_id;
+        std::string cloud_frame = velodyne_cloud.header.frame_id;
+        if (cloud_frame.empty())
+            cloud_frame = lidar_frame;
+        geometry_msgs::msg::TransformStamped child_to_lidar;
         try
         {
-            geometry_msgs::msg::TransformStamped base_link_transformStamped = tf_buffer->lookupTransform(map_frame, base_link, rclcpp::Time(0));
-            base_link_transform = base_link_transformStamped;
-
-            geometry_msgs::msg::TransformStamped lidar_link_transformStamped = tf_buffer->lookupTransform(map_frame, lidar_frame, rclcpp::Time(0));
-            lidar_link_transform = lidar_link_transformStamped;
-            return true;
+            child_to_lidar = tf_buffer->lookupTransform(
+                odom_child, cloud_frame, rclcpp::Time(0));
         }
         catch (tf2::TransformException &ex)
         {
             RCLCPP_ERROR(this->get_logger(), "%s", ex.what());
             return false;
         }
+
+        // 组装 T(nav→cloud) = T(nav→child) * T(child→cloud)。
+        // nav = map_frame（M1 下被 launch 覆盖为 odom）。
+        tf2::Transform nav_to_child;
+        nav_to_child.setOrigin(tf2::Vector3(
+            latest_odom_->pose.pose.position.x,
+            latest_odom_->pose.pose.position.y,
+            latest_odom_->pose.pose.position.z));
+        nav_to_child.setRotation(tf2::Quaternion(
+            latest_odom_->pose.pose.orientation.x,
+            latest_odom_->pose.pose.orientation.y,
+            latest_odom_->pose.pose.orientation.z,
+            latest_odom_->pose.pose.orientation.w));
+
+        tf2::Transform child_to_lidar_tf;
+        tf2::fromMsg(child_to_lidar.transform, child_to_lidar_tf);
+        tf2::Transform nav_to_lidar = nav_to_child * child_to_lidar_tf;
+
+        lidar_link_transform.header.frame_id = map_frame;
+        lidar_link_transform.child_frame_id = cloud_frame;
+        lidar_link_transform.transform = tf2::toMsg(nav_to_lidar);
+        return true;
     }
 
     void PointCloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
     {
         std::lock_guard<std::mutex> lock(point_cloud_mutex);
         pcl::fromROSMsg(*msg, velodyne_cloud);
+        // 【改动 6】received_lidar_data 只反映“点云确实到了 + TF 就绪”。
+        // 仍由 updateTF() 决定是否继续（数据未到 / 静态外参缺失都会返回 false），
+        // 但点云到达本身不再被 TF 成败掩盖：每帧真实到达都走这个回调。
+        cloud_arrived_count++;
         received_lidar_data = updateTF();
     }
 
@@ -199,7 +266,8 @@ private:
             RCLCPP_INFO(this->get_logger(), "wait for lidar");
             return;
         }
-        robot_position2d << base_link_transform.transform.translation.x, base_link_transform.transform.translation.y;
+
+        // robot_position2d 已在 updateTF() 中从前端随恒位姿（M1=/odom）拿到。
 
         pcd_transform();
 
@@ -591,7 +659,6 @@ private:
     Eigen::MatrixXf map_interpolate;
     Eigen::MatrixXf gradient_map;
 
-    geometry_msgs::msg::TransformStamped base_link_transform;
     geometry_msgs::msg::TransformStamped lidar_link_transform;
 
     // 定时器/pub/sub
@@ -599,6 +666,8 @@ private:
     rclcpp::TimerBase::SharedPtr TF_timer_;
 
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr velodyne_sub;
+    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub;
+    nav_msgs::msg::Odometry::SharedPtr latest_odom_;
 
     rclcpp::Publisher<grid_map_msgs::msg::GridMap>::SharedPtr gridmap_pub;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr local_pcd_pub;
@@ -612,12 +681,13 @@ private:
     std::shared_ptr<tf2_ros::TransformListener> transform_listener;
 
     bool received_lidar_data;
+    uint64_t cloud_arrived_count = 0;   // 【改动 6】已抵达点云帧计数（调试图）
 
     std::string lidar_topic;
     std::string base_link;
-    std::string base_scan;
     std::string lidar_frame;
     std::string map_frame;
+    std::string odom_topic;
 
     std::mutex point_cloud_mutex;
 };

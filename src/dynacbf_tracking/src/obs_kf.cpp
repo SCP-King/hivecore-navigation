@@ -243,6 +243,12 @@ public:
             "/for_obs_track", 1, std::bind(&ObsKfNode::obscb, this, std::placeholders::_1));
         obs_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("/obs_predict_pub", 1);
         obs_vis_pub_ = this->create_publisher<visualization_msgs::msg::MarkerArray>("/obs_predict_vis_pub", 1);
+
+        // 预测 Marker 的坐标系：与数值发布 /obs_predict_pub 的坐标系一致。
+        // 真机=map（甲方 SLAM）；M1 / 无 SLAM 时由 launch 的 frame_override
+        // 覆盖为 odom。不再硬编码 "map"。
+        this->declare_parameter("frame_id", "map");
+        marker_frame_ = this->get_parameter("frame_id").as_string();
     }
 
 private:
@@ -335,7 +341,7 @@ private:
         for (const auto &ellipse : obs_ellipses)
         {
             visualization_msgs::msg::Marker mk;
-            mk.header.frame_id = "world";
+            mk.header.frame_id = marker_frame_;
             mk.header.stamp = this->now(); 
             mk.ns = "ellipse";
             mk.id = ellipse_vis.markers.size();
@@ -371,6 +377,7 @@ private:
     rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr obs_pub_;
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr obs_vis_pub_;
     int unused_clear_time;
+    std::string marker_frame_;
 };
 
 int main(int argc, char **argv)

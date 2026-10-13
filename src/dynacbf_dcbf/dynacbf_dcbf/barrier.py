@@ -51,14 +51,16 @@ def ellipse_barrier(position, obstacle, safe_distance,
     obstacle.  When the optional ``robot_*`` superellipse parameters are omitted,
     the robot is treated as a disc of radius ``safe_distance`` (legacy behaviour).
     """
-    c = float(np.cos(obstacle[4]))
-    s = float(np.sin(obstacle[4]))
-    dx = position[0] - float(obstacle[0])
-    dy = position[1] - float(obstacle[1])
+    # Use CasADi operations for both numeric and symbolic obstacle values so the
+    # obstacle prediction can be a parameter in a reusable MPC graph.
+    c = ca.cos(obstacle[4])
+    s = ca.sin(obstacle[4])
+    dx = position[0] - obstacle[0]
+    dy = position[1] - obstacle[1]
     local_x = c * dx + s * dy
     local_y = -s * dx + c * dy
-    semimajor = max(float(obstacle[2]), 1e-3)
-    semiminor = max(float(obstacle[3]), 1e-3)
+    semimajor = ca.fmax(obstacle[2], 1e-3)
+    semiminor = ca.fmax(obstacle[3], 1e-3)
     center_distance = ca.sqrt(dx ** 2 + dy ** 2 + 1e-12)
     radial_denominator = ca.sqrt(
         (semiminor * local_x) ** 2 +
@@ -67,9 +69,14 @@ def ellipse_barrier(position, obstacle, safe_distance,
         semimajor * semiminor * center_distance / radial_denominator)
 
     # 机身半径：默认按圆盘 = safe_distance；给定超椭圆参数时按朝向展开。
+    # position 可能在 MPC 约束里是 CasADi MX 行向量（shape=(1,3)，不支持 len()），
+    # 也可能是数值列表 [x,y,yaw]；统一按「列数/长度 >= 3」判断是否携带 yaw。
     if (robot_a_front is not None and robot_a_rear is not None
             and robot_b is not None and robot_p is not None):
-        yaw = position[2] if len(position) > 2 else 0.0
+        if hasattr(position, "shape"):      # CasADi MX / 行向量
+            yaw = position[2] if position.shape[1] >= 3 else 0.0
+        else:                                # 数值列表/数组
+            yaw = position[2] if len(position) > 2 else 0.0
         world_ang = ca.atan2(dy, dx)
         theta = world_ang - yaw
         robot_radius = _robot_squircle_radius(theta, robot_a_front,

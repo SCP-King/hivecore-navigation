@@ -224,7 +224,7 @@ void ab_variance_calculation(vector<Ellipse> &input_vector)
 // 	visualization_msgs::MarkerArray ellipse_vis;
 
 // 	visualization_msgs::Marker shape_vis;
-// 	shape_vis.header.frame_id = "world";
+// 	shape_vis.header.frame_id = "map";
 // 	shape_vis.header.stamp = ros::Time::now();
 // 	shape_vis.ns = "ellipse";
 // 	shape_vis.type = visualization_msgs::Marker::CYLINDER;
@@ -233,7 +233,7 @@ void ab_variance_calculation(vector<Ellipse> &input_vector)
 
 // 	// number
 // 	visualization_msgs::Marker text_vis;
-// 	text_vis.header.frame_id = "world";
+// 	text_vis.header.frame_id = "map";
 // 	text_vis.header.stamp = ros::Time::now();
 // 	text_vis.ns = "text";
 // 	text_vis.action = visualization_msgs::Marker::ADD;

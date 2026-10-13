@@ -2,10 +2,9 @@
   ros__parameters:
     # lidar_topic: "/livox/lidar"
     # 真机默认：甲方 SLAM 预处理后的过滤点云（本仓库不含仿真）
-    lidar_topic: "/livox/lidar/geo_filtered"
+    lidar_topic: "/livox/lidar"
 
     base_link: "base_link"
-    base_scan: "base_link"
 
     # 点云数据本身 frame_id（已从甲方 preprocessor 配置确认 scan_frame: "lidar_link"）
     lidar_frame: "lidar_link"
