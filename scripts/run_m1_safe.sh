@@ -45,7 +45,7 @@ if [ "$PRINT_ONLY" = "1" ]; then
        navi_mode:=1 pose_topic:=/odom nav_frame:=odom \\
        pose_child_frame:=base_footprint gate_require_slam:=false \\
        bridge_detect_sec:=0.0 gate_cmd_out:=/cmd_vel_dryrun \\
-       speed_limit:=0.3 omega_limit:=0.4 lidar_topic:=/livox/lidar \\
+       speed_limit:=0.3 omega_limit:=0.4 lidar_topic:=/livox/lidar/geo_filtered \\
        rviz:=false
 EOF
   exit 0
@@ -96,7 +96,7 @@ source "$ROOT/install/setup.bash"
 set -u
 
 cd "$ROOT"
-echo "[run_m1_safe] 启动 M1 导航（gate_cmd_out=$GATE_OUT，lidar=/livox/lidar）……"
+echo "[run_m1_safe] 启动 M1 导航（gate_cmd_out=$GATE_OUT，lidar=/livox/lidar/geo_filtered）……"
 exec ros2 launch dynacbf_bringup dynacbf_real.launch.py \
   navi_mode:=1 \
   pose_topic:=/odom \
@@ -107,5 +107,5 @@ exec ros2 launch dynacbf_bringup dynacbf_real.launch.py \
   gate_cmd_out:="$GATE_OUT" \
   speed_limit:=${SPEED_LIMIT:-0.3} \
   omega_limit:=${OMEGA_LIMIT:-0.4} \
-  lidar_topic:=${LIDAR_TOPIC:-/livox/lidar} \
+  lidar_topic:=${LIDAR_TOPIC:-/livox/lidar/geo_filtered} \
   rviz:=${RVIZ:-false}

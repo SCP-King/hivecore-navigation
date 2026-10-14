@@ -40,18 +40,20 @@ for arg in "$@"; do
   esac
 done
 
-# M1 目标参数（与 run_m1_odom.sh / dynacbf_real.launch.py 对齐）
+# M1 目标参数（与 run_m1_safe.sh / dynacbf_real.launch.py 对齐）
+# 【2026-10-14 统一】默认点云 = /livox/lidar/geo_filtered（frame=lidar_link，
+#  甲方 SLAM preprocessor 产物；乙方 local_map 实测读入成功，见 docs/）。
+#  显式切回原始 /livox/lidar（frame=livox_frame）时 preflight 5b 会检查其
+#  实际 frame 所需 TF 是否可解析 —— 不可解析即 FAIL，不做静默自动回退。
 if [ "$MODE" = "real" ]; then
   POSE_TOPIC="${POSE_TOPIC:-/robot_pose}"
-  LIDAR_TOPIC="${LIDAR_TOPIC:-/livox/lidar}"
+  LIDAR_TOPIC="${LIDAR_TOPIC:-/livox/lidar/geo_filtered}"
   NAV_FRAME="map"
   POSE_CHILD="base_footprint"
   REQUIRE_SLAM=1
 else
   POSE_TOPIC="${POSE_TOPIC:-/odom}"
-  # 甲方 GUI-SLAM 在跑且 geo_filtered 有数据时，优先用过滤点云（frame=lidar_link）
-  # 否则退回原始 /livox/lidar（frame=livox_frame）。preflight 会实测选择。
-  LIDAR_TOPIC="${LIDAR_TOPIC:-/livox/lidar}"
+  LIDAR_TOPIC="${LIDAR_TOPIC:-/livox/lidar/geo_filtered}"
   NAV_FRAME="odom"
   POSE_CHILD="base_footprint"
   REQUIRE_SLAM=0
@@ -95,9 +97,11 @@ if [ "$PRINT_ONLY" = "1" ]; then
 === M1 甲方数据依赖表（按需启动） ===
 话题                    | 发布节点(甲方)                    | 启动依赖                    | GUI操作 | QoS匹配要求
 /odom                    | chassis_controller               | start_hive2_motion.sh        | 无      | Reliable ~50Hz
-/livox/lidar             | livox_ros_driver2_node           | start_hive2_motion.sh        | 无      | Reliable ~10Hz
 /livox/lidar/geo_filtered| lidar_cloud_preprocess_node      | GUI-SLAM启动 + enable_forward:true | 无(默认开) | BestEffort, 需订阅才发
-base_link→livox_frame TF | static_tf_publisher_node(/tf_static) | GUI-SLAM启动              | 无      | static
+                         |                                  | ★【乙方默认输入】frame=lidar_link；base_link→lidar_link 静态边可用
+/livox/lidar (原始,可选) | livox_ros_driver2_node           | start_hive2_motion.sh        | 无      | Reliable ~10Hz
+                         |                                  | ★frame=livox_frame；仅显式切回，须 5b 确认其 TF 可解析
+base_link→livox_frame TF | static_tf_publisher_node(/tf_static) | GUI-SLAM启动              | 无      | static（链式可达）
 base_footprint→base_link | robot_state_publisher(运动栈)     | start_hive2_motion.sh        | 无      | static
 [WARN风险] 双 RSP: 运动栈 z=0.9 (hive2.config.xacro) vs SLAM栈 z=0.3 (hivecore_robot.urdf.xacro)
 /robot_pose              | slam3d_node                       | GUI-SLAM + GUI Localization: Load map -> Session Start | 必须点按钮 | Reliable, 需进入 localization 才有数据
@@ -188,7 +192,10 @@ else
   record FAIL "/odom 话题不存在（需甲方运动栈）"
 fi
 
-# 2b. 点云（按设定 LIDAR_TOPIC；若 geo_filtered 可用则提醒可切换）
+# 2b. 主点云 = 设定 LIDAR_TOPIC（默认 /livox/lidar/geo_filtered，与启动参数统一）
+#     ★geo_filtered 是甲方 SLAM preprocessor 产物（frame=lidar_link），需 GUI-SLAM 在跑。
+#     publish_only_when_subscribed=true：话题名存在 ≠ 有数据，此处真实订阅取样。
+#     → 主点云话题不存在或无真实数据 = FAIL（不做静默回退到原始点云）。
 pick_lidar() {
   local t="$1"
   # 真实订阅 3.5s 数帧
@@ -197,34 +204,44 @@ pick_lidar() {
   echo "$N"
 }
 LIDAR_FRAME=""
+LIDAR_N=0
 if ros2 topic list 2>/dev/null | grep -x "$LIDAR_TOPIC" >/dev/null; then
   N=$(pick_lidar "$LIDAR_TOPIC")
+  LIDAR_N="$N"
   PF=$(timeout 6 ros2 topic echo "$LIDAR_TOPIC" --once --field header.frame_id 2>/dev/null | head -1)
   LIDAR_FRAME="$PF"
   if [ "$N" -ge 1 ]; then
     record PASS "$LIDAR_TOPIC 实际收到 ${N} 帧/3.5s，frame_id=$PF"
   else
-    record FAIL "$LIDAR_TOPIC 有但 3.5s 无数据（可能 publish_only_when_subscribed / QoS 不匹配）"
+    record FAIL "$LIDAR_TOPIC 有但 3.5s 无数据（publish_only_when_subscribed / QoS 不匹配）"
   fi
 else
-  record FAIL "$LIDAR_TOPIC 不存在"
+  if [ "$LIDAR_TOPIC" = "/livox/lidar/geo_filtered" ]; then
+    record FAIL "$LIDAR_TOPIC 不存在（默认输入需 GUI-SLAM 启动 + enable_forward:true；显式切回 /livox/lidar 需运动栈）"
+  else
+    record FAIL "$LIDAR_TOPIC 不存在（请确认所配点云已由甲方启动）"
+  fi
 fi
 
-# 2c. geo_filtered（M1 下如果 GUI-SLAM 在跑且可用，推荐启用）
-if ros2 topic list 2>/dev/null | grep -x /livox/lidar/geo_filtered >/dev/null; then
-  N=$(pick_lidar /livox/lidar/geo_filtered)
-  PF=$(timeout 6 ros2 topic echo /livox/lidar/geo_filtered --once --field header.frame_id 2>/dev/null | head -1)
-  if [ "$N" -ge 1 ]; then
-    record PASS "/livox/lidar/geo_filtered 真实有数据 ${N}帧/3.5s frame=$PF"
-    if [ "$MODE" = "m1" ] && [ -z "${LIDAR_TOPIC_FIXED:-}" ]; then
-      record WARN "建议 M1 改用 lidar_topic:=/livox/lidar/geo_filtered（frame=lidar_link，规避 livox_frame 同名风险）"
+# 2c. 备选点云（只读提示，不替代主检查；不影响默认输入）
+#     默认 geo_filtered 时备选=原始 /livox/lidar；显式切回原始时备选=geo_filtered。
+if [ "$LIDAR_TOPIC" = "/livox/lidar/geo_filtered" ]; then
+  ALT="/livox/lidar"
+elif [ "$LIDAR_TOPIC" = "/livox/lidar" ]; then
+  ALT="/livox/lidar/geo_filtered"
+else
+  ALT=""
+fi
+if [ -n "$ALT" ]; then
+  if ros2 topic list 2>/dev/null | grep -x "$ALT" >/dev/null; then
+    AN=$(pick_lidar "$ALT")
+    if [ "$AN" -ge 1 ]; then
+      record PASS "备选点云 $ALT 也有数据（${AN} 帧/3.5s）；显式切回它须先在 5b 确认其 frame 对应 TF"
+    else
+      record WARN "备选点云 $ALT 存在但无数据（可能未订阅触发 / enable_forward 关闭）"
     fi
   else
-    record WARN "/livox/lidar/geo_filtered 存在但无数据（可能需要真实订阅者 / enable_forward）"
-  fi
-else
-  if [ "$MODE" = "real" ]; then
-    record WARN "/livox/lidar/geo_filtered 不存在（GUI-SLAM 未起）——真机建议启动"
+    record WARN "备选点云 $ALT 不存在（默认输入不受影响，可忽略）"
   fi
 fi
 
@@ -252,13 +269,28 @@ fi
 
 # ---------------- 4. QoS 匹配 ----------------
 hdr "4/ QoS 兼容性"
-# geo_filtered 是 BEST_EFFORT，乙方 local_map 用 SensorDataQoS=BestEffort → 兼容
-# /livox/lidar 是 RELIABLE，乙方 BestEffort 订阅 → ROS2 自动降级兼容
-if [ -n "$LIDAR_FRAME" ] && [ "$LIDAR_TOPIC" = "/livox/lidar" ]; then
-  record PASS "/livox/lidar (RELIABLE pub) vs 乙方 SensorDataQoS(BestEffort sub)：兼容（ROS2 rel→be 自动降级）"
-elif [ "$LIDAR_TOPIC" = "/livox/lidar/geo_filtered" ]; then
-  record PASS "/livox/lidar/geo_filtered (BestEffort pub) vs 乙方 SensorDataQoS(BestEffort sub)：完全匹配"
-fi
+# geo_filtered 是 BEST_EFFORT，乙方 local_map 用 SensorDataQoS=BestEffort → 完全匹配
+# /livox/lidar 是 RELIABLE，乙方 BestEffort 订阅 → ROS2 自动降级兼容（rel→be）
+# 只在实际取到点云数据时记 PASS（否则 QoS 匹配从未被证真）。
+case "$LIDAR_TOPIC" in
+  /livox/lidar/geo_filtered)
+    if [ -n "$LIDAR_FRAME" ]; then
+      record PASS "geo_filtered (BestEffort pub) vs 乙方 SensorDataQoS(BestEffort sub)：完全匹配"
+    else
+      record WARN "geo_filtered 未取到数据，QoS 匹配未实际验证"
+    fi
+    ;;
+  /livox/lidar)
+    if [ -n "$LIDAR_FRAME" ]; then
+      record PASS "/livox/lidar (RELIABLE pub) vs 乙方 SensorDataQoS(BestEffort sub)：兼容（rel→be 自动降级）"
+    else
+      record WARN "/livox/lidar 未取到数据，QoS 匹配未实际验证"
+    fi
+    ;;
+  *)
+    record WARN "LIDAR_TOPIC=$LIDAR_TOPIC 不在已知 QoS 映射表，请人工确认兼容性"
+    ;;
+esac
 
 # ---------------- 5. TF 链连通性 ----------------
 hdr "5/ TF 链（M1 最小链）"
@@ -274,8 +306,10 @@ tf_snapshot() { # tf_snapshot <parent> <child> → "Translation: [...]"（轮询
   echo "$out"
 }
 tf_ok() { # tf_ok <parent> <child> → 0 如果至少拿到一次 Translation
+  # 【修正 2026-10-14】grep 空结果时 tf_snapshot 返回的是 4 个空格（非空字符串），
+  # `[ -n "$out" ]` 会把纯空白判为存在 → 假阳性。必须确认实际含 "Translation:"。
   local out; out=$(tf_snapshot "$1" "$2")
-  [ -n "$out" ]
+  [[ "$out" == *"Translation:"* ]]
 }
 tf_zset() { # tf_zset <snapshot> → 该变换所有采到的 z 值（去重）
   echo "$1" | grep -oE "\[[-0-9., ]+\]" | tr -d '[]' | cut -d',' -f3
@@ -289,28 +323,41 @@ else
   record FAIL "TF base_footprint→base_link 不可用（需运动栈 RSP）"
 fi
 
-# 5b. lidar 相关：M1 用原始 /livox/lidar 时需要 base_link→livox_frame
-if [ "$LIDAR_TOPIC" = "/livox/lidar" ]; then
+# 5b. 点云 frame 对应 TF（按 2b 实际 frame_id 判，不按话题字符串猜）
+#     geo_filtered 点云 frame=lidar_link  → 需 base_link→lidar_link 可解析
+#     原始 /livox/lidar 点云 frame=livox_frame → 需 base_link→livox_frame 可解析
+#     frame_id 取不到或两者皆非 → FAIL（TF 链无法确认，不做静默猜测回退）
+if [ -z "$LIDAR_FRAME" ]; then
+  record FAIL "2b 未取到点云实际 frame_id，TF 链无法确认（点云不可用）"
+elif [ "$LIDAR_FRAME" = "lidar_link" ]; then
+  BL_LL=$(tf_snapshot base_link lidar_link)
+  if tf_ok base_link lidar_link; then
+    record PASS "TF base_link→lidar_link 可用（点云 frame=lidar_link 可转出）：$(echo "$BL_LL" | grep -m1 'Translation: ')"
+  else
+    record FAIL "TF base_link→lidar_link 不可用：点云 frame=lidar_link 无法转出。需 GUI-SLAM 的 static_tf_publisher_node 提供该静态边（运动栈 RSP 不保证发布）"
+  fi
+elif [ "$LIDAR_FRAME" = "livox_frame" ]; then
   BL_LV=$(tf_snapshot base_link livox_frame)
   if tf_ok base_link livox_frame; then
-    record PASS "TF base_link→livox_frame 可用：$(echo "$BL_LV" | grep -m1 'Translation: ')"
+    record PASS "TF base_link→livox_frame 可用（点云 frame=livox_frame 可转出）：$(echo "$BL_LV" | grep -m1 'Translation: ')"
   else
     record FAIL "TF base_link→livox_frame 不可用：点云 frame=livox_frame 无法转出。需启动 GUI-SLAM（static_tf_publisher）"
   fi
-elif [ "$LIDAR_TOPIC" = "/livox/lidar/geo_filtered" ]; then
-  BL_LL=$(tf_snapshot base_link lidar_link)
-  if tf_ok base_link lidar_link; then
-    record PASS "TF base_link→lidar_link 可用（geo_filtered 点云 frame=lidar_link 可转出）"
-  else
-    record FAIL "TF base_link→lidar_link 不可用：需运动栈 RSP 的 base_link→lidar_link 静态边"
-  fi
+else
+  record FAIL "点云 frame_id=$LIDAR_FRAME 与预期(lidar_link/livox_frame)不符，TF 链无法确认"
 fi
 
 # 5c. 【双 RSP 冲突检查】base_footprint→base_link 是否多定义
 hdr "5c/ TF 多定义冲突（双 RSP）"
 # 判据① ：/tf_static 上 base_footprint→base_link 边的发布者数量。
 #         >1 个 robot_state_publisher（运动栈 hive2 与 SLAM 栈 hivecore_robot）即冲突。
-DUP_PUBS=$(ros2 topic info /tf_static -v 2>&1 | grep -c "Endpoint type: PUBLISHER" || true)
+#         【修正 2026-10-14】只数 Node name 为 robot_state_publisher 的 PUBLISHER 端点
+#         （预期 2 个 = 双 RSP）；static_tf_publisher_node（base_link→lidar_link/imu_link
+#         静态边）不是 base_footprint→base_link 的发布者，不计入冲突数。
+DUP_PUBS=$(ros2 topic info /tf_static -v 2>&1 | awk '
+  /^Node name: / { n=$0; sub(/^Node name: \/?/, "", n) }
+  /^Endpoint type: PUBLISHER/ && n == "robot_state_publisher" { c++ }
+  END { print c+0 }' || true)
 # 判据② ：跨 6 次独立进程采样 base_footprint→base_link 的 z，取集合。
 ALT_Z=""
 for i in 1 2 3 4 5 6; do

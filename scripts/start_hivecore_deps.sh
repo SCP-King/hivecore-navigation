@@ -133,7 +133,11 @@ done
 # ---------------- 5. 双 RSP 冲突提示 ----------------
 echo ""
 note "5/ 双 RSP 冲突检测"
-DUP_PUBS=$(ros2 topic info /tf_static -v 2>&1 | grep -c "Endpoint type: PUBLISHER" || true)
+# 只数 robot_state_publisher 的 PUBLISHER 端点（双 RSP = 2）；static_tf_publisher_node 不参与此冲突
+DUP_PUBS=$(ros2 topic info /tf_static -v 2>&1 | awk '
+  /^Node name: / { n=$0; sub(/^Node name: \/?/, "", n) }
+  /^Endpoint type: PUBLISHER/ && n == "robot_state_publisher" { c++ }
+  END { print c+0 }' || true)
 ALT_Z=""
 for i in 1 2 3 4 5 6; do
   z=$(timeout 3 ros2 run tf2_ros tf2_echo base_footprint base_link 2>/dev/null | grep -m1 "Translation: " | grep -oE "\[[-0-9., ]+\]" | tr -d '[]' | cut -d',' -f3)

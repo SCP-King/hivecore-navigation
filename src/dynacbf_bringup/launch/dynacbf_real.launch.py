@@ -49,7 +49,9 @@
 #   * 甲方 SLAM 已加载离线 .pcd 并定位成功：map→base_link TF 连续不跳变；
 #     /robot_pose（或 /localization_status）有数据。现场无 /robot_pose 时，
 #     传 pose_topic:=/odom（相对起点，先验证 M1 链路）。
-#   * 甲方 Livox 点云已起：/livox/lidar 有数据；若起预处理则有 /livox/lidar/geo_filtered。
+#   * 甲方点云已起：默认 /livox/lidar/geo_filtered（甲方 SLAM preprocessor 产物，
+#     frame=lidar_link）；显式换回 /livox/lidar（frame=livox_frame）需
+#     preflight 确认其 X 静态 TF 可解析。
 #   * 甲方底盘已起：/cmd_vel 被底盘吸收，/odom ~50Hz。
 #   * 速度对齐：本 launch 与甲方底盘 max_linear_speed 都收敛到 ≤ 1.0 m/s。
 #   * 甲方消息 overlay 已 source（否则 gate 降级为 TF 新鲜度门控并告警）。
@@ -191,10 +193,12 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "lidar_topic",
-            default_value="/livox/lidar",
-            description="感知输入点云话题（甲方 Livox 驱动原始点云，frame=livox_frame）。"
-            "/livox/lidar/geo_filtered 是甲方 SLAM 栈 preprocessor 的产物（需 SLAM 栈 + "
-            "enable_forward:true 才有），M1 / 无 SLAM 阶段不存在，勿作默认。",
+            default_value="/livox/lidar/geo_filtered",
+            description="感知输入点云话题。默认甲方 SLAM 栈 preprocessor 的过滤点云"
+            "（frame=lidar_link，乙方 local_map 的 updateTF 查 base_link→lidar_link "
+            "静态边，实测可解析；2026-10-14 已实机读入成功）。"
+            "显式切回 /livox/lidar（甲方 Livox 驱动原始点云，frame=livox_frame）须"
+            "先经 preflight 确认 base_link→livox_frame TF 可用，不静默回退。",
         ),
         DeclareLaunchArgument(
             "use_sim_time",

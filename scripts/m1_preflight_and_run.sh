@@ -16,8 +16,8 @@ cwd="/home/demo/lyy/hivecore-navigation"
 
 echo "===== ② 确认甲方数据源已起 ====="
 ros2 topic info /odom        # 应显示 'Publisher count: 1'
-ros2 topic info /livox/lidar # 同上
-echo "  [ok] 若上面两项 Publisher count 都是 0,请先起甲方运动栈再回来。"
+ros2 topic info /livox/lidar/geo_filtered # 乙方默认输入（需 GUI-SLAM 已启动）
+echo "  [ok] 若 /odom Publisher count=0，请先起甲方运动栈；若 geo_filtered 为 0，请启动 GUI-SLAM。"
 sleep 2
 
 echo "===== ③ 编译需要重编的 3 个 C++ 包 ====="
@@ -40,6 +40,6 @@ ros2 launch dynacbf_bringup dynacbf_real.launch.py \
   pose_child_frame:=base_footprint \
   gate_require_slam:=false \
   bridge_detect_sec:=0.0 \
-  lidar_topic:=/livox/lidar \
+  lidar_topic:=/livox/lidar/geo_filtered \
   speed_limit:=0.3 \
   omega_limit:=0.4

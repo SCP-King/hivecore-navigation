@@ -19,5 +19,5 @@ exec ros2 launch dynacbf_bringup dynacbf_real.launch.py \
   gate_cmd_out:=/cmd_vel_dryrun \
   speed_limit:=0.3 \
   omega_limit:=0.4 \
-  lidar_topic:=/livox/lidar \
+  lidar_topic:=/livox/lidar/geo_filtered \
   rviz:=false

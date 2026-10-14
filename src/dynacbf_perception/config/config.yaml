@@ -1,8 +1,10 @@
 /**:
   ros__parameters:
-    # lidar_topic: "/livox/lidar"
-    # 真机默认：甲方 SLAM 预处理后的过滤点云（本仓库不含仿真）
-    lidar_topic: "/livox/lidar"
+    # lidar_topic: "/livox/lidar"  # 旧默认，已由下行取代（备选原始点云，frame=livox_frame）
+    # 真机默认（2026-10-14 已实读入验证）：甲方 SLAM 预处理过滤点云 /livox/lidar/geo_filtered
+    # （frame=lidar_link）；乙方 local_map 经 base_link→lidar_link 静态边组装成功。
+    # 显式回退原始 /livox/lidar（frame=livox_frame）须确认其 TF 可解析（preflight 5b）。
+    lidar_topic: "/livox/lidar/geo_filtered"
 
     base_link: "base_link"
 

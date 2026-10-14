@@ -32,8 +32,8 @@
 #
 # 运行前提（M1 数据源）：
 #   * 甲方 /odom 持续发布（现场 ~50Hz RELIABLE），其 frame_id 为 odom 系、
-#     child_frame_id 为 base_footprint；controller 用其 position/quaternion 直接
-#     生成 /curr_state=[x, y, yaw]。local_planner_node 只依赖 /curr_state，
+#     child_frame_id 为 base_link（现场实抓；controller 只用 position/quaternion 生成
+#     /curr_state，不依赖 child_frame_id）。local_planner_node 只依赖 /curr_state，
 #     故 /odom 一到，整条规划链即动作。
 #   * 订阅 /local_plan、/cmd_move，发布 /cmd_vel、/curr_state（均为根命名空间下的
 #     绝对名；local_planner_node 发布的是相对名 "local_plan"/"cmd_move"，在根命名

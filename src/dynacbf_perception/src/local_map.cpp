@@ -82,7 +82,10 @@ private:
         this->declare_parameter<int>("block_size", 5);
         this->declare_parameter<int>("block_num", 5);
 
-        this->declare_parameter<std::string>("lidar_topic", "/livox/lidar");
+        // 【2026-10-14 统一】默认点云 = 甲方 SLAM 过滤点云 geo_filtered（frame=lidar_link，
+        //   实测读入成功）。显式切回原始 /livox/lidar（frame=livox_frame）须确认其 TF
+        //   可解析（preflight 5b），不做静默回退。config.yaml 仍可覆盖。
+        this->declare_parameter<std::string>("lidar_topic", "/livox/lidar/geo_filtered");
         this->declare_parameter<std::string>("base_link", "base_link");
         // 【本项目对接甲方 TF 树】lidar_frame 默认对齐甲方 URDF 的 lidar_link
         // （map→base_footprint→base_link→lidar_link 链，lidar_link 为点云 frame_id）。

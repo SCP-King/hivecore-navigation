@@ -11,17 +11,22 @@
 # 所以把感知/规划/控制参数合并在一个 `/**` 块里是安全的。
 # ---------------------------------------------------------------------------
 # 真机默认假设（缺省值；launch 参数可在启动时覆盖）：
-#   * 甲方 SLAM 发布 map -> base_link（/robot_pose 或 TF），点云在 /livox/lidar
+#   * 甲方 SLAM 发布 map -> base_link（/robot_pose 或 TF），点云默认 /livox/lidar/geo_filtered
 #   * 甲方底盘收 /cmd_vel、发 /odom
 #   * HiveCore 全向轮默认速度 2.0 m/s，这里强制收敛到需求 ≤ 1.0 m/s
 # ---------------------------------------------------------------------------
 /**:
   ros__parameters:
     # ---- 感知：dynacbf_perception/local_map ----
-    # 优先用甲方 SLAM 预处理后的过滤点云；若未起预处理，回落 raw /livox/lidar。
-    # 甲方 Livox 驱动原始点云（frame=livox_frame）。/livox/lidar/geo_filtered 是
-    # SLAM 栈 preprocessor 产物（需 SLAM 栈+GUI+enable_forward:true），无 SLAM 时不存在。
-    lidar_topic: "/livox/lidar"
+    # 默认用甲方 SLAM 预处理后的过滤点云 /livox/lidar/geo_filtered（frame=lidar_link）。
+    # 【2026-10-14 现场实证】乙方 local_map 订阅 geo_filtered 后，
+    #   updateTF() 查 base_link→lidar_link 静态边（/tf_static，平移 0.295）成功，
+    #   /local_pcd(2440+点)、/gridmap、/for_obs_track 均 5Hz 持续输出 —— 真实读入成功。
+    #   故默认不再用甲方驱动原始 /livox/lidar（frame=livox_frame，需 base_link→
+    #   livox_frame 静态/组合 TF，preflight 5b 会显式检查该边可解析）。
+    #   显式切回 /livox/lidar 时必须先经 preflight 确认其 frame 所需 TF 可用；
+    #   乙方不做静默自动回退。
+    lidar_topic: "/livox/lidar/geo_filtered"
 
     # HiveCore 车身 frame 名（以现场 URDF / RSP 为准）
     base_link: "base_link"

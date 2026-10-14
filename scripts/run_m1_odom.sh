@@ -55,4 +55,4 @@ exec ros2 launch dynacbf_bringup dynacbf_real.launch.py \
   bridge_detect_sec:=0.0 \
   speed_limit:=${SPEED_LIMIT:-0.3} \
   omega_limit:=${OMEGA_LIMIT:-0.4} \
-  lidar_topic:=/livox/lidar
+  lidar_topic:=/livox/lidar/geo_filtered
