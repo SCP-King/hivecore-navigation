@@ -48,18 +48,18 @@ Visualization Manager:
         Value: /grid_map/occupancy
       Value: true
     - Class: rviz_default_plugins/RobotModel
-      Enabled: false
+      Enabled: true
       Description Source: Topic
       Description Topic:
         Depth: 5
         Durability Policy: Transient Local
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /robot_description
-      Name: Robot (双RSP错位·关)
+        Value: /robot_description_viz
+      Name: Hive2 3D Model (乙方 viz_* chain)
       TF Prefix: ""
       Update Interval: 0
-      Value: false
+      Value: true
     - Class: rviz_default_plugins/TF
       Enabled: false
       Frame Timeout: 15
@@ -99,7 +99,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 9
+      Distance: 3.0
       Enable Stereo Rendering:
         Stereo Eye Rotation: 0
         Stereo Eye Separation: 0.06
@@ -107,26 +107,10 @@ Visualization Manager:
       Focal Point:
         X: 0
         Y: 0
-        Z: 0.5
-      Name: Current View
+        Z: 0
+      Name: 3D 场景与 Hive2 模型
       Near Clip Distance: 0.01
-      Pitch: 1.05
-      Target Frame: odom
-      Value: Orbit
-      Yaw: 2.0
-    - Class: rviz_default_plugins/Orbit
-      Distance: 9
-      Enable Stereo Rendering:
-        Stereo Eye Rotation: 0
-        Stereo Eye Separation: 0.06
-        Stereo Focal Distance: 1
-      Focal Point:
-        X: 0
-        Y: 0
-        Z: 0.5
-      Name: 3D 场景视角
-      Near Clip Distance: 0.01
-      Pitch: 1.05
-      Target Frame: odom
+      Pitch: 0.85
+      Target Frame: viz_base_link
       Value: Orbit
       Yaw: 2.0

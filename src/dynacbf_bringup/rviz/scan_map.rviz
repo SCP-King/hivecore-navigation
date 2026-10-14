@@ -170,28 +170,10 @@ Visualization Manager:
         X: 0
         Y: 0
         Z: 0
-      Name: Current View
+      Name: SCAN 俯视（跟随机器人）
       Near Clip Distance: 0.01
-      Target Frame: odom
-      Value: TopDownOrtho (true)
+      Target Frame: viz_base_link
+      Value: TopDownOrtho
       X: 0
       Y: 0
-      Zoom: 1.2
-  Views:
-    - Class: rviz_default_plugins/TopDownOrtho
-      Distance: 10
-      Enable Stereo Rendering:
-        Stereo Eye Rotation: 0
-        Stereo Eye Separation: 0.06
-        Stereo Focal Distance: 1
-      Focal Point:
-        X: 0
-        Y: 0
-        Z: 0
-      Name: SCAN 俯视
-      Near Clip Distance: 0.01
-      Target Frame: odom
-      Value: TopDownOrtho (true)
-      X: 0
-      Y: 0
-      Zoom: 1.2
+      Zoom: 4.0
