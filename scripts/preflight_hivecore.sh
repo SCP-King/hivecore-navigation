@@ -296,11 +296,13 @@ esac
 hdr "5/ TF 链（M1 最小链）"
 # tf2_echo 首次调用会先打印 "Waiting ... frame does not exist"（buffer 未就绪），
 # 同一进程内后续调用才出 Translation；故每个变换轮询多次直至拿全真实值。
-tf_snapshot() { # tf_snapshot <parent> <child> → "Translation: [...]"（轮询 4 次累积）
+tf_snapshot() { # tf_snapshot <parent> <child> → "Translation: [...]"（轮询轮次累积）
+  # 【2026-10-14 加固】ros2 run tf2_ros tf2_echo 冷启动在系统负载下可达 ~4s，
+  # timeout 3 会偶发掐断导致"真实存在的边"被误报不可用 → 每轮放宽到 5s、轮次 5 轮。
   local p="$1" c="$2" i out
   out=""
-  for i in 1 2 3 4; do
-    out="$out $(timeout 3 ros2 run tf2_ros tf2_echo "$p" "$c" 2>/dev/null | grep -m1 "Translation: " || true)"
+  for i in 1 2 3 4 5; do
+    out="$out $(timeout 5 ros2 run tf2_ros tf2_echo "$p" "$c" 2>/dev/null | grep -m1 "Translation: " || true)"
     [ "$(echo "$out" | grep -c "Translation:")" -ge 1 ] && break
   done
   echo "$out"
