@@ -36,7 +36,7 @@
 #   甲方侧修好后把 pose_tf_bridge 的 enable 置 false 或从本 launch 移除即可。
 #
 # 【真机对接点（都在本文件显式声明）】
-#   1) 感知 local_map   ：lidar_topic=/livox/lidar(geo_filtered)，
+#   1) 感知 local_map   ：lidar_topic=/livox/lidar/geo_filtered（默认；frame=lidar_link），
 #                          base_link/lidar_frame=真机 frame，map_frame=map（dynacbf_real.yaml）
 #   2) 规划 planner_node：sensor_pose/body_pose = 甲方定位 /robot_pose（或传的 pose_topic）；
 #                          cloud 仍 remap 到 local_map 的 local_pcd（map 系点云）。
@@ -51,7 +51,7 @@
 #     传 pose_topic:=/odom（相对起点，先验证 M1 链路）。
 #   * 甲方点云已起：默认 /livox/lidar/geo_filtered（甲方 SLAM preprocessor 产物，
 #     frame=lidar_link）；显式换回 /livox/lidar（frame=livox_frame）需
-#     preflight 确认其 X 静态 TF 可解析。
+#     preflight 5b 确认其 base_link→livox_frame 静态链可解析。
 #   * 甲方底盘已起：/cmd_vel 被底盘吸收，/odom ~50Hz。
 #   * 速度对齐：本 launch 与甲方底盘 max_linear_speed 都收敛到 ≤ 1.0 m/s。
 #   * 甲方消息 overlay 已 source（否则 gate 降级为 TF 新鲜度门控并告警）。
