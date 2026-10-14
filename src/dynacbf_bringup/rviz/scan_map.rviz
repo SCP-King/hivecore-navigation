@@ -111,7 +111,7 @@ Visualization Manager:
         Reliability Policy: Best Effort
         Value: /local_path
     - Class: rviz_default_plugins/RobotModel
-      Enabled: false
+      Enabled: true
       Description Source: Topic
       Description Topic:
         Depth: 5
