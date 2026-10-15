@@ -1,0 +1,6 @@
+/**:
+  ros__parameters:
+    input_topic: /livox/lidar/geo_filtered
+    input_frame: lidar_link
+    min_rate_hz: 2.0
+    diagnostic_topic: /n01/scan_readiness

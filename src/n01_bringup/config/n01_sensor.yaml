@@ -1,0 +1,10 @@
+/**:
+  ros__parameters:
+    input_topic: /livox/lidar/geo_filtered
+    input_frame: lidar_link
+    raw_topic: /livox/lidar
+    publish_raw_fallback: false
+    min_rate_hz: 2.0
+    target_frame: odom
+    tf_timeout_sec: 0.05
+    use_sim_time: false
