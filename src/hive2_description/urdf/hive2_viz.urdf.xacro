@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<!--
+  hive2_viz.urdf.xacro —— 乙方独立显示用顶层 URDF。
+  复用 hive2_body.xacro（其内部调用 hive2_kinematics root_mode="base_footprint"），
+  根坐标系 = base_footprint（贴地帧，保持原始 footprint_xyz='0 0 0.90'），
+  不加任何 12cm 贴地校正、不改链长。
+  仅用于 /robot_description_viz 显示链，不与甲方同名 frame 进同一 TF 通道。
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="hive2_viz">
+  <xacro:include filename="$(find hive2_description)/urdf/hive2_body.xacro"/>
+  <xacro:hive2_body/>
+</robot>

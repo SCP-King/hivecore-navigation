@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<!--
+  Hive2 机体：base_footprint → base_link → lidar_link + 四腿四轮运动学。
+  供 motion_dev/hive2.config.xacro 与显示/仿真使用。
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:include filename="$(find hive2_description)/urdf/hive2_kinematics.xacro"/>
+
+  <xacro:macro name="hive2_body"
+    params="footprint_xyz:='0 0 0.90' lidar_xyz:='0.295 0 0' lidar_rpy:='0 0 0'">
+    <xacro:hive2_kinematics
+      root_mode="base_footprint"
+      footprint_xyz="${footprint_xyz}"
+      lidar_xyz="${lidar_xyz}"
+      lidar_rpy="${lidar_rpy}"/>
+  </xacro:macro>
+</robot>

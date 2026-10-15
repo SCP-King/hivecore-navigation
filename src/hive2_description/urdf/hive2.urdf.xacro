@@ -1,0 +1,6 @@
+<?xml version="1.0"?>
+<!-- Standalone Hive2 description (no ros2_control). Default root=world for display. -->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="hive2">
+  <xacro:include filename="$(find hive2_description)/urdf/hive2_kinematics.xacro"/>
+  <xacro:hive2_kinematics/>
+</robot>

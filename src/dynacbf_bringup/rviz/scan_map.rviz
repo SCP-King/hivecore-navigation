@@ -120,7 +120,7 @@ Visualization Manager:
         Reliability Policy: Reliable
         Value: /robot_description_viz
       Name: Robot (乙方独立Hive2模型·24link·关跳变)
-      TF Prefix: ""
+      TF Prefix: viz_
       Update Interval: 0
       Value: true
     - Class: rviz_default_plugins/TF
