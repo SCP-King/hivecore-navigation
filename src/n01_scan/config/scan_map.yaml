@@ -8,7 +8,9 @@ n01_scan_grid_map:
     mode: map_localized            # "sensor_only" (S3 snapshot) | "map_localized" (S4, default)
     map_frame: map                 # map frame name (甲方 SLAM map frame)
     lidar_frame: lidar_link        # lidar frame whose map pose is queried (甲方 SLAM frame)
-    tf_timeout_sec: 0.2            # s; max wait for lookupTransform(map<-lidar_link) at msg stamp
+    tf_timeout_sec: 0.2            # s; kept for launch/topic compatibility. scan's TF lookup
+                                  # is stamp-matched and no-timeout (perception already waited
+                                  # for the TF before publishing /local_pcd)
 
     # ---- occupancy grid (units: m) ----
     resolution: 0.05               # m/voxel

@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstring>
 #include <functional>
 #include <memory>
@@ -104,6 +105,12 @@ public:
 
     occupied_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>("/grid_map/occupancy", 10);
     inflated_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>("/grid_map/occupancy_inflate", 10);
+
+    // One subscription for both modes. The TF lookup inside on_cloud is
+    // stamp-matched and no-timeout: perception has already delayed this cloud
+    // until 甲方's map<-lidar_link TF at its stamp existed, so the lookup
+    // succeeds in steady state; a rare miss only skips one frame (the S4
+    // policy handles sustained TF loss).
     sub_ = create_subscription<sensor_msgs::msg::PointCloud2>(
       "/local_pcd", rclcpp::SensorDataQoS(),
       std::bind(&ScanGridMap::on_cloud, this, std::placeholders::_1));
@@ -139,7 +146,7 @@ private:
       throw std::invalid_argument("ground_mode must be 'none' or 'plane_ransac'");
   }
 
-  void on_cloud(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
+  void on_cloud(const sensor_msgs::msg::PointCloud2::ConstSharedPtr & msg) {
     const rclcpp::Time stamp(msg->header.stamp);
     const bool accum = (mode_ == "map_localized");
 
@@ -173,8 +180,7 @@ private:
     // Lidar position in map at the cloud's stamp (never latest/stale TF).
     geometry_msgs::msg::TransformStamped tf;
     try {
-      tf = tf_buffer_.lookupTransform(map_frame_, lidar_frame_, rclcpp::Time(msg->header.stamp),
-                                      rclcpp::Duration::from_seconds(tf_timeout_sec_));
+      tf = tf_buffer_.lookupTransform(map_frame_, lidar_frame_, rclcpp::Time(msg->header.stamp));
     } catch (const tf2::TransformException &ex) {
       (void)policy_->decide(false, 0.0, 0.0, stamp);
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 3000,

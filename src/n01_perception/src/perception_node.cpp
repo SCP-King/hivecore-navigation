@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <functional>
 #include <memory>
@@ -11,7 +12,9 @@
 #include "geometry_msgs/msg/transform_stamped.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/point_cloud2.hpp"
+#include "message_filters/subscriber.h"
 #include "tf2_ros/buffer.h"
+#include "tf2_ros/message_filter.hpp"
 #include "tf2_ros/transform_listener.h"
 #include "tf2_sensor_msgs/tf2_sensor_msgs.hpp"
 
@@ -27,9 +30,23 @@ public:
 
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(tf_buffer_, this, false);
     local_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(publish_topic_, 10);
-    sub_ = create_subscription<sensor_msgs::msg::PointCloud2>(
-      input_topic_, rclcpp::SensorDataQoS(),
-      std::bind(&PerceptionNode::on_cloud, this, std::placeholders::_1));
+
+    // 甲方's map<-lidar_link TF lags the cloud stamps (~0.5 s), so a
+    // callback-time lookupTransform(map, cloud, stamp, timeout) on a
+    // single-threaded node always "extrapolates into the future" and drops
+    // every frame (and the tf2_ros timeout path prints a spurious ERROR).
+    // tf2_ros::MessageFilter holds each cloud until a transform at ITS stamp
+    // exists in the buffer, then delivers it to on_cloud: no blocking, no
+    // timeout-lookup errors, no fabricated transform.
+    tf_filter_ = std::make_unique<tf2_ros::MessageFilter<sensor_msgs::msg::PointCloud2>>(
+      tf_buffer_, target_frame_, /*queue_size=*/30,
+      this->get_node_logging_interface(), this->get_node_clock_interface(),
+      std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::duration<double>(std::max(tf_timeout_sec_, 2.0))));
+    tf_filter_->registerCallback(std::bind(&PerceptionNode::on_cloud, this, std::placeholders::_1));
+    cloud_sub_ = std::make_unique<message_filters::Subscriber<sensor_msgs::msg::PointCloud2>>(
+      this, input_topic_, rclcpp::SensorDataQoS().get_rmw_qos_profile());
+    tf_filter_->connectInput(*cloud_sub_);
 
     RCLCPP_WARN(get_logger(),
       "S3 perception is read-only: input=%s target_frame=%s; "
@@ -38,7 +55,7 @@ public:
   }
 
 private:
-  void on_cloud(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
+  void on_cloud(const sensor_msgs::msg::PointCloud2::ConstSharedPtr & msg) {
     if (msg->data.empty() || msg->width == 0 || msg->height == 0) {
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 3000, "Received empty PointCloud2; no synthetic output.");
       return;
@@ -50,8 +67,7 @@ private:
     } else {
       try {
         const auto tf = tf_buffer_.lookupTransform(
-          target_frame_, msg->header.frame_id, rclcpp::Time(msg->header.stamp),
-          rclcpp::Duration::from_seconds(tf_timeout_sec_));
+          target_frame_, msg->header.frame_id, rclcpp::Time(msg->header.stamp));
         tf2::doTransform(*msg, cloud, tf);
       } catch (const tf2::TransformException &ex) {
         RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 3000,
@@ -78,7 +94,8 @@ private:
   double tf_timeout_sec_{}, min_z_{}, max_z_{};
   tf2_ros::Buffer tf_buffer_;
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
-  rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_;
+  std::unique_ptr<message_filters::Subscriber<sensor_msgs::msg::PointCloud2>> cloud_sub_;
+  std::unique_ptr<tf2_ros::MessageFilter<sensor_msgs::msg::PointCloud2>> tf_filter_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr local_pub_;
 };
 

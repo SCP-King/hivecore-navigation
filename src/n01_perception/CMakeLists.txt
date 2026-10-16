@@ -7,9 +7,10 @@ find_package(sensor_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_sensor_msgs REQUIRED)
+find_package(message_filters REQUIRED)
 
 add_executable(perception_node src/perception_node.cpp)
-ament_target_dependencies(perception_node rclcpp sensor_msgs tf2 tf2_ros tf2_sensor_msgs)
+ament_target_dependencies(perception_node rclcpp sensor_msgs tf2 tf2_ros tf2_sensor_msgs message_filters)
 
 install(TARGETS perception_node DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY config launch DESTINATION share/${PROJECT_NAME})
