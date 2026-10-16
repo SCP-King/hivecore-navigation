@@ -149,6 +149,15 @@ public:
     return v.x >= -nx_ && v.x <= nx_ && v.y >= -ny_ && v.y <= ny_ && v.z >= 0 && v.z < nz_;
   }
 
+  // Whether the raw (unclamped) voxel index of a world point lies inside the
+  // window. Distinct from inside(v), which takes already-clamped indices.
+  bool endpoint_inside_window(double px, double py, double pz) const {
+    const int ix = static_cast<int>(std::floor((px - cx_) / resolution_));
+    const int iy = static_cast<int>(std::floor((py - cy_) / resolution_));
+    const int iz = static_cast<int>(std::floor((pz - min_z_) / resolution_));
+    return ix >= -nx_ && ix <= nx_ && iy >= -ny_ && iy <= ny_ && iz >= 0 && iz < nz_;
+  }
+
   // Register one return (sensor origin -> point). free=true is a ground/free
   // ray: its endpoint is not added to the occlusion set and gets the miss
   // delta. Points closer than one voxel to the origin or beyond max_range are
@@ -160,10 +169,14 @@ public:
     const double r2 = rx * rx + ry * ry + rz * rz;
     if (r2 < resolution_ * resolution_) return;              // inside the sensor voxel
     if (max_range_ > 0.0 && r2 > max_range_ * max_range_) return;  // range gate
+    // Rejection must be evaluated on the UNCLAMPED endpoint index: to_voxel()
+    // clamps into the window, which would make inside() always true and the
+    // rejection dead code. A clamped return would paint a phantom occupied
+    // ring on the moving window face.
+    if (reject_out_of_window_ && !endpoint_inside_window(px, py, pz)) return;
     const Voxel origin = to_voxel(ox, oy, oz);
     const Voxel endpoint = to_voxel(px, py, pz);
     if (endpoint == origin) return;
-    if (reject_out_of_window_ && !inside(endpoint)) return;  // drop out-of-window return
     pending_.emplace_back(Ray{origin, endpoint, free});
     if (!free) hit_voxels_.insert(endpoint);  // flag hits BEFORE traversal: order-independent occlusion
   }

@@ -4,7 +4,6 @@ from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
-from launch.conditions import IfCondition
 
 
 def generate_launch_description():
@@ -38,7 +37,7 @@ def generate_launch_description():
         Node(
             package='n01_scan', executable='scan_grid_map', name='n01_scan_grid_map',
             output='screen', parameters=[{
-                'input_topic': '/local_pcd', 'map_frame': target_frame,
+                'mode': 'sensor_only', 'input_topic': '/local_pcd', 'map_frame': target_frame,
             }]),
         Node(
             package='n01_perception', executable='perception_node', name='n01_perception',

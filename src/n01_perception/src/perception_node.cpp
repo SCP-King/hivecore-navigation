@@ -19,9 +19,9 @@ class PerceptionNode final : public rclcpp::Node {
 public:
   PerceptionNode() : Node("n01_perception"), tf_buffer_(get_clock()) {
     input_topic_ = declare_parameter<std::string>("input_topic", "/livox/lidar/geo_filtered");
-    target_frame_ = declare_parameter<std::string>("target_frame", "odom");
+    target_frame_ = declare_parameter<std::string>("target_frame", "map");
     publish_topic_ = declare_parameter<std::string>("local_pcd_topic", "/local_pcd");
-    tf_timeout_sec_ = declare_parameter<double>("tf_timeout_sec", 0.05);
+    tf_timeout_sec_ = declare_parameter<double>("tf_timeout_sec", 0.2);
     min_z_ = declare_parameter<double>("min_z", -0.2);
     max_z_ = declare_parameter<double>("max_z", 1.5);
 

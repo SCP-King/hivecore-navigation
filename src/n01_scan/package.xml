@@ -2,12 +2,15 @@
 <package format="3">
   <name>n01_scan</name>
   <version>0.1.0</version>
-  <description>Evidence-first point-cloud input validation for N-01 S3.</description>
+  <description>Evidence-first point-cloud input validation and world-coordinate SCAN occupancy map for N-01 (S3/S4).</description>
   <maintainer email="n01@example.com">N-01</maintainer>
   <license>Apache-2.0</license>
   <buildtool_depend>ament_cmake</buildtool_depend>
   <depend>rclcpp</depend>
   <depend>sensor_msgs</depend>
   <depend>diagnostic_msgs</depend>
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
+  <depend>geometry_msgs</depend>
   <export><build_type>ament_cmake</build_type></export>
 </package>

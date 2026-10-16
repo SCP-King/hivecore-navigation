@@ -8,6 +8,7 @@
 #include "voxel_map.hpp"
 #include "ground_filter.hpp"
 #include "map_policy.hpp"
+#include "geometry_msgs/msg/transform_stamped.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/point_cloud2.hpp"
 #include "sensor_msgs/point_cloud2_iterator.hpp"
@@ -82,17 +83,17 @@ public:
     if (accum) map_->set_reject_out_of_window(true);
 
     ground_ = std::make_unique<GroundFilter>(GroundParams{
-      .mode = ground_mode_,
-      .subsample_stride = static_cast<std::size_t>(std::max(ground_subsample_stride_, 1)),
-      .max_points = static_cast<std::size_t>(std::max(ground_max_points_, 0)),
-      .iterations = std::max(ground_iterations_, 1),
-      .lcg_seed = 1337,
-      .inlier_dist_m = ground_inlier_dist_m_,
-      .normal_max_cos = ground_normal_max_cos_,
-      .min_inlier_frac = ground_min_inlier_frac_,
-      .fallback = ground_fallback_,
-      .fallback_percentile_q = ground_fallback_percentile_q_,
-      .fallback_radius_m = ground_fallback_radius_m_,
+      ground_mode_,
+      std::max(ground_subsample_stride_, 1),
+      static_cast<std::size_t>(std::max(ground_max_points_, 0)),
+      std::max(ground_iterations_, 1),
+      1337u,
+      ground_inlier_dist_m_,
+      ground_normal_max_cos_,
+      ground_min_inlier_frac_,
+      ground_fallback_,
+      ground_fallback_percentile_q_,
+      ground_fallback_radius_m_,
     });
     policy_ = std::make_unique<MapLocalizedPolicy>();
     policy_->loss_threshold = std::max(tf_loss_frames_before_reset_, 1);
@@ -156,7 +157,7 @@ private:
       publish(infl, inflated_pub_, stamp);
       RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 5000,
         "S3 snapshot: cells=%zu occ=%zu infl=%zu stamp=%u.%u", map_->size(), occ.size(),
-        infl.size(), stamp.sec, stamp.nanosec);
+        infl.size(), msg->header.stamp.sec, msg->header.stamp.nanosec);
       return;
     }
 
@@ -178,7 +179,7 @@ private:
       (void)policy_->decide(false, 0.0, 0.0, stamp);
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 3000,
         "No TF %s <- %s at cloud stamp %u.%u; frame skipped (no wrong update): %s",
-        map_frame_.c_str(), lidar_frame_.c_str(), stamp.sec, stamp.nanosec, ex.what());
+        map_frame_.c_str(), lidar_frame_.c_str(), msg->header.stamp.sec, msg->header.stamp.nanosec, ex.what());
       return;
     }
     const double ox = tf.transform.translation.x;
@@ -221,7 +222,7 @@ private:
       "S4 update[%s]: cells=%zu occ=%zu infl=%zu window=(%.2f,%.2f) ground_z=%.3f(method=%s) stamp=%u.%u",
       action == MapLocalizedPolicy::Action::ResetThenUpdate ? "RESET" : "acc",
       map_->size(), occ.size(), infl.size(), map_->window_center_x(), map_->window_center_y(),
-      gr.ground_z, gr.method.c_str(), stamp.sec, stamp.nanosec);
+      gr.ground_z, gr.method.c_str(), msg->header.stamp.sec, msg->header.stamp.nanosec);
   }
 
   // Collect finite x/y/z points from a PointCloud2 (map or lidar frame).

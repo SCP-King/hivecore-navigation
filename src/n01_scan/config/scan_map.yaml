@@ -1,0 +1,49 @@
+# S4 map_localized scan occupancy map parameters (n01_scan_grid_map)
+# All lengths are in metres; all coordinates are in the MAP frame (甲方 SLAM map)
+# unless explicitly noted. Sources: 甲方 point-cloud coordinate definitions and
+# 参数文本.txt geometry (authoritative) unless noted "乙方 design".
+n01_scan_grid_map:
+  ros__parameters:
+    # ---- operating mode / frames ----
+    mode: map_localized            # "sensor_only" (S3 snapshot) | "map_localized" (S4, default)
+    map_frame: map                 # map frame name (甲方 SLAM map frame)
+    lidar_frame: lidar_link        # lidar frame whose map pose is queried (甲方 SLAM frame)
+    tf_timeout_sec: 0.2            # s; max wait for lookupTransform(map<-lidar_link) at msg stamp
+
+    # ---- occupancy grid (units: m) ----
+    resolution: 0.05               # m/voxel
+    half_x: 5.0                    # m; window half size x (+/-half_x around sensor)
+    half_y: 5.0                    # m; window half size y
+    min_z: -1.0                    # m; z lower bound in map frame
+    max_z: 2.0                     # m; z upper bound in map frame
+    p_hit: 0.85                    # occupancy hit probability (log-odds outcome)
+    p_miss: 0.30                   # occupancy miss probability
+    p_min: 0.12                    # floor clamp probability
+    p_max: 0.98                    # ceil clamp probability
+    p_occ: 0.80                    # occupancy threshold probability
+    inflation_radius_voxels: 2     # voxels; 2D inflation radius
+    max_cells: 400000              # cells; bounded-memory cap
+    max_range: 30.0                # m; rays beyond this are gated
+
+    # ---- localization-continuity / recovery (Section 3) ----
+    # Frames: consecutive TF-loss frames before the map is declared LOST.
+    tf_loss_frames_before_reset: 1
+    # m; horizontal map displacement that counts as a relocalization jump.
+    relocalization_jump_m: 2.0
+    # m/s; max plausible robot speed, used to make the jump check time-aware so a
+    # legitimate large motion at a low frame rate does not wipe a good map.
+    relocalization_max_speed_mps: 5.0
+
+    # ---- ground classification (Section 4) ----
+    # Points are in MAP frame. No manually-measured robot height is used; the
+    # sensor origin is the TF-transformed lidar_link position.
+    ground_mode: plane_ransac          # "none" | "plane_ransac"
+    ground_subsample_stride: 5         # points; deterministic stride subsampling
+    ground_max_points: 20000           # points; RANSAC candidate cap
+    ground_iterations: 24              # fixed RANSAC iteration count (deterministic)
+    ground_inlier_dist_m: 0.04         # m; ~1 voxel at 0.05 m resolution
+    ground_normal_max_cos: 0.8660254   # cos(30 deg); |z normal| floor, map gravity-aligned
+    ground_min_inlier_frac: 0.25       # 0..1; plane candidate min inlier fraction
+    ground_fallback: robust_z_percentile  # "none" | "robust_z_percentile"
+    ground_fallback_percentile_q: 2.0      # percent; low z percentile for ground height
+    ground_fallback_radius_m: 3.0          # m; radius around lidar map xy projection
