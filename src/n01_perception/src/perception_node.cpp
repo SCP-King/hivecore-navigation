@@ -14,6 +14,7 @@
 #include "sensor_msgs/msg/point_cloud2.hpp"
 #include "message_filters/subscriber.h"
 #include "tf2_ros/buffer.h"
+#include "tf2_ros/create_timer_ros.hpp"
 #include "tf2_ros/message_filter.hpp"
 #include "tf2_ros/transform_listener.h"
 #include "tf2_sensor_msgs/tf2_sensor_msgs.hpp"
@@ -29,6 +30,12 @@ public:
     max_z_ = declare_parameter<double>("max_z", 1.5);
 
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(tf_buffer_, this, false);
+    // tf2_ros::MessageFilter waits for stamp-matched transforms via an async
+    // waitForTransform, which needs a node-backed timer factory registered on
+    // the buffer. Without it, the first queued cloud throws
+    // CreateTimerInterfaceException and aborts the node.
+    tf_buffer_.setCreateTimerInterface(std::make_shared<tf2_ros::CreateTimerROS>(
+      this->get_node_base_interface(), this->get_node_timers_interface()));
     local_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(publish_topic_, 10);
 
     // 甲方's map<-lidar_link TF lags the cloud stamps (~0.5 s), so a
