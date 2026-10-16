@@ -29,7 +29,12 @@ public:
     min_z_ = declare_parameter<double>("min_z", -0.2);
     max_z_ = declare_parameter<double>("max_z", 1.5);
 
-    tf_listener_ = std::make_shared<tf2_ros::TransformListener>(tf_buffer_, this, false);
+    // dedicated TF thread: TransformListener spin_thread=true spawns a real
+    // std::thread spinning /tf+/tf_static and sets buffer_.setUsingDedicatedThread(true)
+    // itself (see transform_listener.hpp). The MessageFilter's async waitForTransform
+    // timers then run without the spurious threading_error, and stamp-matched lookups
+    // succeed on the populated buffer.
+    tf_listener_ = std::make_shared<tf2_ros::TransformListener>(tf_buffer_, this, true);
     // tf2_ros::MessageFilter waits for stamp-matched transforms via an async
     // waitForTransform, which needs a node-backed timer factory registered on
     // the buffer. Without it, the first queued cloud throws

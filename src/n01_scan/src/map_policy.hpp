@@ -55,9 +55,10 @@ struct MapLocalizedPolicy {
     lost = false;
 
     bool jump = false;
+    double dt = 0.0, dist = 0.0;
     if (have_prev) {
-      const double dt = (stamp - prev_stamp).seconds();
-      const double dist = std::hypot(ox - prev_x, oy - prev_y);
+      dt = (stamp - prev_stamp).seconds();
+      dist = std::hypot(ox - prev_x, oy - prev_y);
       jump = dist > jump_m && dist > max_speed_mps * std::max(dt, 0.0);
     }
     prev_x = ox;
@@ -66,12 +67,13 @@ struct MapLocalizedPolicy {
     have_prev = true;
 
     if (was_lost) {
-      reason = "recovered after " + std::to_string(loss_threshold) +
-               " TF loss frame(s): map reset and recentered at recovered origin";
+      reason = "TF_LOST_RECOVERY (recovered after " + std::to_string(loss_threshold) +
+               " TF loss frame(s); map reset and recentered at recovered origin)";
       return Action::ResetThenUpdate;
     }
     if (jump) {
-      reason = "relocalization jump detected: map reset and recentered";
+      reason = "RELOCALIZATION_JUMP (dist " + std::to_string(dist) + " m in " +
+               std::to_string(dt) + " s; map reset and recentered)";
       return Action::ResetThenUpdate;
     }
     reason = "update";

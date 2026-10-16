@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <functional>
 #include <memory>
@@ -10,10 +11,14 @@
 #include "ground_filter.hpp"
 #include "map_policy.hpp"
 #include "geometry_msgs/msg/transform_stamped.hpp"
+#include "message_filters/message_event.h"
+#include "message_filters/subscriber.h"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/point_cloud2.hpp"
 #include "sensor_msgs/point_cloud2_iterator.hpp"
 #include "tf2_ros/buffer.h"
+#include "tf2_ros/create_timer_ros.hpp"
+#include "tf2_ros/message_filter.hpp"
 #include "tf2_ros/transform_listener.h"
 
 namespace n01_scan {
@@ -101,19 +106,63 @@ public:
     policy_->jump_m = relocalization_jump_m_;
     policy_->max_speed_mps = relocalization_max_speed_mps_;
 
-    tf_listener_ = std::make_shared<tf2_ros::TransformListener>(tf_buffer_, this, false);
+    // dedicated TF thread: spin_thread=true spawns a real std::thread spinning
+    // /tf+/tf_static and calls buffer_.setUsingDedicatedThread(true) internally,
+    // so stamp-matched no-timeout lookups do not hit the threading_error path.
+    tf_listener_ = std::make_shared<tf2_ros::TransformListener>(tf_buffer_, this, true);
 
     occupied_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>("/grid_map/occupancy", 10);
     inflated_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>("/grid_map/occupancy_inflate", 10);
 
-    // One subscription for both modes. The TF lookup inside on_cloud is
-    // stamp-matched and no-timeout: perception has already delayed this cloud
-    // until 甲方's map<-lidar_link TF at its stamp existed, so the lookup
-    // succeeds in steady state; a rare miss only skips one frame (the S4
-    // policy handles sustained TF loss).
-    sub_ = create_subscription<sensor_msgs::msg::PointCloud2>(
-      "/local_pcd", rclcpp::SensorDataQoS(),
-      std::bind(&ScanGridMap::on_cloud, this, std::placeholders::_1));
+    // TF waiting gate for map_localized. perception already gated /local_pcd on
+    // 甲方's map<-lidar_link TF at the cloud stamp in ITS OWN buffer, but scan
+    // has a separate TF buffer whose copy of that transform can arrive up to
+    // ~0.1 s later (DDS transport). A raw stamp-matched lookup then throws
+    // "extrapolation into the future" and skips the frame. tf2_ros::MessageFilter
+    // holds each /local_pcd until canTransform(lidar_link, map, stamp) is true in
+    // scan's own buffer (target_frame=lidar_link: source is the cloud's frame map,
+    // so the gate is exactly the map<-lidar_link transform at the cloud stamp),
+    // then calls on_cloud with the ORIGINAL stamp and map-frame points untouched.
+    // Bounded queue (30) + finite buffer_timeout: on sustained TF loss queued
+    // frames are dropped (counted) instead of piling up. In sensor_only there is
+    // no TF dependency and the plain subscription is kept (S3 semantics).
+    tf_buffer_.setCreateTimerInterface(std::make_shared<tf2_ros::CreateTimerROS>(
+      get_node_base_interface(), get_node_timers_interface()));
+    if (mode_ == "map_localized") {
+      cloud_sub_ = std::make_unique<message_filters::Subscriber<sensor_msgs::msg::PointCloud2>>(
+        this, "/local_pcd", rclcpp::SensorDataQoS().get_rmw_qos_profile());
+      tf_filter_ = std::make_unique<tf2_ros::MessageFilter<sensor_msgs::msg::PointCloud2>>(
+        tf_buffer_, lidar_frame_, /*queue_size=*/30,
+        get_node_logging_interface(), get_node_clock_interface(),
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+          std::chrono::duration<double>(std::max(tf_timeout_sec_, 2.0))));
+      // Count frames entering the gate (received) and those delivered to on_cloud
+      // (delivered); filter_drops = received - delivered reports queue-full,
+      // too-old and buffer-timeout drops with their reason from MessageFilter logs.
+      cloud_sub_->registerCallback([this](const sensor_msgs::msg::PointCloud2::ConstSharedPtr & m) {
+        ++received_;
+        tf_filter_->add(message_filters::MessageEvent<sensor_msgs::msg::PointCloud2 const>(m));
+      });
+      tf_filter_->registerCallback(std::bind(&ScanGridMap::on_cloud, this, std::placeholders::_1));
+    } else {
+      sub_ = create_subscription<sensor_msgs::msg::PointCloud2>(
+        "/local_pcd", rclcpp::SensorDataQoS(),
+        std::bind(&ScanGridMap::on_cloud, this, std::placeholders::_1));
+    }
+
+    // Periodic gate statistics (map_localized only): received / delivered /
+    // (received-delivered) filter drops and lookup misses, so frame loss is
+    // quantifiable instead of inferred from the 5 s-throttled S4 update log.
+    if (mode_ == "map_localized") {
+      gate_stats_timer_ = create_wall_timer(std::chrono::seconds(10), [this]() {
+        RCLCPP_INFO(get_logger(),
+          "TF gate stats: received=%lu delivered=%lu filter_drops=%lu lookup_timeout=%lu "
+          "(filter drops = received - delivered = queue-full/too-old/buffer-timeout)",
+          received_, delivered_,
+          static_cast<unsigned long>(received_ > delivered_ ? received_ - delivered_ : 0),
+          lookup_timed_out_);
+      });
+    }
 
     RCLCPP_INFO(get_logger(),
         "S4 map node: mode=%s input=/local_pcd lidar_frame=%s out_frame=%s res=%.3f z=[%.1f,%.1f] "
@@ -147,6 +196,7 @@ private:
   }
 
   void on_cloud(const sensor_msgs::msg::PointCloud2::ConstSharedPtr & msg) {
+    ++delivered_;
     const rclcpp::Time stamp(msg->header.stamp);
     const bool accum = (mode_ == "map_localized");
 
@@ -182,6 +232,7 @@ private:
     try {
       tf = tf_buffer_.lookupTransform(map_frame_, lidar_frame_, rclcpp::Time(msg->header.stamp));
     } catch (const tf2::TransformException &ex) {
+      ++lookup_timed_out_;
       (void)policy_->decide(false, 0.0, 0.0, stamp);
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 3000,
         "No TF %s <- %s at cloud stamp %u.%u; frame skipped (no wrong update): %s",
@@ -224,11 +275,22 @@ private:
     const auto infl = map_->inflated();
     publish(occ, occupied_pub_, stamp);
     publish(infl, inflated_pub_, stamp);
-    RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 5000,
-      "S4 update[%s]: cells=%zu occ=%zu infl=%zu window=(%.2f,%.2f) ground_z=%.3f(method=%s) stamp=%u.%u",
-      action == MapLocalizedPolicy::Action::ResetThenUpdate ? "RESET" : "acc",
-      map_->size(), occ.size(), infl.size(), map_->window_center_x(), map_->window_center_y(),
-      gr.ground_z, gr.method.c_str(), msg->header.stamp.sec, msg->header.stamp.nanosec);
+    if (action == MapLocalizedPolicy::Action::ResetThenUpdate) {
+      // Every RESET is logged unthrottled with its specific reason, the
+      // consecutive-loss count at decision time and the pose before/after.
+      RCLCPP_INFO(get_logger(),
+        "S4 update[RESET] reason=%s loss_count=%d prev=(%.2f,%.2f)->(%.2f,%.2f) "
+        "cells=%zu occ=%zu infl=%zu stamp=%u.%u",
+        policy_->reason.c_str(), policy_->loss_count, last_ox_, last_oy_, ox, oy,
+        map_->size(), occ.size(), infl.size(), msg->header.stamp.sec, msg->header.stamp.nanosec);
+    } else {
+      RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 5000,
+        "S4 update[acc]: cells=%zu occ=%zu infl=%zu window=(%.2f,%.2f) ground_z=%.3f(method=%s) stamp=%u.%u",
+        map_->size(), occ.size(), infl.size(), map_->window_center_x(), map_->window_center_y(),
+        gr.ground_z, gr.method.c_str(), msg->header.stamp.sec, msg->header.stamp.nanosec);
+    }
+    last_ox_ = ox;
+    last_oy_ = oy;
   }
 
   // Collect finite x/y/z points from a PointCloud2 (map or lidar frame).
@@ -295,6 +357,15 @@ private:
   tf2_ros::Buffer tf_buffer_;
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_;
+  std::unique_ptr<message_filters::Subscriber<sensor_msgs::msg::PointCloud2>> cloud_sub_;
+  std::unique_ptr<tf2_ros::MessageFilter<sensor_msgs::msg::PointCloud2>> tf_filter_;
+  rclcpp::TimerBase::SharedPtr gate_stats_timer_;
+  // Frame accounting (map_localized): received_ = clouds entering the gate,
+  // delivered_ = clouds on_cloud actually processed, filter_drops_ =
+  // received_-delivered_ (queue-full / too-old / buffer-timeout),
+  // lookup_timed_out_ = stamp-matched lookup still missing despite the gate.
+  unsigned long received_ = 0, delivered_ = 0, lookup_timed_out_ = 0;
+  double last_ox_ = 0.0, last_oy_ = 0.0;  // last processed lidar origin (map frame)
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr occupied_pub_, inflated_pub_;
 };
 

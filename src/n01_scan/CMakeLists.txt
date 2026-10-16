@@ -8,12 +8,13 @@ find_package(diagnostic_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(message_filters REQUIRED)
 
 add_executable(scan_validator src/scan_validator.cpp)
 ament_target_dependencies(scan_validator rclcpp sensor_msgs diagnostic_msgs)
 
 add_executable(scan_grid_map src/scan_grid_map.cpp)
-ament_target_dependencies(scan_grid_map rclcpp sensor_msgs tf2 tf2_ros geometry_msgs)
+ament_target_dependencies(scan_grid_map rclcpp sensor_msgs tf2 tf2_ros geometry_msgs message_filters)
 
 if(BUILD_TESTING)
   add_executable(test_voxel_map src/test_voxel_map.cpp)
