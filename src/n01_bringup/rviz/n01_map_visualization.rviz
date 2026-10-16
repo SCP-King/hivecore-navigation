@@ -14,11 +14,20 @@ Visualization Manager:
       Size (Pixels): 2
     - Class: rviz_default_plugins/PointCloud2
       Enabled: true
-      Name: Occupancy Output
+      Name: Occupancy (SCAN log-odds)
       Topic: /grid_map/occupancy
+      Color Transformer: FlatColor
+      Size (Pixels): 3
+      Color: 255; 0; 0
+    - Class: rviz_default_plugins/PointCloud2
+      Enabled: true
+      Name: Occupancy Inflate
+      Topic: /grid_map/occupancy_inflate
+      Color Transformer: FlatColor
       Size (Pixels): 2
+      Color: 255; 128; 0
   Global Options:
-    Fixed Frame: odom
+    Fixed Frame: map
     Background Color: 48; 48; 48
   Tools:
     - Class: rviz_default_plugins/Interact

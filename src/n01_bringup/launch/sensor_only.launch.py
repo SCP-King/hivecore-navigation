@@ -17,12 +17,12 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('input_topic', default_value='/livox/lidar/geo_filtered'),
         DeclareLaunchArgument('input_frame', default_value='lidar_link'),
-        DeclareLaunchArgument('target_frame', default_value='odom'),
+        DeclareLaunchArgument('target_frame', default_value='lidar_link'),
         DeclareLaunchArgument('rviz', default_value='false'),
         DeclareLaunchArgument(
             'rviz_config',
             default_value=PathJoinSubstitution([
-                FindPackageShare('n01_bringup'), 'rviz', 'n01_map_visualization.rviz'])),
+                FindPackageShare('n01_bringup'), 'rviz', 'n01_sensor_only.rviz'])),
         LogInfo(msg=[
             '[N-01 S3 sensor_only] Read-only. ',
             'geo_filtered requires vendor GUI-SLAM/preprocessor with enable_forward=true; ',
@@ -34,6 +34,11 @@ def generate_launch_description():
             package='n01_scan', executable='scan_validator', name='n01_scan_validator',
             output='screen', parameters=[{
                 'input_topic': input_topic, 'input_frame': input_frame,
+            }]),
+        Node(
+            package='n01_scan', executable='scan_grid_map', name='n01_scan_grid_map',
+            output='screen', parameters=[{
+                'input_topic': '/local_pcd', 'map_frame': target_frame,
             }]),
         Node(
             package='n01_perception', executable='perception_node', name='n01_perception',

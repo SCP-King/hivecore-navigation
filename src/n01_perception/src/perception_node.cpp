@@ -21,14 +21,12 @@ public:
     input_topic_ = declare_parameter<std::string>("input_topic", "/livox/lidar/geo_filtered");
     target_frame_ = declare_parameter<std::string>("target_frame", "odom");
     publish_topic_ = declare_parameter<std::string>("local_pcd_topic", "/local_pcd");
-    occupancy_topic_ = declare_parameter<std::string>("occupancy_topic", "/grid_map/occupancy");
     tf_timeout_sec_ = declare_parameter<double>("tf_timeout_sec", 0.05);
     min_z_ = declare_parameter<double>("min_z", -0.2);
     max_z_ = declare_parameter<double>("max_z", 1.5);
 
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(tf_buffer_, this, false);
     local_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(publish_topic_, 10);
-    occupancy_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(occupancy_topic_, 10);
     sub_ = create_subscription<sensor_msgs::msg::PointCloud2>(
       input_topic_, rclcpp::SensorDataQoS(),
       std::bind(&PerceptionNode::on_cloud, this, std::placeholders::_1));
@@ -65,9 +63,8 @@ private:
 
     filter_z(cloud);
     local_pub_->publish(cloud);
-    occupancy_pub_->publish(cloud);
     RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 5000,
-      "S3 perception output: %s and /grid_map/occupancy frame=%s points=%u",
+      "S3 perception output: %s frame=%s points=%u",
       publish_topic_.c_str(), cloud.header.frame_id.c_str(), cloud.width * cloud.height);
   }
 
@@ -77,12 +74,12 @@ private:
     (void)cloud;
   }
 
-  std::string input_topic_, target_frame_, publish_topic_, occupancy_topic_;
+  std::string input_topic_, target_frame_, publish_topic_;
   double tf_timeout_sec_{}, min_z_{}, max_z_{};
   tf2_ros::Buffer tf_buffer_;
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_;
-  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr local_pub_, occupancy_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr local_pub_;
 };
 
 int main(int argc, char **argv) {
