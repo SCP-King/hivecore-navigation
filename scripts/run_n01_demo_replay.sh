@@ -20,6 +20,8 @@ GRAPH_READY=0
 LAUNCH_PID=""
 RVIZ_PID=""
 REC_PID=""
+PCD_PID=""
+PCD_ENABLED=NO
 PIDS=()
 if (( EUID==0 )); then echo "Do not run as root/sudo" >&2; exit 2; fi
 mkdir -p "$OUT/logs" "$OUT/ros_home/log" "$OUT/tmp"
@@ -85,17 +87,21 @@ PY
       RESULT="INCOMPLETE"; REASON="g3_frame_evidence_validation_failed"; rc=11
     fi
   fi
+  if [[ "$PCD_ENABLED" == "YES" && "$RESULT" == "PASS" && ! -s "$OUT/pcd_static_preview.json" ]]; then
+    RESULT="INCOMPLETE"; REASON="static_pcd_preview_not_published"; rc=11
+  fi
   if (( cleaned!=0 || graph_clean!=0 )); then
     RESULT="CLEANUP_FAILED"; REASON="owned_process_or_ros_graph_residual"; rc=12
   elif [[ "$RESULT" == "PASS" ]] && (( vid_ok!=0 || gif_ok!=0 )); then
     RESULT="INCOMPLETE"; REASON="recording_or_preview_export_failed"; rc=10
   fi
-  printf 'result=%s\nreason=%s\nexit_code=%s\nprocess_cleanup=%s\nros_graph_cleanup=%s\nvideo_created=%s\ngif_created=%s\n' \
+  printf 'result=%s\nreason=%s\nexit_code=%s\nprocess_cleanup=%s\nros_graph_cleanup=%s\nvideo_created=%s\ngif_created=%s\nstatic_pcd_requested=%s\nstatic_pcd_report=%s\n' \
     "$RESULT" "$REASON" "$rc" \
     "$([[ $cleaned == 0 ]] && echo CLEAN || echo RESIDUAL)" \
     "$([[ $graph_clean == 0 ]] && echo CLEAN || echo RESIDUAL)" \
     "$([[ $vid_ok == 0 ]] && echo YES || echo NO)" \
     "$([[ $gif_ok == 0 ]] && echo YES || echo NO)" \
+    "$PCD_ENABLED" "$([[ -s "$OUT/pcd_static_preview.json" ]] && echo YES || echo NO)" \
     > "$OUT/summary.txt"
   echo "======== N01 G1-G3 DEMO ========"
   cat "$OUT/summary.txt"
@@ -147,6 +153,34 @@ if [[ -n "$(git -C "$ROOT" status --porcelain=v1 --untracked-files=all -- script
   git -C "$ROOT" status --short -- scripts src/n01_offline_integration rviz
   exit 2
 fi
+# PCD background is opt-in only and is never forwarded into SCAN.
+if [[ -n "${N01_STATIC_PCD_PATH:-}" ]]; then
+  if [[ "${N01_PCD_MAP_FRAME_ASSERTED:-}" != "1" ]]; then
+    RESULT="ABORT"; REASON="static_pcd_map_frame_not_asserted"
+    say "PCD coordinates must first be verified against recorded Bag map frame"
+    exit 2
+  fi
+  if [[ ! -f "$N01_STATIC_PCD_PATH" ]]; then
+    RESULT="FAIL"; REASON="static_pcd_file_missing"
+    exit 2
+  fi
+  if ! PYTHONPATH="$ROOT/src/n01_offline_integration${PYTHONPATH:+:$PYTHONPATH}" \
+    python3 - "$N01_STATIC_PCD_PATH" > "$OUT/logs/pcd_header.txt" 2>&1 <<'PY'
+from n01_offline_integration.pcd_static_preview import inspect_pcd
+import sys
+meta=inspect_pcd(sys.argv[1])
+print("PCD_PREVIEW_HEADER_OK",meta["format"],meta["count"])
+PY
+  then
+    RESULT="FAIL"; REASON="static_pcd_header_invalid_or_unsupported"
+    exit 2
+  fi
+  PCD_ENABLED=YES
+  export N01_PCD_PREVIEW_REPORT_PATH="$OUT/pcd_static_preview.json"
+  say "Optional PCD BACKGROUND enabled; view-only, frame overlap not independently validated"
+else
+  say "No N01_STATIC_PCD_PATH: full PCD map NOT loaded; showing historical scan frames only"
+fi
 say "Preflight: no other nodes or control publishers in isolated ROS domain"
 if ! timeout 12s python3 "$GRAPH" > "$OUT/logs/preflight_graph.json" 2>&1; then
   RESULT="FAIL"; REASON="preflight_ros_graph_unavailable"; exit 2
@@ -183,12 +217,21 @@ LAUNCH_PID="$!"; PIDS+=("$LAUNCH_PID")
 setsid ros2 run n01_offline_integration n01_demo_markers \
     > "$OUT/logs/demo_markers.log" 2>&1 &
 PIDS+=("$!")
+if [[ "$PCD_ENABLED" == "YES" ]]; then
+  setsid ros2 run n01_offline_integration n01_static_pcd \
+    > "$OUT/logs/static_pcd.log" 2>&1 &
+  PCD_PID="$!"; PIDS+=("$PCD_PID")
+fi
 QT_QPA_PLATFORM=xcb setsid rviz2 -d "$ROOT/rviz/n01_full_pipeline.rviz" \
     > "$OUT/logs/rviz.log" 2>&1 &
 RVIZ_PID="$!"; PIDS+=("$RVIZ_PID")
 sleep 5
 if ! kill -0 "$LAUNCH_PID" || ! kill -0 "$RVIZ_PID"; then
   RESULT="FAIL"; REASON="bag_or_rviz_exited_early"; exit 5
+fi
+if [[ "$PCD_ENABLED" == "YES" ]] && ! kill -0 "$PCD_PID"; then
+  RESULT="FAIL"; REASON="static_pcd_preview_crashed"
+  tail -n 30 "$OUT/logs/static_pcd.log"; exit 5
 fi
 setsid bash "$ROOT/scripts/record_n01_demo.sh" "$VIDEO" "$RVIZ_PID" \
     > "$OUT/logs/recording.log" 2>&1 &
@@ -202,6 +245,10 @@ while [[ ! -s "$REPORT" ]]; do
   fi
   if ! kill -0 "$LAUNCH_PID"; then
     RESULT="FAIL"; REASON="bag_pipeline_exited_before_report"; exit 7
+  fi
+  if [[ "$PCD_ENABLED" == "YES" ]] && ! kill -0 "$PCD_PID"; then
+    RESULT="FAIL"; REASON="static_pcd_preview_exited_early"
+    tail -n 30 "$OUT/logs/static_pcd.log"; exit 7
   fi
   if ! kill -0 "$RVIZ_PID" || ! kill -0 "$REC_PID"; then
     RESULT="FAIL"; REASON="rviz_or_recording_exited_early"
