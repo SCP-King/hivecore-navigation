@@ -1,4 +1,0 @@
-[WARN] [1793175676.466170425] [n01_perception]: S3 perception is read-only: input=/livox/lidar/geo_filtered target_frame=map; it publishes perception PointCloud2 only and never publishes TF or velocity.
-[INFO] [1793175681.046194565] [n01_perception]: S3 perception output: /local_pcd frame=map points=12382
-[INFO] [1793175681.337573786] [n01_perception]: Message Filter dropping message: frame 'lidar_link' at time 1793112660.978 for reason 'the timestamp on the message is earlier than all the data in the transform cache'
-[INFO] [1793175683.887520355] [n01_perception]: Message Filter dropping message: frame 'lidar_link' at time 1793112663.878 for reason 'the timestamp on the message is earlier than all the data in the transform cache'

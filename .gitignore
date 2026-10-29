@@ -1,22 +1,33 @@
-# colcon 构建产物
+# Colcon outputs (all build locations)
 /build/
 /install/
 /log/
+**/build/
+**/install/
+**/log/
 
-# Python 缓存与打包产物
-__pycache__/
+# Generated test data, ROS logs and caches
+**/output/
+**/.ros_home/
+**/output_occupancy_voxel_centers.txt
+**/__pycache__/
 *.py[cod]
 *.egg-info/
-
-# 编辑器与系统文件
-.vscode/
-.idea/
+*.bag
+*.db3
+*.mcap
+*.pcd
+*.npy
+*.log
+*.tmp
 *.swp
 *.swo
 *~
-.DS_Store
-
-# ROS 运行期产物
-*.bag
-*.db3
 .rviz_log
+.DS_Store
+.vscode/
+.idea/
+
+# Documentation and local datasets are kept outside this source-only repository
+/docs/
+/n01_runtime/

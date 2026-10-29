@@ -1,2 +1,0 @@
-[INFO] [1793196466.734045553] [n01_mock_obstacle]: 模拟动态障碍: 中心(11.05,7.2) r=0.15m sampling=0.05m 点=29 延迟 1.0s → /grid_map/occupancy (隔离测试话题环境)
-[INFO] [1793196467.716775319] [n01_mock_obstacle]: 动态障碍注入开始 (持续发布)

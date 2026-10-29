@@ -1,9 +1,0 @@
-[INFO] [1793175678.935479314] [rosbag2_storage]: Opened database '/home/demo/lyy/slam_data/bags/bag_20261027_225100/bag_20261027_225100_0.db3' for READ_ONLY.
-[INFO] [1793175678.935658967] [rosbag2_player]: Set rate to 1
-[INFO] [1793175678.955829726] [rosbag2_player]: Adding keyboard callbacks.
-[INFO] [1793175678.955933515] [rosbag2_player]: Press SPACE for Pause/Resume
-[INFO] [1793175678.956051947] [rosbag2_player]: Press CURSOR_RIGHT for Play Next Message
-[INFO] [1793175678.956118861] [rosbag2_player]: Press CURSOR_UP for Increase Rate 10%
-[INFO] [1793175678.956164538] [rosbag2_player]: Press CURSOR_DOWN for Decrease Rate 10%
-[INFO] [1793175678.956652132] [rosbag2_storage]: Opened database '/home/demo/lyy/slam_data/bags/bag_20261027_225100/bag_20261027_225100_0.db3' for READ_ONLY.
-[INFO] [1793175685.246651418] [rclcpp]: signal_handler(SIGINT/SIGTERM)

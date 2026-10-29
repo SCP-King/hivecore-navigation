@@ -1,1 +1,0 @@
-{"first_pose": {"x": 11.050000003079575, "y": 8.58}, "inject_pose": {"x": 10.988514306490394, "y": 8.333081655398633}, "displacement_m": 0.2544585620208842, "goal_distance_m": 1.8840851921835204, "obstacle": {"x": 11.05, "y": 7.15, "radius": 0.15}, "obstacle_center_clearance_m": 1.1846783081694061, "wall_epoch": 1793239369.5059805}

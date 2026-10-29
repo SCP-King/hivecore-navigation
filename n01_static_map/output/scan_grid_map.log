@@ -1,2 +1,0 @@
-[INFO] [1793175677.473438831] [n01_scan_grid_map]: S4 map node: mode=map_localized input=/local_pcd lidar_frame=lidar_link out_frame=map res=0.050 z=[-1.0,2.0] ground=plane_ransac tf_loss_reset=1 jump=2.00m | read-only, never publishes TF or /cmd_vel
-[INFO] [1793175681.168374681] [n01_scan_grid_map]: S4 update[acc]: cells=209188 occ=4822 infl=39989 window=(0.30,-0.00) ground_z=-0.504(method=robust_z_percentile) stamp=1793112662.477758991
