@@ -260,7 +260,12 @@ while [[ ! -s "$REPORT" ]]; do
   fi
   if grep -Eq '^\[ERROR\] \[(n01_historical_bag|scan_planner_node|n01_g3_optimizer|n01_offline_observer)-[0-9]+\]: process has died' \
      "$OUT/logs/bag_launch.log"; then
-    RESULT="FAIL"; REASON="critical_bag_node_died"; exit 7
+    RESULT="FAIL"; REASON="critical_bag_node_died"
+    say "A critical Bag/SCAN/G3/observer process exited; showing original crash evidence:"
+    grep -n -C 8 -E 'process has died|Traceback \(most recent call last\)|^\[ERROR\]|Exception:|Error:' \
+      "$OUT/logs/bag_launch.log" | tail -n 140 || true
+    say "Full original log preserved: $OUT/logs/bag_launch.log"
+    exit 7
   fi
   sleep 2
 done
