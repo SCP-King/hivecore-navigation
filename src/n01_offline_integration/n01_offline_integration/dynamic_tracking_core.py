@@ -82,7 +82,8 @@ def clusters_from_points(points, body_xy, cell_size=0.35, radius=8.,
                 min(cells[k][6] for k in region),
                 max(cells[k][7] for k in region))
         groups.append({"xyz":[cx,cy,cz], "points":n, "cells":len(region),
-                       "extent_xy_m":[bounds[1]-bounds[0],bounds[3]-bounds[2]]})
+                       "extent_xy_m":[bounds[1]-bounds[0],bounds[3]-bounds[2]],
+                       "voxel_cells":tuple(region)})
     return sorted(groups,key=lambda x:(-x["points"],x["xyz"][0],x["xyz"][1]))
 
 
@@ -97,6 +98,7 @@ class Track:
     missed: int
     cells: int
     extent_xy_m: tuple
+    velocity_history: tuple
 
 
 class Tracker:
@@ -158,6 +160,9 @@ class Tracker:
             # Low-pass reduces centroid voxel jitter, not an uncertainty model.
             t.vx=.35*t.vx+.65*dx
             t.vy=.35*t.vy+.65*dy
+            # Motion consistency uses raw inter-frame displacement. Low-pass
+            # speed alone cannot distinguish centroid jitter from movement.
+            t.velocity_history=(t.velocity_history+((dx,dy),))[-5:]
             t.xyz=tuple(p)
             t.stamp_ns=stamp_ns
             t.hits+=1
@@ -168,6 +173,7 @@ class Tracker:
         for i,t in enumerate(self.tracks):
             if i not in matched_tracks:
                 t.missed+=1
+            t.velocity_history=()
         for j,c in enumerate(clusters):
             if j in matched_clusters or len(self.tracks)>=self.max_track_count:
                 continue
@@ -175,7 +181,7 @@ class Tracker:
                 continue
             self.tracks.append(Track(
                 self.next_id,tuple(c["xyz"]),0.,0.,stamp_ns,1,0,
-                int(c["cells"]),tuple(c["extent_xy_m"])))
+                int(c["cells"]),tuple(c["extent_xy_m"]),()))
             self.next_id+=1
         # Exclude missed tracks from published "live" hypotheses.
         return self.snapshot(stamp_ns)
@@ -187,8 +193,19 @@ class Tracker:
             if t.stamp_ns!=stamp_ns:
                 continue
             speed=math.hypot(t.vx,t.vy)
-            candidate=t.hits>=self.min_hits and (
-                self.motion_threshold_mps<=speed<=self.max_plausible_mps)
+            samples=t.velocity_history
+            raw_speeds=[math.hypot(*v) for v in samples]
+            active=[v for v,vabs in zip(samples,raw_speeds)
+                    if vabs>=self.motion_threshold_mps]
+            norm=math.hypot(sum(v[0] for v in active),sum(v[1] for v in active))
+            total=sum(math.hypot(*v) for v in active)
+            direction_consistency=norm/total if total>1e-9 else 0.
+            # Require persistent motion in roughly one direction, rather
+            # than a single noisy displacement or back-and-forth flicker.
+            consistent=(len(samples)>=3 and len(active)>=3 and
+                        direction_consistency>=.8)
+            candidate=(t.hits>=max(self.min_hits,4) and consistent
+                       and self.motion_threshold_mps<=speed<=self.max_plausible_mps)
             if candidate:moving+=1
             out.append({
                 "id":t.track_id,"position_map_m":[round(v,4) for v in t.xyz],
@@ -196,6 +213,9 @@ class Tracker:
                 "estimated_speed_mps":round(speed,4),
                 "extent_xy_m":[round(v,3) for v in t.extent_xy_m],
                 "hits":t.hits,
+                "motion_direction_consistency":round(direction_consistency,3),
+                "motion_samples":len(samples),
+                "motion_consistency_passed":bool(consistent),
                 "classification":"MOVING_HYPOTHESIS_UNVERIFIED" if candidate
                                 else "UNCONFIRMED_CLUSTER",
                 "predicted_positions":[

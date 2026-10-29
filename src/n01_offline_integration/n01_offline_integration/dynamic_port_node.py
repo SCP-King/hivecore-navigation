@@ -24,11 +24,17 @@ class DynamicPort(Node):
         self.processed_track_frames=0
         self.last_tracks={}
         self.max_moving_hypotheses=0
+        self.risk_reports=0
+        self.risk_evaluations=0
+        self.risk_conflicts=0
+        self.last_risk_status="NOT_RECEIVED"
         self.status=self.create_publisher(String,"/n01/offline/dynamic_port_status",10)
         self.create_subscription(Path,"/nav/test/global_path",self.on_path,10)
         self.create_subscription(String,"/n01/offline/readiness",self.on_ready,10)
         self.create_subscription(String,"/n01/offline/dynamic_tracks",
                                  self.on_tracks,10)
+        self.create_subscription(String,"/n01/offline/path_risk",
+                                 self.on_risk,10)
         self.create_timer(1.0,self.tick)
 
     def on_path(self,msg):
@@ -45,6 +51,8 @@ class DynamicPort(Node):
         self.track_messages+=1
         try:
             data=json.loads(msg.data)
+            if not isinstance(data,dict):
+                raise ValueError("non-object dynamic track report")
             self.last_tracks=data
             if data.get("schema")=="n01.offline.tracks.v1" and data.get("status")=="PROCESSED":
                 self.processed_track_frames+=1
@@ -52,6 +60,21 @@ class DynamicPort(Node):
                     self.max_moving_hypotheses,int(data.get("moving_hypotheses",0)))
         except (ValueError,TypeError):
             self.last_tracks={"parse_error":True}
+
+    def on_risk(self,msg):
+        self.risk_reports+=1
+        try:
+            risk=json.loads(msg.data)
+            if not isinstance(risk,dict):
+                raise ValueError("non-object risk report")
+            if risk.get("schema")=="n01.offline.path_risk.v1":
+                self.last_risk_status=risk.get("status","INVALID")
+                self.risk_evaluations=max(
+                    self.risk_evaluations,int(risk.get("evaluated_previews",0)))
+                self.risk_conflicts=max(
+                    self.risk_conflicts,int(risk.get("potential_conflict_previews",0)))
+        except (ValueError,TypeError):
+            self.last_risk_status="INVALID"
 
     def tick(self):
         result={"dynamic_detection":("HEURISTIC_VOXEL_TRACKING_RESEARCH_ONLY"
@@ -63,6 +86,11 @@ class DynamicPort(Node):
                 "dynamic_processed_frames_seen":self.processed_track_frames,
                 "maximum_moving_hypotheses_seen":self.max_moving_hypotheses,
                 "last_dynamic_input_status":self.last_tracks.get("status","NOT_RECEIVED"),
+                "path_risk_interface":"DIAGNOSTIC_ONLY_NO_ACTUATION",
+                "path_risk_reports_seen":self.risk_reports,
+                "path_risk_evaluations_seen":self.risk_evaluations,
+                "path_risk_conflict_previews_seen":self.risk_conflicts,
+                "last_path_risk_status":self.last_risk_status,
                 "kalman_prediction":"NOT_IMPLEMENTED",
                 "mpc_cbf_solver":"NOT_IMPLEMENTED",
                 "actuator_output":"DISABLED",

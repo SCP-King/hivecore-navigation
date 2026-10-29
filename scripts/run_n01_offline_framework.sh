@@ -310,7 +310,7 @@ if ! kill -0 "$A" 2>/dev/null; then
 fi
 # ros2 launch may remain alive after an individual child crashes.
 # Do not wait for the 75s observer timeout after a known fixture failure.
-if grep -Eq '^\[ERROR\] \[(n01_offline_fixture|n01_offline_bridge|scan_planner_node|scan_bspline_bridge|n01_offline_observer|n01_dynamic_tracker|n01_dynamic_port)-[0-9]+\]: process has died' \
+if grep -Eq '^\[ERROR\] \[(n01_offline_fixture|n01_offline_bridge|scan_planner_node|scan_bspline_bridge|n01_offline_observer|n01_dynamic_tracker|n01_dynamic_port|n01_path_risk)-[0-9]+\]: process has died' \
     "$OUT/logs/integration_launch.log"; then
   RESULT="FAIL"
   REASON="critical_offline_pipeline_process_crashed"
@@ -342,7 +342,7 @@ while [[ ! -s "$N01_OFFLINE_REPORT_PATH" ]]; do
   if (( SECONDS >= deadline )); then
     RESULT="FAIL"; REASON="offline_integration_report_timeout"; exit 8
   fi
-  if grep -Eq '^\[ERROR\] \[(n01_offline_fixture|n01_offline_bridge|scan_planner_node|scan_bspline_bridge|n01_offline_observer|n01_dynamic_tracker|n01_dynamic_port)-[0-9]+\]: process has died' \
+  if grep -Eq '^\[ERROR\] \[(n01_offline_fixture|n01_offline_bridge|scan_planner_node|scan_bspline_bridge|n01_offline_observer|n01_dynamic_tracker|n01_dynamic_port|n01_path_risk)-[0-9]+\]: process has died' \
       "$OUT/logs/integration_launch.log"; then
     RESULT="FAIL"; REASON="critical_offline_pipeline_process_crashed"; exit 8
   fi

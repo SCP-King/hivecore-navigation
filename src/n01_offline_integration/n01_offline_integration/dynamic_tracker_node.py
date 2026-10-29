@@ -23,6 +23,7 @@ from sensor_msgs.msg import PointCloud2, PointField
 from std_msgs.msg import String
 
 from .dynamic_tracking_core import Tracker, clusters_from_points
+from .dynamic_background import StaticBackgroundFilter
 
 
 def stamp_ns(stamp):
@@ -77,6 +78,9 @@ class OfflineDynamicTracker(Node):
                0<self.max_pose_delta_ns<=2e9):
             raise ValueError("invalid dynamic tracker limits")
         self.tracker=Tracker()
+        self.background=StaticBackgroundFilter(
+            max_extent_m=float(p("max_dynamic_extent_m",1.8)))
+        self.last_filter_stats={}
         self.pose=None
         self.pose_stamp=None
         self.last_scan_stamp=None
@@ -116,6 +120,9 @@ class OfflineDynamicTracker(Node):
             "rejected_invalid_clouds":self.invalid,
             "rejected_pose_timestamp_frames":self.rejected_stamp,
             "max_moving_hypotheses_seen":self.max_hypotheses,
+            "static_background_filter_enabled":True,
+            "static_background_rejected_total":self.background.stats["background_rejected"],
+            "oversized_clusters_rejected_total":self.background.stats["oversized_rejected"],
             "moving_hypothesis_frames":self.moving_frames,
             "readiness":"RESEARCH_ONLY_NOT_SAFETY_RATED",
             "actuator_output":"DISABLED"})
@@ -142,7 +149,8 @@ class OfflineDynamicTracker(Node):
                 cell_size=self.voxel,radius=self.range,
                 min_cells=self.min_cells,max_cells=self.max_cells,
                 min_points=self.min_points,max_points=self.limit)
-            tracks=self.tracker.update(now,result)
+            selected,self.last_filter_stats=self.background.update(now,result)
+            tracks=self.tracker.update(now,selected)
         except (ValueError,TypeError,OverflowError,struct.error) as exc:
             self.invalid+=1
             self.report({"status":"INVALID_FRAME:"+type(exc).__name__,
@@ -154,6 +162,9 @@ class OfflineDynamicTracker(Node):
         if moving:self.moving_frames+=1
         tracks["status"]="PROCESSED"
         tracks["cluster_count"]=len(result)
+        tracks["candidate_cluster_count"]=len(selected)
+        tracks["background_filter"]=self.last_filter_stats
+        tracks["hypotheses_are_ground_truth"]=False
         self.report(tracks)
 
     def heartbeat(self):

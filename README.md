@@ -76,3 +76,7 @@ Run `bash scripts/run_n01_bag_functional.sh` after pulling main. See [真实 Bag
 从真实 Bag 重建后的 map 点云输入新增动态聚类、跨帧关联与匀速短时预测，输出 `/n01/offline/dynamic_tracks`，供禁用控制的动态接口读取。**Kalman/MPC-CBF 求解器和真机控制仍未实现；不能视为真实动态障碍安全验收。** 见 [功能说明](docs/n01_dynamic_tracking_stage.md)。
 
 **G2 首轮实测（2026-10-29 20:36，提交 `3b45c13`）：** 29/29 集成单测通过；真实 Bag 点云 99 帧进入动态模块并处理；100 条动态诊断消息，87/99 帧输出未经验证的运动候选（最大 7 个/帧）；SCAN 有效 B 样条 2/2，Path 1 条，/cmd_vel 0，清理 CLEAN。**高候选发生率及最大约 5.94m 的聚类意味着潜在静态结构误报风险**，不能作为真实动态障碍检测精度或 MPC-CBF 安全通过的证据。
+
+## G2.2 离线静态背景过滤和轨迹风险预览（待验收）
+
+在已运行的真实 Bag→SCAN→动态候选链上增加多帧静态栅格过滤、过大聚类排除、运动方向一致性，以及**只读路径近距离风险预览** `/n01/offline/path_risk`。该模块不求解 MPC-CBF，不对真机发任何控制命令，不将“无风险候选”视为安全。沿用 `bash scripts/run_n01_bag_functional.sh` 验证，见 [G2.2 开发与验收范围](docs/n01_g22_functional.md)。

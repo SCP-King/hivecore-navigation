@@ -40,6 +40,7 @@ class IntegrationObserver(Node):
                        "max_inflated_points":0,"goals":0,"splines":0,"valid_splines":0,
                        "invalid_splines":0,"readiness_updates":0,
                        "reference_paths":0,"dynamic_port_status":0,
+                       "path_risk_messages":0,"path_risk_evaluable":0,
                        "dynamic_track_messages":0,"dynamic_track_processed":0,
                        "moving_hypothesis_frames":0}
         self.health = {}
@@ -63,6 +64,9 @@ class IntegrationObserver(Node):
                                  self.on_dynamic_tracks,10)
         self.dynamic_port = {}
         self.dynamic_tracks = {}
+        self.path_risk = {}
+        self.create_subscription(String,"/n01/offline/path_risk",
+                                 self.on_path_risk,10)
         self.create_timer(.5,self.tick)
 
     def on_cloud(self, msg):
@@ -92,6 +96,18 @@ class IntegrationObserver(Node):
     def on_path(self, msg):
         if msg.poses and msg.header.frame_id == "map":
             self.counts["reference_paths"] += 1
+
+    def on_path_risk(self,msg):
+        self.counts["path_risk_messages"] += 1
+        try:
+            risk=json.loads(msg.data)
+            if not isinstance(risk,dict):
+                raise ValueError("non-object risk report")
+            self.path_risk=risk
+            if risk.get("evaluated_pairs",0)>0:
+                self.counts["path_risk_evaluable"] += 1
+        except (ValueError,TypeError):
+            self.path_risk={"parse_error":True}
 
     def on_dynamic_tracks(self,msg):
         self.counts["dynamic_track_messages"] += 1
@@ -160,6 +176,8 @@ class IntegrationObserver(Node):
               or self.dynamic_port.get("actuator_output") != "DISABLED"):
             issues.append("dynamic_port_incorrectly_armed")
         if self.historical_mode:
+            if not c["path_risk_messages"]:
+                issues.append("no_offline_path_risk_diagnostic")
             if not c["dynamic_track_processed"]:
                 issues.append("no_dynamic_map_cloud_processing")
             if not self.bag_health:
@@ -181,6 +199,7 @@ class IntegrationObserver(Node):
               "issues":issues,"counts":c,"last_bridge_health":self.health,
               "dynamic_port":self.dynamic_port,
               "last_dynamic_tracks":self.dynamic_tracks,
+              "last_path_risk":self.path_risk,
               "historical_bag_health":self.bag_health,
               "historical_bag_mode":self.historical_mode,
               "old_height_from_bag_ignored_in_reconstructed_transform":self.historical_mode,

@@ -302,7 +302,10 @@ export N01_OFFLINE_REPORT_PATH="$OUT/recorded_bag_report.json"
 if ! python3 - > "$OUT/logs/bag_node_import.log" 2>&1 <<'PY'
 from n01_offline_integration.historical_bag_node import RecordedBagReplay
 from n01_offline_integration.historical_tf import HistoricalMapTf
-print("ROS Bag module import: PASS")
+from n01_offline_integration.dynamic_tracker_node import OfflineDynamicTracker
+from n01_offline_integration.path_risk_node import OfflinePathRisk
+from n01_offline_integration.dynamic_port_node import DynamicPort
+print("ROS Bag, dynamic tracking and risk modules import: PASS")
 PY
 then
   RESULT="FAIL"; REASON="recorded_bag_module_import_failed"
@@ -322,7 +325,7 @@ if ! kill -0 "$A" 2>/dev/null; then
 fi
 
 critical_child_died() {
-  grep -Eq '^\[ERROR\] \[(n01_historical_bag|n01_offline_observer|scan_planner_node|scan_bspline_bridge|n01_dynamic_tracker|n01_dynamic_port)-[0-9]+\]: process has died' \
+  grep -Eq '^\[ERROR\] \[(n01_historical_bag|n01_offline_observer|scan_planner_node|scan_bspline_bridge|n01_dynamic_tracker|n01_dynamic_port|n01_path_risk)-[0-9]+\]: process has died' \
     "$OUT/logs/integration_launch.log"
 }
 if critical_child_died; then
