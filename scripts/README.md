@@ -28,3 +28,6 @@ bash -n scripts/run_g1_offline.sh && bash scripts/run_g1_offline.sh
 把该压缩包直接上传到聊天，无需复制终端输出。即使测试失败也会保存诊断证据。
 
 **安全前提：**不能在测试期间连接真机或启动真实控制链。此 G1 冒烟测试不等于完整三维避障及实机安全验收。
+
+
+完整 G1 离线验收请参考 [G1_ACCEPTANCE.md](G1_ACCEPTANCE.md)，命令是 `bash scripts/run_g1_acceptance.sh`；原 `run_g1_offline.sh` 只做冒烟测试。

@@ -26,5 +26,6 @@ setup(
         'bridge_smoke_feed = n01_scan_dynacbf_bridge.smoke_feed:main',
         'scan_g1_feed = n01_scan_dynacbf_bridge.scan_g1_feed:main',
         'scan_g1_monitor = n01_scan_dynacbf_bridge.scan_g1_monitor:main',
+        'scan_g1_acceptance = n01_scan_dynacbf_bridge.scan_g1_acceptance:main',
     ]},
 )
