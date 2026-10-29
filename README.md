@@ -105,3 +105,9 @@ Run `bash scripts/run_n01_bag_functional.sh` after pulling main. See [真实 Bag
 真实 Bag 功能脚本与 RViz 演示脚本现在会从 G3 节点独立记录每次 **实际数值求解** 的 `g3_frame_evidence.jsonl`，包含原始历史扫描时间、POST-HOC/回放顺序参考标记、名义与候选 XY、最小 h 代理值、离散 CBF 检查/拒绝次数、研究性质的状态标识。心跳不会作为求解帧。退出时独立核验 journal 并生成 `g3_evidence_summary.json`，若文件缺失、不完整或少于 observer 观察的求解次数则本轮不标记 PASS。此证据仍不是动态障碍真值或 Hive2 碰撞安全验收。
 
 这属于对已通过 G3 功能链的**可审计性增强**，没有增加底盘指令、真实 TF 广播和控制权限。纯 Python 新增 5 项单测已在开发环境通过；尚未在用户 Ubuntu 图形桌面重跑，旧 MP4 不能代替本轮运行时证据。运行说明参见 [G1-G3 演示与 G3.1 逐帧审计](docs/n01_g123_demo_recording.md)。
+
+## G3.2 静态 PCD 背景（仅展示，待 Ubuntu 验收）
+
+此前 RViz `/cloud` 是真实 Bag 的逐帧点云，并不是完整的已保存 PCD 整图；`/nav/test/global_path` 也只是 SCAN 的局部参考（旧 Bag 的测试目标约前方 1.5m），G3 数值候选时域约 1.5s，不等于厂区全局 A→B 导航。
+
+新增可选只读 `n01_static_pcd` 与 RViz 静态底图 `/n01/offline/static_pcd_map`。必须先确认用户 PCD 和历史 Bag `map` 是同一坐标系，然后在运行演示脚本前设置 `N01_STATIC_PCD_PATH=/真实路径/地图.pcd` 和 `N01_PCD_MAP_FRAME_ASSERTED=1`。当前支持未压缩 ASCII/BINARY PCD；不支持 `binary_compressed`。不设置路径时仍显示逐帧点云，并明确告知未加载整图。灰色整图仅用于显示，不进入规划器、不发送底盘控制，不能作为地图配准证明或导航安全授权。详细步骤见 [G1-G3 演示文档](docs/n01_g123_demo_recording.md)。
