@@ -31,7 +31,7 @@ Visualization Manager:
       Color: 105; 115; 125
     - Class: rviz_default_plugins/PointCloud2
       Enabled: true
-      Name: Historical Map Cloud
+      Name: Livox Historical FRAME (in map coords)
       Topic:
         Value: /cloud
         Reliability Policy: Best Effort
