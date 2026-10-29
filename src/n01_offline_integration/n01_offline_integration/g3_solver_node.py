@@ -7,6 +7,7 @@ ROS_DOMAIN_ID 88, localhost-only and explicit historical Bag mode required.
 import json
 import math
 import os
+from pathlib import Path
 
 if (os.environ.get("ROS_DOMAIN_ID")!="88" or
         os.environ.get("ROS_LOCALHOST_ONLY")!="1" or
@@ -22,6 +23,7 @@ from geometry_msgs.msg import PoseStamped
 from std_msgs.msg import String
 
 from .g3_pipeline_core import G3HistoricalCoordinator
+from .g3_frame_evidence import append_frame
 
 
 def stamp_ns(stamp):
@@ -32,6 +34,12 @@ class OfflineG3Solver(Node):
     def __init__(self):
         super().__init__("n01_g3_offline_optimizer")
         self.pipeline=G3HistoricalCoordinator()
+        self.audit_file=None
+        report_path=os.environ.get("N01_OFFLINE_REPORT_PATH")
+        if report_path:
+            # The runner owns this private, per-run directory. Never overwrite.
+            self.audit_file=Path(report_path).with_name("g3_frame_evidence.jsonl").open(
+                "x",encoding="utf-8")
         self.received_paths=0
         self.received_poses=0
         self.received_tracks=0
@@ -102,6 +110,10 @@ class OfflineG3Solver(Node):
             self.path_pub.publish(candidate)
             self.published_candidates+=1
         self._publish(dict(result),is_new=True)
+        # Persist actual attempts even if DDS observation drops a report.
+        # Heartbeat snapshots never enter the per-frame audit file.
+        if self.audit_file is not None:
+            append_frame(self.audit_file,result)
 
     def _publish(self,result,is_new):
         self.published_reports+=1
@@ -145,6 +157,8 @@ def main(args=None):
     except (KeyboardInterrupt,ExternalShutdownException):
         pass
     finally:
+        if node.audit_file is not None:
+            node.audit_file.close()
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
