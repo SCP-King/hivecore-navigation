@@ -34,6 +34,24 @@ sudo apt install ffmpeg xdotool x11-utils ros-humble-rviz2
 
 如果是纯 SSH 无图形会话，录屏会明确报错，不退化成全桌面录制。目标窗口必须是本次自动启动的 RViz 进程对应的 X11 window ID。启动前要求域 88 的 ROS 图为空，输出限定只读 MarkerArray、Path、原有 SCAN/G3 诊断。
 
+## VS Code Remote-SSH 中出现 x11_display_unavailable
+
+这属于图形会话前置检查失败，并不代表 PCD 加载、Bag 数据读取或规划算法失败。Remote-SSH 终端常没有 Ubuntu 图形桌面的 `DISPLAY` 和 X11 授权，即使安装了 RViz2 也不能直接录制窗口。
+
+在 Ubuntu 实际 GNOME/X11 或 XWayland 图形桌面打开“终端”执行：
+
+```bash
+echo "DISPLAY=${DISPLAY:-unset} XDG_SESSION_TYPE=${XDG_SESSION_TYPE:-unset}"
+xdpyinfo -display "$DISPLAY" >/dev/null && echo X11_OK
+cd /home/demo/lyy/hivecore-navigation
+export N01_STATIC_PCD_PATH="/home/demo/lyy/slam_data/maps/cloud_map_20261027_225549.pcd"
+# 只有确认这份整图与录制 Bag 的 map 坐标基准相同才允许此声明
+export N01_PCD_MAP_FRAME_ASSERTED=1
+bash scripts/run_n01_demo_replay.sh
+```
+
+如果没有物理桌面，也可在合法授权的远程图形桌面会话中打开终端；本脚本目前不支持纯无头 SSH 录制。**不要**盲目设置 `DISPLAY=:0`、`xhost +` 或复制他人 `XAUTHORITY`；这些操作不能保证会话有效且可能削弱访问控制。修复后的 `summary.txt` 即使在早期检查失败也会如实显示 `static_pcd_requested=YES`，与是否成功发布 PCD 底图 `static_pcd_report` 分开。
+
 ## 自动生成的交付文件
 
 保存到 /home/demo/lyy/n01_runtime/demo_exports/YYYYMMDD_HHMMSS_PID/ ：
