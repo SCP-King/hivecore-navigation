@@ -24,5 +24,7 @@ setup(
         'scan_bspline_bridge = n01_scan_dynacbf_bridge.sampler_node:main',
         'dcbf_test_guard = n01_scan_dynacbf_bridge.command_guard_node:main',
         'bridge_smoke_feed = n01_scan_dynacbf_bridge.smoke_feed:main',
+        'scan_g1_feed = n01_scan_dynacbf_bridge.scan_g1_feed:main',
+        'scan_g1_monitor = n01_scan_dynacbf_bridge.scan_g1_monitor:main',
     ]},
 )

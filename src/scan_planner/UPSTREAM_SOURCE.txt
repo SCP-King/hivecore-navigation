@@ -1,0 +1,9 @@
+Upstream https://github.com/wuyi2121/SCAN-Planner
+Branch ros2-community
+Pinned source commit d0b921c9b05a6d291d144d60882b2e0e88d2c0e0
+License Apache-2.0 (repository LICENSE; this directory NOTICE)
+Original research: Han Zheng, Zhe Chen, Yiwen Fu, Ming Yang, Tong Qin
+ROS2 port: xiaoqi371317
+Imported core algorithm sources unchanged; only plan_manage build/runtime packaging altered.
+Not imported: simulator, 4 chassis controller/simulator C++ executables, upstream runtime and simulator launch files.
+This is an offline research integration, NOT cleared for real-robot control.

@@ -1,21 +1,43 @@
 # hivecore-navigation
 
-ROS 2 Humble source code for N-01 navigation research.
+ROS 2 Humble source-only N-01 navigation research. Apache-2.0.
 
-- `src/n01_*`: legacy N-01 ROS 2 packages and offline test baseline.
-- `src/n01_scan_dynacbf_bridge/`: isolated B-spline reference-path adapter and test-only, **disarmed** command validator.
+## Components
 
-**Current status:** The six SCAN core packages previously tested in a local feature worktree are **not yet included in this GitHub main branch**. The bridge depends on `scan_planner_msgs` and cannot build until those SCAN packages are integrated. The current repository is **not a complete autonomous navigation stack**. Do not connect it to the Hive2 robot or command the real `/cmd_vel`.
+- `src/scan_planner/`: SCAN-Planner **real ROS 2** 3D map, DynAStar, B-spline optimization, FSM and `scan_planner_msgs`. Imported from `wuyi2121/SCAN-Planner`, `ros2-community` commit `d0b921c9b05a6d291d144d60882b2e0e88d2c0e0`. See `src/scan_planner/UPSTREAM_SOURCE.txt` and `NOTICE`. Only `scan_planner_node` is built; original control and simulator executables are **not included**.
+- `src/n01_scan_dynacbf_bridge/`: test-only SCAN B-spline to `nav_msgs/Path` reference adapter and default-disarmed output validator, **not** real dynamic-avoidance MPC.
+- Other `src/n01_*` packages: legacy N-01 baseline; do not count the legacy 2D A* as SCAN.
 
-With the required ROS 2 Humble dependencies and SCAN messages available:
+**Status: source migrated, NOT yet verified with this main-branch code on your Ubuntu/ROS 2 machine. NOT ready for a real robot.** No DynaCBF detection/Kalman/MPC-CBF integration yet.
+
+## G1 build
 
 ```bash
+cd /home/demo/lyy/hivecore-navigation
 source /opt/ros/humble/setup.bash
-colcon list
 python3 -m unittest discover -s src/n01_scan_dynacbf_bridge/test -v
-colcon build --packages-up-to n01_scan_dynacbf_bridge
+colcon build --packages-up-to scan_planner n01_scan_dynacbf_bridge --event-handlers console_direct+
+source install/setup.bash
 ```
 
-For isolated launch verification, use `ROS_DOMAIN_ID=88`, `ROS_LOCALHOST_ONLY=1` and a writable `ROS_HOME`. The package provides `isolated_bridge.launch.py` and `bridge_smoke_feed`, both **synthetic TEST-ONLY**. The bridge publishes `/nav/test/global_path` and `/nav/test/cmd_vel`, never a live chassis command.
+## G1 isolated smoke test
 
-Runtime data, reports, maps, vendor manuals, large files and generated outputs are intentionally excluded from this source-only branch. `LICENSE` and `NOTICE` are retained.
+Set these in **each** terminal, without loading any real robot or SLAM overlays:
+
+```bash
+export ROS_DOMAIN_ID=88 ROS_LOCALHOST_ONLY=1
+export ROS_HOME=/home/demo/lyy/n01_runtime/ros_home/g1_scan
+export ROS_LOG_DIR="$ROS_HOME/log"
+mkdir -p "$ROS_LOG_DIR"
+source /opt/ros/humble/setup.bash
+source /home/demo/lyy/hivecore-navigation/install/setup.bash
+```
+
+- Terminal A: `ros2 launch scan_planner n01_isolated.launch.py` (real SCAN algorithms, no controller)
+- Terminal B: `ros2 run n01_scan_dynacbf_bridge scan_g1_feed` (deterministic offline pointcloud/poses/goal; no TF or cmd_vel)
+- Terminal C: `ros2 run n01_scan_dynacbf_bridge scan_g1_monitor` (40-second observer, saves `$ROS_HOME/g1_smoke_report.json`)
+- Verify: `ros2 topic info /cmd_vel -v`; no real command publisher allowed. When all tests are stopped, report results.
+
+**Never run `bridge_smoke_feed` alongside `scan_g1_feed` or real SCAN**, because the former publishes synthetic `/planning/bspline`. This G1 smoke test checks live message observations only; trajectory collision, actual MPC, robot-model compatibility, 500 ms requirement and long-duration tests remain NOT TESTED.
+
+Keep PCD, Bag, manuals, offline test outputs and reports outside this source-only repository.
