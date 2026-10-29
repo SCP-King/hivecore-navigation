@@ -1,0 +1,18 @@
+scan_bspline_bridge:
+  ros__parameters:
+    frame_id: world
+    bspline_topic: /planning/bspline
+    odom_topic: /body_pose
+    path_topic: /nav/test/global_path
+    path_points: 120
+    arc_step: 0.05
+    table_samples: 400
+    odom_timeout_s: 0.75
+    trajectory_timeout_s: 3.0
+
+dcbf_test_guard:
+  ros__parameters:
+    armed: false
+    max_v: 0.5
+    max_omega: 0.3
+    timeout_s: 0.5
