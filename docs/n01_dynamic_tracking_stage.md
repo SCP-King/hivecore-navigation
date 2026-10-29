@@ -1,6 +1,6 @@
 # N-01 下一阶段：动态障碍候选跟踪与短时预测（功能开发）
 
-日期：2026-10-29。**离线研究型原型，尚未在用户机器上执行本次新增模块验收；不得连接底盘。**
+日期：2026-10-29。**离线研究型原型，已在用户 ROS 2 Humble 上完成首次真实 Bag 功能冒烟测试；不得连接底盘。**
 
 ## 实际数据流
 
@@ -26,10 +26,30 @@
     cd /home/demo/lyy/hivecore-navigation && git -c http.version=HTTP/1.1 pull --ff-only origin main && bash scripts/run_n01_bag_functional.sh
 
 上传输出的 n01_bag_functional_*.tar.gz。需重点查看 recorded_bag_report.json 的 counts.dynamic_track_processed 是否大于 0，以及 dynamic_port.dynamic_processed_frames_seen 是否大于 0。
-moving_hypothesis_frames 可以为 0，不因此判 FAIL；/cmd_vel 发布者必须为 0，mpc_cbf_solver 仍为 NOT_IMPLEMENTED。新增功能需要用户运行后才能判断是否通过。
+moving_hypothesis_frames 可以为 0，不因此判 FAIL；/cmd_vel 发布者必须为 0，mpc_cbf_solver 仍为 NOT_IMPLEMENTED。新增功能已在后续首次实测中通过功能冒烟，详情见下方记录；该结果并不代表运动假设真实或动态避障安全。
 
 ## 下一步
 
 对有真值的运动目标确认速度估计和误报，再开发不确定性建模及轨迹级的离线 CBF/MPC 约束评估器；正式控制与安全验收仍禁止越级。
 
 参考：docs/n01_real_bag_functional.md；docs/hive2_slam_p0_readiness_preflight.md。
+
+## 2026-10-29 20:36：首次真实 Bag + 动态候选模块功能验收
+
+**证据**：用户上传的 `n01_bag_functional_20261029_203631_981500.tar.gz`；运行代码 `3b45c13`。新动态模块为原型功能验证，**不是已经验证的真实移动障碍检测准确率或可部署动态避障**。
+
+| 验收项 | 日志数据 |
+| --- | --- |
+| 一键结果 | `BAG_FUNCTIONAL_PATH_SMOKE_PASS`，exit_code=0，issues=`[]` |
+| Python 新集成包单测 | 29/29 PASS |
+| Bag → map | 180 条输入点云，99 条转换成功，81 条因历史扫描时刻 map TF 缺失而拒绝，错误帧/畸形点云均为 0 |
+| 动态障碍模块 | 100 条诊断消息，99 条 `PROCESSED`，`missing_body_pose_frames=0`，时间戳不匹配 0，`clock_resets=0` |
+| 运动假设 | 99 帧中 87 帧有一个及以上运动候选，单帧最大候选数 7；无真实移动物体标注，**不可当作检测精度** |
+| 预测 | JSON 具有 `velocity_xy_mps` 和 0.5/1.0/1.5 秒预测位置；`kalman_prediction_implemented=false` |
+| SCAN | 15 条膨胀地图，最大点数 171656；2/2 合法 B 样条，1 条参考 Path，2 个目标 |
+| 动态接口 | `dynamic_processed_frames_seen=99`，`short_horizon_prediction=CONSTANT_VELOCITY_RESEARCH_ONLY`，`mpc_cbf_solver=NOT_IMPLEMENTED`，`actuator_output=DISABLED` |
+| 控制与清理 | `/cmd_vel` 发布者为 0，运行态未见控制输出；进程与 ROS 图最终 CLEAN |
+
+**可靠性风险：** 最后一个轨迹检测快照中的部分运动候选聚类的 XY 外廓跨度达到 **约 5.94 m**，很可能混入静态建筑结构/大范围障碍。87/99 帧产生运动候选的现象也提示应核实背景、遮挡、聚类形变和关联误报；**不能根据这些数据断言药厂里有 7 个真正移动物体**。当前最应优先开发静态背景过滤、多帧运动一致性、目标尺度约束及独立可重复的真假运动目标对照，而不应直接把这些假设接入 MPC-CBF 安全控制。
+
+当前严格 P0 仍未通过：原 Bag 缺少 `/localization_status`，历史 `base_footprint→base_link` 0.30/0.90 m 双高度记录未消除；所有判断仅限隔离的历史 Bag 开环模式。**此记录不需要复跑已通过的本轮功能测试。**
