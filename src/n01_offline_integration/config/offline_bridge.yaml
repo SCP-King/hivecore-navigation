@@ -1,0 +1,21 @@
+n01_offline_sensor_bridge:
+  ros__parameters:
+    # Strict mode by default; no assumed LocalizationStatus field layout.
+    fixture_mode: false
+    input_cloud_topic: /livox/lidar/geo_filtered
+    input_frame: lidar_link
+    target_frame: map
+    body_frame: base_link
+    status_topic: /localization_status
+    status_type: ""
+    outer_path: ""
+    inner_path: ""
+    tf_flag_path: registration_output_tf_published
+    outer_value: Localization
+    inner_value: tracking
+    status_timeout_s: 1.0
+    tf_timeout_s: 0.05
+    max_cloud_points: 300000
+    # Must not be true without separate read-only P0 authority preflight evidence.
+    slam_rsp_disabled_confirmed: false
+    use_sim_time: false

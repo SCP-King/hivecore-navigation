@@ -15,7 +15,10 @@ MARKER = "N01_G1_RUN_TOKEN"
 
 
 def process_info(pid, token):
-    if pid == os.getpid() or not str(pid).isdigit():
+    # Do not signal the guard itself OR its invoking test runner shell.
+    # The marker is exported by the parent runner; killing it mid-cleanup
+    # would abort the archive, reaping and final ROS-graph verification.
+    if pid in (os.getpid(), os.getppid()) or not str(pid).isdigit():
         return None
     root = Path("/proc") / str(pid)
     try:

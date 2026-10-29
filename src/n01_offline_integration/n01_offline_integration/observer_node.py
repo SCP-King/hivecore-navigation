@@ -1,0 +1,144 @@
+"""Offline-only integration observer with atomic JSON evidence file."""
+import json
+import os
+from pathlib import Path
+import time
+
+if os.environ.get("ROS_DOMAIN_ID") != "88" or os.environ.get("ROS_LOCALHOST_ONLY") != "1":
+    raise RuntimeError("Offline observer refuses non-isolated ROS environment")
+
+import rclpy
+from rclpy.executors import ExternalShutdownException
+from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
+from std_msgs.msg import String
+from sensor_msgs.msg import PointCloud2
+from nav_msgs.msg import Odometry
+from geometry_msgs.msg import PoseStamped
+from scan_planner_msgs.msg import Bspline
+from n01_scan_dynacbf_bridge.scan_g1_monitor import valid_bspline
+
+
+class IntegrationObserver(Node):
+    def __init__(self):
+        super().__init__("n01_offline_integration_observer")
+        self.declare_parameter("duration_s", 75.0)
+        self.declare_parameter("report_path", "")
+        self.duration = float(self.get_parameter("duration_s").value)
+        target = self.get_parameter("report_path").value
+        if not target:
+            target = os.environ.get("N01_OFFLINE_REPORT_PATH","")
+        if not target or not 10 <= self.duration <= 180:
+            raise ValueError("duration and report_path required")
+        self.path = Path(target)
+        self.start = time.monotonic()
+        self.done = False
+        self.counts = {"transformed_clouds":0,"wrong_frame_clouds":0,
+                       "body_pose":0,"sensor_pose":0,"map_messages":0,
+                       "max_inflated_points":0,"goals":0,"splines":0,"valid_splines":0,
+                       "invalid_splines":0,"readiness_updates":0}
+        self.health = {}
+        self.cmd_seen = False
+        self.create_subscription(PointCloud2,"/cloud",self.on_cloud,qos_profile_sensor_data)
+        self.create_subscription(PointCloud2,"/grid_map/occupancy_inflate",
+                                 self.on_map,qos_profile_sensor_data)
+        self.create_subscription(Odometry,"/body_pose",self.on_body,qos_profile_sensor_data)
+        self.create_subscription(Odometry,"/sensor_pose",self.on_sensor,qos_profile_sensor_data)
+        self.create_subscription(PoseStamped,"/move_base_simple/goal",self.on_goal,10)
+        self.create_subscription(Bspline,"/planning/bspline",self.on_spline,10)
+        self.create_subscription(String,"/n01/offline/readiness",self.on_health,10)
+        self.create_timer(.5,self.tick)
+
+    def on_cloud(self, msg):
+        if msg.header.frame_id == "map":
+            self.counts["transformed_clouds"] += 1
+        else:
+            self.counts["wrong_frame_clouds"] += 1
+
+    def on_map(self, msg):
+        self.counts["map_messages"] += 1
+        self.counts["max_inflated_points"] = max(
+            self.counts["max_inflated_points"],int(msg.width)*int(msg.height))
+
+    def on_body(self, _):
+        self.counts["body_pose"] += 1
+
+    def on_sensor(self, _):
+        self.counts["sensor_pose"] += 1
+
+    def on_goal(self, _):
+        self.counts["goals"] += 1
+
+    def on_spline(self, msg):
+        self.counts["splines"] += 1
+        self.counts["valid_splines" if valid_bspline(msg) else "invalid_splines"] += 1
+
+    def on_health(self, msg):
+        self.counts["readiness_updates"] += 1
+        try:
+            self.health = json.loads(msg.data)
+        except ValueError:
+            self.health = {"parse_error":True}
+
+    def tick(self):
+        try:
+            self.cmd_seen = self.cmd_seen or bool(
+                self.get_publishers_info_by_topic("/cmd_vel"))
+        except Exception:
+            self.cmd_seen = True
+        if not self.done and time.monotonic() - self.start >= self.duration:
+            self.finish()
+
+    def finish(self):
+        if self.done:
+            return
+        self.done = True
+        c=self.counts
+        issues=[]
+        if self.cmd_seen or self.health.get("cmd_vel_seen"):
+            issues.append("unexpected_cmd_vel_publisher")
+        if c["wrong_frame_clouds"]:
+            issues.append("cloud_not_in_map")
+        if not c["transformed_clouds"] or not c["body_pose"] or not c["sensor_pose"]:
+            issues.append("tf_pointcloud_adapter_not_observed")
+        if not c["map_messages"] or not c["max_inflated_points"]:
+            issues.append("no_real_scan_inflated_map")
+        if not c["valid_splines"]:
+            issues.append("no_real_scan_valid_bspline")
+        if not c["goals"]:
+            issues.append("no_goal_observed")
+        if self.health.get("tf_conflict"):
+            issues.append("base_link_height_conflict")
+        if self.health.get("readiness") != "OFFLINE_FIXTURE_ONLY":
+            issues.append("fixture_readiness_not_observed")
+        data={"test_type":"N01_OFFLINE_INTEGRATION_FIXTURE",
+              "result":"OFFLINE_INTEGRATION_OBSERVED" if not issues else "NOT_COMPLETE",
+              "issues":issues,"counts":c,"last_bridge_health":self.health,
+              "cmd_vel_publishers_seen":self.cmd_seen,
+              "slam_real_status_tested":False,"real_bag_tested":False,
+              "real_hive2_motion_tested":False,
+              "dynamic_mpc_cbf_tested":False,
+              "g1_full_collision_acceptance":False}
+        self.path.parent.mkdir(parents=True,exist_ok=True)
+        tmp=self.path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data,indent=2,ensure_ascii=False)+"\n",encoding="utf-8")
+        tmp.replace(self.path)
+        print("N01_OFFLINE_INTEGRATION="+json.dumps(data,ensure_ascii=False),flush=True)
+        rclpy.shutdown()
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node=IntegrationObserver()
+    try:
+        rclpy.spin(node)
+    except (KeyboardInterrupt, ExternalShutdownException):
+        pass
+    finally:
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+
+
+if __name__=="__main__":
+    main()

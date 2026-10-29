@@ -1,0 +1,23 @@
+from glob import glob
+from setuptools import setup
+import os
+
+name = 'n01_offline_integration'
+setup(
+    name=name, version='0.1.0', packages=[name],
+    data_files=[
+        ('share/ament_index/resource_index/packages', ['resource/' + name]),
+        ('share/' + name, ['package.xml']),
+        (os.path.join('share', name, 'launch'), glob('launch/*.launch.py')),
+        (os.path.join('share', name, 'config'), glob('config/*.yaml')),
+    ],
+    install_requires=['setuptools'], zip_safe=True, license='Apache-2.0',
+    maintainer='N-01 contributors', maintainer_email='noreply@example.invalid',
+    description='Offline-only TF/readiness/point cloud adapter for SCAN',
+    entry_points={'console_scripts': [
+        'n01_offline_bridge = n01_offline_integration.bridge_node:main',
+        'n01_offline_fixture = n01_offline_integration.fixture_node:main',
+        'n01_offline_observer = n01_offline_integration.observer_node:main',
+        'n01_dynamic_port = n01_offline_integration.dynamic_port_node:main',
+    ]},
+)

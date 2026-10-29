@@ -54,3 +54,9 @@ If the planner prints `final_plan_success=1` but the observer reports `bspline_m
 参数清单记录 Hive2 运动栈与 SLAM 的已报告尺寸、Livox MID-360 外参、点云/TF 接口、速度需求，以及**用户已选定的 Hive2 当前高度 0.90 m**、最新 SLAM release 中**仍默认开启**的 0.30 m mount RSP（须显式关闭）、仍需核验的 TF 唯一发布者和药厂安全距离。**只读参考，不是 ROS 可执行配置**。本仓库的 G1 `planner.yaml` 仍然使用独立的合成测试几何值；不能将其当作 Hive2 真机参数。当前高度基准虽确定，但最新 SLAM 的双发布风险仍存在，运行态未验证，故不自动修改启动配置。
 
 **P0 接口与只读预检规格：** [Hive2 SLAM / SCAN P0 Readiness Preflight](docs/hive2_slam_p0_readiness_preflight.md)，涵盖显式禁用 SLAM mount RSP、`/localization_status` tracking/配准判据和 `lidar_link→map` 点云采集时刻转换。**尚未执行、不作为真机运行许可。**
+
+## N-01 离线整体框架（最新）
+
+**一键验证：** `bash scripts/run_n01_offline_framework.sh`，自动启动隔离 TF/点云 fixture、严格输入桥接、真实 SCAN、B 样条参考路径与禁用的动态避障接口，并清理打包。可选 `N01_BAG_PATH=/path/to/bag` 对已录制 Bag 做只读清单；本轮**不会自动回放可能含运动命令的 Bag**。
+
+详细边界、流程、验收状态与下一阶段步骤：[N-01 离线集成框架](docs/n01_offline_framework.md)。
