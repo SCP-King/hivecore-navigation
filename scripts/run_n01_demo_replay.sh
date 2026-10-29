@@ -22,6 +22,8 @@ RVIZ_PID=""
 REC_PID=""
 PCD_PID=""
 PCD_ENABLED=NO
+PCD_REQUESTED=NO
+if [[ -n "${N01_STATIC_PCD_PATH:-}" ]]; then PCD_REQUESTED=YES; fi
 PIDS=()
 if (( EUID==0 )); then echo "Do not run as root/sudo" >&2; exit 2; fi
 mkdir -p "$OUT/logs" "$OUT/ros_home/log" "$OUT/tmp"
@@ -101,7 +103,7 @@ PY
     "$([[ $graph_clean == 0 ]] && echo CLEAN || echo RESIDUAL)" \
     "$([[ $vid_ok == 0 ]] && echo YES || echo NO)" \
     "$([[ $gif_ok == 0 ]] && echo YES || echo NO)" \
-    "$PCD_ENABLED" "$([[ -s "$OUT/pcd_static_preview.json" ]] && echo YES || echo NO)" \
+    "$PCD_REQUESTED" "$([[ -s "$OUT/pcd_static_preview.json" ]] && echo YES || echo NO)" \
     > "$OUT/summary.txt"
   echo "======== N01 G1-G3 DEMO ========"
   cat "$OUT/summary.txt"
@@ -123,7 +125,9 @@ if [[ ! -f "$BAG/metadata.yaml" ]]; then
 fi
 if [[ -z "${DISPLAY:-}" ]] || ! command -v xdpyinfo >/dev/null ||
    ! xdpyinfo -display "$DISPLAY" >/dev/null 2>&1; then
-  RESULT="FAIL"; REASON="x11_display_unavailable"; say "Requires a graphical X11 session"; exit 2
+  RESULT="FAIL"; REASON="x11_display_unavailable"
+  say "X11 unavailable: DISPLAY=${DISPLAY:-unset}, XDG_SESSION_TYPE=${XDG_SESSION_TYPE:-unset}; start this script from a terminal inside the Ubuntu graphical desktop (not a plain VS Code Remote-SSH terminal)."
+  exit 2
 fi
 for bin in ffmpeg ffprobe xdotool rviz2 colcon; do
   if [[ "$bin" == "colcon" || "$bin" == "rviz2" ]]; then continue; fi
