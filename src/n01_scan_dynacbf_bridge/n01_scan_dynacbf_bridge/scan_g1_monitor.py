@@ -182,7 +182,11 @@ class G1Monitor(Node):
         result["full_G1_acceptance"] = "NOT_TESTED"
         report = Path(os.environ["ROS_HOME"]) / "g1_smoke_report.json"
         report.parent.mkdir(parents=True, exist_ok=True)
-        report.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        # The one-command runner observes report existence as the completion
+        # signal. Replace atomically so it never parses partially written JSON.
+        pending = report.with_name(report.name + ".tmp")
+        pending.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        pending.replace(report)
         print("G1_OBSERVER_REPORT=" + json.dumps(result, ensure_ascii=False), flush=True)
         self.get_logger().info("G1 diagnostic report written: %s" % report)
         rclpy.shutdown()

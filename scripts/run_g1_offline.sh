@@ -196,19 +196,30 @@ if grep -Eq 'Publisher count:[[:space:]]*[1-9][0-9]*' "$OUT/logs/running_10s/_cm
 fi
 
 say "Monitor observing SCAN (max 90s)"
+REPORT="$ROS_HOME/g1_smoke_report.json"
 deadline=$((SECONDS + 110))
-while kill -0 "$C" 2>/dev/null; do
+# A child that exits can remain as an unreaped zombie: kill -0 stays true.
+# The monitor writes its report atomically enough for a nonempty-file check
+# before calling rclpy.shutdown(). Report creation, not process liveness,
+# is the completion signal for this evidence-gathering smoke test.
+while [[ ! -s "$REPORT" ]]; do
   if ! kill -0 "$A" 2>/dev/null; then RESULT="FAIL"; REASON="planner_exited"; exit 8; fi
   if ! kill -0 "$B" 2>/dev/null; then RESULT="FAIL"; REASON="feed_exited"; exit 8; fi
-  if (( SECONDS >= deadline )); then RESULT="FAIL"; REASON="monitor_timeout"; exit 8; fi
+  if ! kill -0 "$C" 2>/dev/null; then
+    RESULT="FAIL"; REASON="monitor_exited_without_report"; exit 8
+  fi
+  monitor_state="$(ps -o stat= -p "$C" 2>/dev/null || true)"
+  monitor_state="${monitor_state//[[:space:]]/}"
+  if [[ "$monitor_state" == Z* ]]; then
+    RESULT="FAIL"; REASON="monitor_zombie_without_report"; exit 8
+  fi
+  if (( SECONDS >= deadline )); then RESULT="FAIL"; REASON="report_timeout"; exit 8; fi
   sleep 2
 done
-if ! wait "$C"; then RESULT="FAIL"; REASON="monitor_exited_with_error"; exit 8; fi
+say "G1 monitor report found: $REPORT"
 snapshot final
 
 say "5/5 Evaluating evidence"
-REPORT="$ROS_HOME/g1_smoke_report.json"
-if [[ ! -s "$REPORT" ]]; then RESULT="FAIL"; REASON="report_missing"; exit 9; fi
 if python3 - "$REPORT" > "$OUT/logs/evaluation.txt" 2>&1 <<'PY'
 import json
 import sys
