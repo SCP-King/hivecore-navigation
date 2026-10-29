@@ -71,6 +71,18 @@ class BackgroundSuppressionTests(unittest.TestCase):
         self.assertEqual(out["moving_hypotheses"],0)
         self.assertLess(out["tracks"][0]["motion_direction_consistency"],.8)
 
+    def test_matched_history_persists_then_clears_after_miss(self):
+        tracker=Tracker(min_hits=3)
+        for i in range(5):
+            state=tracker.update((i+1)*250_000_000,[{
+                "xyz":[1.+i*.2,0.,.8],"cells":4,
+                "extent_xy_m":[.3,.3]}])
+        self.assertEqual(len(tracker.tracks),1)
+        self.assertGreaterEqual(len(tracker.tracks[0].velocity_history),3)
+        self.assertTrue(state["tracks"][0]["motion_consistency_passed"])
+        tracker.update(1_500_000_000,[])
+        self.assertEqual(tracker.tracks[0].velocity_history,())
+
     def test_consistent_target_remains_detectable(self):
         tracker=Tracker(min_hits=3)
         for i in range(7):

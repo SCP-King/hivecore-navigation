@@ -57,3 +57,17 @@ cd /home/demo/lyy/hivecore-navigation && git -c http.version=HTTP/1.1 pull --ff-
 当有标注的运动障碍数据或可复现的移动目标场景时，评估背景误删、跟踪偏差与预测准确性，再独立实现含 robot/control model、适当碰撞包络、不确定性及约束求解的**离线真 CBF/MPC 模块**。只有完整 P0 与现场安全验收后才考虑底盘运动，规划时延优化留后。
 
 相关：[G2 首轮动态候选](n01_dynamic_tracking_stage.md) · [真实 Bag 回放](n01_real_bag_functional.md) · [P0 未决](hive2_slam_p0_readiness_preflight.md)。
+
+## 2026-10-29 20:59：首次 G2.2 测试失败与源码修复
+
+用户上传一键日志包：`n01_bag_functional_20261029_205936_993133.tar.gz`，运行版本 `e290c46`。
+
+- `summary.txt`：`result=FAIL`、`reason=offline_integration_unit_tests_failed`、`exit_code=3`；
+- Python 语法、旧桥接 9/9、进程守护测试均通过；新集成包 **43 项中 41 项通过、2 项失败**，分别为 `test_moving_target_constant_velocity_horizon`、`test_consistent_target_remains_detectable`；
+- 测试在 `colcon` 构建及 ROS 图初始化之前中止，因此**本轮没有实际开始真实 Bag、SCAN、路径风险预览测试**；`owned_process_cleanup=CLEAN`、`post_cleanup_ros_graph=CLEAN`。
+
+**根因：** G2.2 Tracker `update()` 中清空 `t.velocity_history` 的语句缩进到了 `if i not in matched_tracks` 之外，使成功匹配的跟踪目标也在每帧被清空历史。持续运动因此永远达不到至少 3 次有效方向样本门槛。
+
+**修复：** 将速度历史重置放入“目标未关联成功”条件内部；不降低运动速度、方向一致性、轨迹有效性等判据。额外新增 `test_matched_history_persists_then_clears_after_miss` 精确验证“连续匹配历史保留、丢失匹配时清空”，并继续执行原先两项失败用例。
+
+**待验证：** 修复提交未在用户 Ubuntu 上重新执行，此处不得标记 G2.2 通过。后续沿用 `bash scripts/run_n01_bag_functional.sh` 做一次统一真实数据验收；只有结果日志明确通过，才能宣布该阶段功能测试完成。

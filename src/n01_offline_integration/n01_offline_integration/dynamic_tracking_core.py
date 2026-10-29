@@ -173,7 +173,9 @@ class Tracker:
         for i,t in enumerate(self.tracks):
             if i not in matched_tracks:
                 t.missed+=1
-            t.velocity_history=()
+                # Preserve a matched target's motion samples. Only a missed
+                # association invalidates its direction-consistency history.
+                t.velocity_history=()
         for j,c in enumerate(clusters):
             if j in matched_clusters or len(self.tracks)>=self.max_track_count:
                 continue
