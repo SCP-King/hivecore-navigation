@@ -179,6 +179,14 @@ if [[ ! -f src/scan_planner/plan_manage/package.xml || ! -f src/n01_offline_inte
   REASON="SCAN_SOURCES_MISSING"; exit 2
 fi
 
+say "Syntax-checking all offline integration Python sources"
+if ! python3 -m compileall -q src/n01_offline_integration/n01_offline_integration \
+    src/n01_offline_integration/test scripts/n01_bag_inventory.py scripts/n01_bag_evidence.py \
+    > "$OUT/logs/python_syntax.log" 2>&1; then
+  RESULT="FAIL"; REASON="python_syntax_check_failed"
+  cat "$OUT/logs/python_syntax.log"
+  exit 3
+fi
 say "1/5 Running integration, bridge and guard unit tests"
 if ! python3 -m unittest discover -s scripts -p 'test_g1_process_guard.py' -v > "$OUT/logs/process_guard_unit_tests.log" 2>&1; then
   RESULT="FAIL"; REASON="process_guard_unit_test_failed"
@@ -259,9 +267,18 @@ fi
 if [[ -n "$BAG" ]]; then
   python3 "$ROOT/scripts/n01_bag_inventory.py" --bag "$BAG" \
     --output "$OUT/bag_inventory.json" > "$OUT/logs/bag_inventory.log" 2>&1 || true
+  # Bounded sequential read of TF edges/cloud headers without DDS publication.
+  timeout 55s python3 "$ROOT/scripts/n01_bag_evidence.py" --bag "$BAG" \
+    --output "$OUT/bag_evidence.json" --max-messages 120000 \
+    > "$OUT/logs/bag_evidence.log" 2>&1 || true
+  if [[ ! -f "$OUT/bag_evidence.json" ]]; then
+    printf '{"result":"TIMEOUT_OR_UNAVAILABLE","reason":"Evidence scan did not complete"}\n' \
+      > "$OUT/bag_evidence.json"
+  fi
 else
   printf '{"result":"NOT_SUPPLIED_OR_NOT_FOUND","reason":"Set N01_BAG_PATH; synthetic integration still runs."}\n' \
     > "$OUT/bag_inventory.json"
+  printf '{"result":"NOT_SUPPLIED_OR_NOT_FOUND"}\n' > "$OUT/bag_evidence.json"
 fi
 
 say "5/5 Running fixture -> timed TF adapter -> real SCAN -> path reference"

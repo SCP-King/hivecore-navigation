@@ -58,7 +58,7 @@ git pull --ff-only origin main && bash scripts/run_n01_offline_framework.sh
 1. 隔离 Domain 88，检查 ROS 图已有节点与 `/cmd_vel`，出现冲突直接中止；
 2. 跑 G1 旧单测、进程守护单测、离线接口/几何单测；
 3. `colcon build --packages-up-to scan_planner n01_scan_dynacbf_bridge n01_offline_integration`；
-4. 如可发现先前 `bag_20261027_225100` 或指定 `N01_BAG_PATH`，只读检查 Bag `metadata.yaml` 中的话题类型/数量；**这一步不回放 Bag，不证明真实 TF 有效**；
+4. 如可发现先前 `bag_20261027_225100` 或指定 `N01_BAG_PATH`，只读检查 Bag `metadata.yaml` 话题类型/数量，另用限额扫描器读取录制 TF 数值、点云 header 和定位状态的已知布尔标记；**这一步不回放 Bag，不证明真实 TF 有效**；
 5. 启动测试用 `map→base_footprint→base_link(z=.90)→lidar_link(x=.295)` TF、合成 `lidar_link` 点云、离线状态旗标；
 6. 适配层将点云按 **header.stamp** 转换成 `map`，给真实 SCAN 与原有 B-spline path bridge；DynaCBF port 只报告未实现，不生成控制命令；
 7. 记录 `/cloud`、`/body_pose`、`/sensor_pose`、膨胀地图、B-spline 的实测计数及桥接状态；
@@ -77,6 +77,7 @@ cd /home/demo/lyy/hivecore-navigation && git pull --ff-only origin main && N01_B
 - `summary.txt`：本轮结论、退出码、进程清理和 ROS 图收尾；
 - `integration_fixture_report.json`：各输入和真实 SCAN 输出计数、缺失证据；
 - `bag_inventory.json`：录制数据中的实际话题和缺项，**只读**；
+- `bag_evidence.json`：只读提取 Bag 记录的 `base_footprint→base_link` 高度取值、是否有 0.30/0.90 双值、点云帧名和状态标志；扫描有 55 秒时间上限与 12 万条消息上限，不能从历史记录证明当前运行态唯一 TF 发布者；
 - `logs/integration_launch.log`：全部 ROS 节点日志；
 - `logs/*unit_tests.log`：各模块单测；
 - `logs/*graph.json`：ROS 图与 `/cmd_vel` 查询证据。
