@@ -19,7 +19,7 @@ bash -n scripts/run_g1_acceptance.sh && bash scripts/run_g1_acceptance.sh
 
 验收通过的所有场景必须没有实际 `/cmd_vel` 发布者。每场景之间、脚本退出前均强制执行本轮进程清理和隔离 ROS 图清理。清理失败的状态永远不标记通过。
 
-轨迹碰撞采用 B 样条 de Boor 采样与 **真实** `/grid_map/occupancy_inflate` 体素对比（0.05m 体素、约 0.09m 中心距离容差）；它是离线采样检测，**不能代替精确连续碰撞检测、机器人全身模型、动态障碍物与真实底盘安全验收**。任何场景缺乏正面证据将失败。
+轨迹碰撞采用 B 样条 de Boor 采样与 **真实** `/grid_map/occupancy_inflate` 体素对比：使用与 SCAN `GridMap::getInflateOccupancy` 一致的前后双圆柱中心（沿轨迹方向 ±0.18m、网格索引使用 `floor`、地图分辨率 0.05m，障碍物已由地图按机器人半径膨胀）。额外的 0.09m 轨迹中心球形邻近值只作为**更保守的诊断指标**，不能混同于 SCAN 自身的碰撞结果。在 changed 场景首次观测到轨迹后不再发送新目标，避免将新目标规划误判为障碍变化触发的重规划。该检测仍是离线采样检测，**不能代替精确连续碰撞检测、机器人全身模型、动态障碍物与真实底盘安全验收**。任何场景缺乏正面证据将失败。
 
 日志位置：`/home/demo/lyy/n01_runtime/runs/g1_acceptance/`。脚本结束后显示 `UPLOAD THIS LOG ARCHIVE:`，把其后完整路径的压缩包上传到聊天，无须复制终端输出。核心结果位于包内 `g1_acceptance_summary.json`、`cases/*.json`、`summary.txt` 与 `logs/*`。
 

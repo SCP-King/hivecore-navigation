@@ -33,9 +33,9 @@ from scan_planner_msgs.msg import Bspline
 from .scan_g1_feed import xyz_cloud, test_obstacle_points
 from .scan_g1_monitor import valid_bspline
 
-RESOLUTION = 0.05
-COLLISION_RADIUS_M = 0.09
-
+from .g1_collision_geometry import (
+    cloud_voxel_index, path_collision, path_margin_proximity,
+)
 
 def blocking_points():
     """Dense obstacle wall across nominal straight-line path."""
@@ -91,33 +91,6 @@ def sample_spline(msg, count=121):
             for j in range(count)]
 
 
-def cloud_voxel_index(points):
-    return {(round(x / RESOLUTION), round(y / RESOLUTION), round(z / RESOLUTION))
-            for x, y, z in points}
-
-
-def path_collision(path, voxels):
-    # Inflated voxels are already padded for the robot; only a small tolerance
-    # for grid-centre sampling is used here. Do NOT claim full-body clearance.
-    near_offsets = [(i, j, k) for i in range(-2, 3)
-                    for j in range(-2, 3) for k in range(-2, 3)]
-    collisions = []
-    radius2 = COLLISION_RADIUS_M * COLLISION_RADIUS_M
-    for t, (x, y, z) in enumerate(path):
-        c = (round(x / RESOLUTION), round(y / RESOLUTION), round(z / RESOLUTION))
-        hit = False
-        for dx, dy, dz in near_offsets:
-            if (c[0] + dx, c[1] + dy, c[2] + dz) not in voxels:
-                continue
-            cx, cy, cz = ((c[0] + dx) * RESOLUTION,
-                          (c[1] + dy) * RESOLUTION,
-                          (c[2] + dz) * RESOLUTION)
-            if (x-cx)**2 + (y-cy)**2 + (z-cz)**2 <= radius2:
-                hit = True
-                break
-        if hit:
-            collisions.append(t)
-    return collisions
 
 
 class G1Acceptance(Node):
@@ -146,6 +119,7 @@ class G1Acceptance(Node):
         self.first_traj_s = None
         self.first_goal_s = None
         self.goal_count = 0
+        self.goals_after_injection = 0
         self.last_goal = -999
         self.injected_s = None
         self.cmd_publishers_seen = set()
@@ -215,6 +189,8 @@ class G1Acceptance(Node):
         goal.pose.orientation.w = 1.0
         self.goal_pub.publish(goal)
         self.goal_count += 1
+        if self.scenario == "changed" and self.injected_s is not None:
+            self.goals_after_injection += 1
         self.last_goal = self.elapsed()
         if self.first_goal_s is None:
             self.first_goal_s = round(self.last_goal, 2)
@@ -242,7 +218,10 @@ class G1Acceptance(Node):
         ready = now >= 5.0
         if self.scenario == "blocked":
             ready = ready and self.blocked_map_seen
-        if ready and (now - self.last_goal > 12.0) and self.goal_count < 3:
+        # Changed scenario must test autonomous replanning, NOT a new goal.
+        # Retry goal delivery only until first SCAN trajectory is observed.
+        can_goal = self.scenario != "changed" or self.first_traj_id is None
+        if ready and can_goal and (now - self.last_goal > 12.0) and self.goal_count < 3:
             self.send_goal(stamp)
         try:
             publishers = self.get_publishers_info_by_topic("/cmd_vel")
@@ -309,6 +288,8 @@ class G1Acceptance(Node):
 
         if self.scenario == "changed" and not candidates:
             issues.append("no_new_trajectory_after_obstacle_insertion")
+        if self.scenario == "changed" and self.goals_after_injection:
+            issues.append("test_contaminated_by_new_goal_after_obstacle")
         if self.scenario == "blocked" and not candidates:
             issues.append("no_trajectory_after_map_blocked")
 
@@ -316,12 +297,17 @@ class G1Acceptance(Node):
             # Evaluate latest candidate against latest inflation map.
             for m in candidates[-5:]:
                 collisions = path_collision(m["path"], self.occupied)
+                proximity = path_margin_proximity(m["path"], self.occupied)
                 examined.append({
                     "traj_id": m["traj_id"],
                     "received_s": m["received_s"],
                     "collision_samples": len(collisions),
+                    "collision_examples": collisions[:6],
+                    "supplementary_9cm_proximity_samples": len(proximity),
                     "max_lateral_deviation_m": m["max_lateral_deviation_m"],
                     "max_vertical_deviation_m": m["max_vertical_deviation_m"],
+                    "path_start": [round(v, 3) for v in m["path"][0]],
+                    "path_end": [round(v, 3) for v in m["path"][-1]],
                 })
             if any(x["collision_samples"] > 0 for x in examined):
                 issues.append("candidate_path_intersects_inflated_occupancy")
@@ -345,6 +331,9 @@ class G1Acceptance(Node):
             "blocking_inflated_occupancy_seen": self.blocked_map_seen,
             "first_blocked_map_s": self.blocked_map_s,
             "goal_messages_sent": self.goal_count,
+            "goals_after_obstacle_injection": self.goals_after_injection,
+            "collision_metric": "SCAN double cylinder voxel occupancy (0.18m centre offsets)",
+            "secondary_proximity_metric": "9cm sphere around trajectory centre; diagnostics only",
             "first_goal_s": self.first_goal_s,
             "bspline_messages": self.bs_count,
             "valid_bspline_messages": len(self.messages),
