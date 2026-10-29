@@ -45,3 +45,10 @@ Keep PCD, Bag, manuals, offline test outputs and reports outside this source-onl
 ## G1 diagnostic note
 
 If the planner prints `final_plan_success=1` but the observer reports `bspline_messages=0`, do **not** mark G1 as PASS. The diagnostic monitor records publisher discovery, topic types/QoS, received `/cloud`, `/body_pose`, `/move_base_simple/goal`, and presence of real `/cmd_vel` publishers to distinguish missing input, DDS endpoint mismatch and observation-window timing. The test feed repeats the same stationary offline goal at 4, 17, 32 and 52 seconds. A stationary synthetic robot is not evidence of physical motion or obstacle-free trajectory execution.
+
+## Hive2 / SLAM / SCAN 参数基线（2026-10-29）
+
+- [Hive2 参数审计与未决冲突（中文）](docs/hive2_parameter_inventory_20261029.md)
+- [机器可读 Hive2 参数清单（JSON）](config/reference/hive2_parameter_inventory_20261029.json)
+
+参数清单记录 Hive2 运动栈与 SLAM 的已报告尺寸、Livox MID-360 外参、点云/TF 接口、速度需求，以及尚未解决的 `base_footprint → base_link` **0.90 m / 0.30 m** 高度冲突和药厂安全距离。**只读参考，不是 ROS 可执行配置**。本仓库的 G1 `planner.yaml` 仍然使用独立的合成测试几何值；不能将其当作 Hive2 真机参数。冲突未解决前不自动修改启动配置。

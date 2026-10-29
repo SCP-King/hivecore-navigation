@@ -1,0 +1,271 @@
+{
+  "schema_version": "1.0.0",
+  "snapshot_date": "2026-10-29",
+  "title": "Hive2 机器人/SLAM/SCAN 参数基线（只读参考）",
+  "inventory_only": true,
+  "NOT_A_ROS_RUNTIME_CONFIGURATION": true,
+  "provenance": {
+    "data_basis": "用户根据 Hive2 运动栈、SLAM 栈、URDF、控制器配置、现场记录与需求文件提交的参数审计",
+    "external_files_checked_in_this_commit": false,
+    "repository_values_cross_checked": [
+      "src/n01_bringup/config/n01_sensor.yaml",
+      "src/scan_planner/plan_manage/config/planner.yaml",
+      "src/n01_scan_dynacbf_bridge/config/isolated.yaml"
+    ],
+    "confidence_note": "external_reported 表示用户提供的本机审计结论，不等于已在该 GitHub 仓库中复核原始文件"
+  },
+  "robot": {
+    "model": {
+      "value": "Hive2",
+      "configuration": "four_leg_four_wheel",
+      "status": "external_reported",
+      "evidence": [
+        "/opt/hivecore/hive2-motion/1.0.0",
+        "hive2_driver",
+        "start_hive2_motion.sh",
+        "quad_leg_kinematics.xacro"
+      ]
+    },
+    "hive3_configuration": "separate_do_not_mix",
+    "urdf_base_link_collision_box_m": {
+      "length": 0.55,
+      "width": 0.26,
+      "height": 0.12,
+      "source": "quad_leg_kinematics.xacro",
+      "status": "external_reported",
+      "warning": "仅 base_link 的 collision box，非含四腿、轮子和外壳的整机最大外廓"
+    },
+    "hip_mount_geometry_m": {
+      "x_front_rear_centers": [
+        -0.28,
+        0.28
+      ],
+      "y_left_right_centers": [
+        -0.135,
+        0.135
+      ],
+      "longitudinal_span": 0.56,
+      "lateral_span": 0.27,
+      "source": "quad_leg_kinematics.xacro, hive2_chassis_params.yaml comments",
+      "status": "external_reported"
+    },
+    "leg_wheel_geometry_m": {
+      "upper_leg_length": 0.38,
+      "lower_leg_length": 0.38,
+      "ankle_lower_section": 0.1,
+      "wheel_radius": 0.095,
+      "wheel_diameter": 0.19,
+      "wheel_width": 0.04,
+      "status": "external_reported",
+      "source": "quad_leg_kinematics.xacro"
+    },
+    "full_vehicle_max_envelope_m": null,
+    "full_vehicle_max_envelope_status": "pending_validation_of_shell_legs_wheels_all_postures",
+    "genuine_min_ground_clearance_m": null,
+    "genuine_min_ground_clearance_status": "unconfirmed"
+  },
+  "leg_and_height": {
+    "motion_leg_length_range_m": [
+      0.38,
+      0.48
+    ],
+    "foot_height_min_m": 0.5885,
+    "foot_height_max_m": 0.8585,
+    "home_pitch1_deg": 45,
+    "home_pitch2_deg": -75,
+    "nominal_home_wheel_bottom_gap_m": 0.1206,
+    "nominal_home_wheel_bottom_gap_warning": "仅根据所报 URDF home 几何推算；与实际接地状态不一致，不可直接作为最小离地间隙",
+    "base_footprint_to_base_link_z_conflict_m": {
+      "motion_stack": 0.9,
+      "slam_stack": 0.3,
+      "motion_source": "hivecore_sensor_frames.xacro",
+      "slam_source": "hivecore_robot.urdf.xacro (footprint_xyz = '0 0 0.3')",
+      "status": "CRITICAL_UNRESOLVED_TF_DUPLICATE",
+      "resolution": "待唯一 TF 发布者、动态机身高度、实机标定与甲方统一确认；禁止自行选值覆盖"
+    },
+    "reported_lidar_sphere_measured_height_m": 0.8943,
+    "reported_lidar_sphere_measured_height_note": "独立现场测量记录，不等同于实时 base_link/雷达坐标变换"
+  },
+  "lidar": {
+    "model": "Livox MID-360",
+    "reported_config_file": "MID360_config.json",
+    "reported_lidar_type": 8,
+    "reported_device_ipv4": "192.168.1.196",
+    "base_link_to_lidar_link": {
+      "translation_m": [
+        0.295,
+        0,
+        0
+      ],
+      "rpy_rad": [
+        0,
+        0,
+        0
+      ],
+      "source": "hivecore_robot.urdf.xacro / hivecore_sensor_frames.xacro",
+      "status": "external_reported"
+    },
+    "lidar_height_above_ground_m": null,
+    "lidar_height_above_ground_status": "depends_on_validated_base_height"
+  },
+  "slam_interface": {
+    "default_filtered_cloud": {
+      "topic": "/livox/lidar/geo_filtered",
+      "type": "sensor_msgs/PointCloud2",
+      "frame_id": "lidar_link",
+      "status": "reported_and_repo_config_supported"
+    },
+    "optional_raw_cloud": {
+      "topic": "/livox/lidar",
+      "frame_id": "livox_frame",
+      "fallback": "explicit_option_only_do_not_enable_without_tf_validation"
+    },
+    "expected_tf_chain": [
+      "map",
+      "base_footprint",
+      "base_link",
+      "lidar_link",
+      "imu_link",
+      "livox_frame"
+    ],
+    "expected_tf_edges": [
+      {
+        "from": "map",
+        "to": "base_footprint",
+        "source": "SLAM 定位（动态）",
+        "availability": "仅 GUI-SLAM 有效定位后可信，不保证始终可用"
+      },
+      {
+        "from": "base_footprint",
+        "to": "base_link",
+        "source": "Hive2 motion RSP（候选权威源）",
+        "availability": "高度 0.90 / 0.30 m 两套定义冲突，未定版"
+      },
+      {
+        "from": "base_link",
+        "to": "lidar_link",
+        "source": "Hive2 motion RSP",
+        "translation_m": [
+          0.295,
+          0,
+          0
+        ],
+        "rpy_rad": [
+          0,
+          0,
+          0
+        ]
+      },
+      {
+        "from": "lidar_link",
+        "to": "imu_link",
+        "source": "SLAM static_tf_publisher",
+        "availability": "reported"
+      },
+      {
+        "from": "imu_link",
+        "to": "livox_frame",
+        "source": "SLAM static_tf_publisher",
+        "availability": "reported"
+      }
+    ],
+    "observed_failure_modes": [
+      "未定位/离线时 map frame 不存在",
+      "tf2_echo map lidar_link 失败",
+      "相同 TF 边被两个 RSP 以不同高度发布"
+    ],
+    "bag_with_historical_chain": "bag_20261027_225100",
+    "bag_note": "只证明该会话观察到相关边；不能推断当前实时 TF 有效",
+    "scan_input_requirement": "点云 frame lidar_link 需要时间同步的有效 TF 转为 SCAN 统一规划坐标系；禁止把 frame_id 直接改成 world"
+  },
+  "navigation_requirements": {
+    "approved_linear_speed_limit_mps": 1,
+    "planning_response_upper_bound_ms": 500,
+    "continuous_operation_target_hours": 8,
+    "static_navigation_success_rate_target": 0.95,
+    "source": "N-01导航算法需求规格说明书_优化版_20261017.docx（用户审计报告）",
+    "chassis_controller_config_max_linear_speed_mps": 2,
+    "teleop_config_linear_speed_max_mps": 2,
+    "teleop_default_speed_mps": 0.2,
+    "teleop_config_min_speed_mps": 0.1,
+    "chassis_omega_per_linear": 1.25,
+    "chassis_omega_per_linear_note": "底盘比例参数，不是药厂已批准的最大角速度",
+    "approved_navigation_max_angular_velocity_radps": null,
+    "navigation_max_acceleration_mps2": null,
+    "approved_factory_obstacle_clearance_m": null,
+    "preliminary_safety_radius_m": 0.35,
+    "preliminary_safety_radius_status": "乙方设计文档暂定，待甲方确认，不是正式安全标准",
+    "other_open_safety_requirements": [
+      "动态障碍安全距离",
+      "行人/AGV/临时物料距离",
+      "速度相关安全距离",
+      "全身安全包络",
+      "制动距离/加速度",
+      "通道宽度/障碍密度"
+    ]
+  },
+  "g1_offline_synthetic_reference": {
+    "scope": "G1 isolated synthetic pointcloud and stationary odometry only; NOT Hive2 hardware geometry",
+    "frame_id": "world",
+    "body_pose_z_m": 0.4,
+    "sensor_pose_z_m": 0.8,
+    "goal_z_m": 0.4,
+    "scan_grid_map_body_height_m": 0.4,
+    "scan_double_cylinder_radius_m": 0.25,
+    "scan_double_cylinder_offset_m": 0.18,
+    "approximate_horizontal_envelope_m": {
+      "length": 0.86,
+      "width": 0.5
+    },
+    "map_resolution_m": 0.05,
+    "scan_max_vel_mps": 0.75,
+    "scan_max_acc_mps2": 0.5,
+    "scan_optimization_dist0_m": 0.2,
+    "cloud_is_world": true,
+    "sources": [
+      "src/scan_planner/plan_manage/config/planner.yaml",
+      "src/n01_scan_dynacbf_bridge/n01_scan_dynacbf_bridge/scan_g1_feed.py"
+    ],
+    "prohibition": "不得当作 Hive2 真机尺寸、雷达高度、真机最大速度或正式药厂安全参数"
+  },
+  "blocking_open_items": [
+    {
+      "id": "TF-HEIGHT",
+      "priority": "P0",
+      "detail": "base_footprint -> base_link 唯一发布源及正确/动态高度 0.90 vs 0.30",
+      "owner": "需运动栈与 SLAM 系统联合核实"
+    },
+    {
+      "id": "TF-LOCALIZATION",
+      "priority": "P0",
+      "detail": "map -> base_footprint 在真实定位有效时稳定可用及 TF 时间同步"
+    },
+    {
+      "id": "SCAN-COORDS",
+      "priority": "P0",
+      "detail": "lidar_link 点云转换为统一规划系，避免合成 world 参数混用"
+    },
+    {
+      "id": "BODY-ENVELOPE",
+      "priority": "P1",
+      "detail": "含轮、腿、外壳及不同步态的整机安全碰撞包络"
+    },
+    {
+      "id": "GROUND-CLEARANCE",
+      "priority": "P1",
+      "detail": "真实运行姿态下最小离地间隙与机身动态高度"
+    },
+    {
+      "id": "FACTORY-SAFETY",
+      "priority": "P1",
+      "detail": "甲方批准的安全距离、最大角速度、制动距离及不同动态对象约束"
+    }
+  ],
+  "operational_guardrails": [
+    "档案只供后续参数审计和适配决策，不能被 launch 当做实际 ROS 配置加载",
+    "不自动修改运动栈/SLAM TF、SCAN planner.yaml、传感器话题、底盘限速",
+    "记录中 hardware external_reported 不代表已完成现场测量/真机校准",
+    "G1 离线合成环境与真机参数必须分别管理",
+    "任何实机集成前需解决 P0 项并通过离线参数/TF 校验；严禁用离线冒烟结果声称可直接实机运行"
+  ]
+}
