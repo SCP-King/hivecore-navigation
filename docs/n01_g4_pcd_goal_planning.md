@@ -91,3 +91,39 @@ python3 scripts/n01_pcd_goal_preview.py \
    才能报告“真实整图 SCAN 规划已完成”；目前没有相关验收结果。
 
 **任何输出仍是离线可视化/算法研究，绝不能连接底盘。**
+
+
+## 2026-10-30 G4.1：真实 PCD 地图质量不达标及诊断工具
+
+用户提供的 `factory_map.json/.pgm/.svg`（PCD 原始文件未包含在上传压缩包中）显示：
+`width=230`、`height=187`、`resolution=0.25`，
+共 43,010 格；当 `floor_z=0.0`、`floor_tolerance=0.12`、
+`clearance=0.5` 时，`floor_hits=5005`、`obstacle_hits=31127`，
+`free_cells=18`、`inflated_occupied_cells=6810`、`unknown_cells=36182`。
+根据上传 PGM 四邻接计算，自由格仅有 13 个互不连通的区域，最大连续块 3 格。
+**因此该地图尚不具备可审计的 A→B 路径规划输入，不应直接随便指定坐标或将未知区放行。**
+这只能说明采用当前地面切片与膨胀模型的结果失败，不能证明实际厂区无可通行走廊。
+
+新增 `scripts/n01_pcd_floor_diagnose.py`，使用源 PCD 逐高度比较
+`free_cells`、`largest_free_component_cells`、`unknown_percent`，
+完整输出 `n01.offline.pcd_floor_sweep.v1` JSON。
+它**不会自动选地面**，因为机顶、设备和天花板可能产生较大的假自由连通片。
+不要使用结果排名直接当作地面认证。命令：
+
+```bash
+cd /home/demo/lyy/hivecore-navigation
+python3 -m unittest discover -s src/n01_offline_integration/test -p 'test_pcd_floor_diagnostics.py' -v
+python3 scripts/n01_pcd_floor_diagnose.py \
+  --pcd /home/demo/lyy/slam_data/maps/cloud_map_20261027_225549.pcd \
+  --output /home/demo/lyy/n01_runtime/pcd_goal/floor_sweep_$(date +%Y%m%d_%H%M%S).json
+```
+
+之前 G4 生成器也会新增最大的四邻接候选自由区统计；
+当最大连通片少于 25 栅格时显式输出地图质量警告。这个阈值只用于
+**提示高度碎片化**，不是可通行性或安全认证阈值。
+
+**下一开发门槛：** 最可靠是检查 SLAM 是否另存占据地图 / TSDF / ESDF，
+或以 Bag 中有效历史位姿和原始激光观测进行有几何一致性的自由空间射线
+重建，再与 PCD 静态表面融合。单张 PCD 通常不能证明“没有点=没有障碍”。
+建图视图中的已观测区、未知区、地面、可行驶区及 Hive2 多姿态包络
+必须分开建模，才能对真实路线做静态碰撞与未知区审计。
