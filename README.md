@@ -89,6 +89,8 @@ Run `bash scripts/run_n01_bag_functional.sh` after pulling main. See [真实 Bag
 
 **G2.3 21:54 验收复盘：** 原版 `bd60a5a` 时间戳精确配对 99 帧，但 SCAN Path 出现前 95 帧，余下 4 帧均超出 1.5m 走廊，实际可计算动态风险帧数 0。原 runner 的 PASS 含“路径存在但投影不可用也被计为复用”的验收假阳性。新修复对路径超界严格拒绝，另外加最多 160 帧的显式 POST-HOC 历史 Path 几何对照，且与同时序 LIVE 风险严格分账；未在用户 Ubuntu 复测。见 [G2.3 复盘与修复](docs/n01_g23_path_timeline.md)。
 
-## G3 已有真实 Bag 全链数据流与有限时域约束优化（开发版，待 Ubuntu 验收）
+## G3 已有真实 Bag 全链数据流与有限时域约束优化（2026-10-29 离线功能 PASS）
 
 不急于做 RViz。现把历史药厂过滤点云（已知 928 帧）尽可能全部送入 map/SCAN/动态跟踪/预测/简化 MPC-CBF 求解器；输出离线约束报告和 `/n01/offline/g3_candidate_path`，**绝不输出底盘运动命令**。一键脚本另生成有真值合成运动障碍的求解正向证据，严格区分它与没有真值的药厂 Bag。见 [G3 数据全流程说明](docs/n01_g3_full_data_pipeline.md)。
+
+**G3 用户真 Bag 实测（2026-10-29 22:52，代码 `1a8a36f`）：** 整份 928 条点云已读取，571 条成功进入 map，569 帧按历史时间戳进入 G3 精确配对；61 帧实际执行数值 MPC-CBF 近似求解并生成候选 Path（51 名义 + 10 含未经认证运动候选约束），SCAN 4/4 有效 B 样条，82/82 集成测试 PASS、零 `/cmd_vel`、清理 CLEAN。**这不是 Hive2 真实动态避障认证**；另有 357 条历史 TF 缺失及 P0 未决。完整审计见 [G3 实测记录](docs/n01_g3_full_data_pipeline.md)。
