@@ -71,7 +71,19 @@ finish() {
   echo "=============================================="
   exit "$rc"
 }
+on_error() {
+  local rc="$1" line="$2" command="$3"
+  {
+    printf 'ERR rc=%s line=%s\n' "$rc" "$line"
+    printf 'command=%s\n' "$command"
+  } >> "$OUT/logs/runner_errors.log"
+  if [[ "$RESULT" == "INCOMPLETE" ]]; then
+    RESULT="FAIL"
+    REASON="unexpected_shell_error_at_line_$line"
+  fi
+}
 trap finish EXIT
+trap 'on_error "$?" "$LINENO" "$BASH_COMMAND"' ERR
 trap 'RESULT="INTERRUPTED"; REASON="keyboard_interrupt"; exit 130' INT
 trap 'RESULT="INTERRUPTED"; REASON="terminated"; exit 143' TERM
 
@@ -88,8 +100,31 @@ say "START; output: $OUT"
 if [[ ! -r /opt/ros/humble/setup.bash ]]; then
   REASON="ROS2_HUMBLE_MISSING"; exit 2
 fi
+say "0/5 Loading ROS 2 Humble (capturing setup output)"
+# ROS/colcon setup may reference unset variables. Disable nounset ONLY while sourcing.
+set +u
 # shellcheck disable=SC1091
-source /opt/ros/humble/setup.bash
+if source /opt/ros/humble/setup.bash > "$OUT/logs/ros_setup.log" 2>&1; then
+  :
+else
+  setup_rc=$?
+  set -u
+  RESULT="FAIL"
+  REASON="ros_humble_setup_failed_rc_$setup_rc"
+  cat "$OUT/logs/ros_setup.log"
+  exit 2
+fi
+set -u
+if ! command -v ros2 > "$OUT/logs/ros2_path.txt" 2>&1; then
+  RESULT="FAIL"
+  REASON="ros2_command_missing_after_setup"
+  exit 2
+fi
+if ! command -v colcon > "$OUT/logs/colcon_path.txt" 2>&1; then
+  RESULT="FAIL"
+  REASON="colcon_command_missing_after_setup"
+  exit 2
+fi
 cd "$ROOT"
 if [[ ! -f src/scan_planner/plan_manage/package.xml ]]; then
   REASON="SCAN_SOURCES_MISSING"; exit 2
@@ -110,8 +145,20 @@ if ! colcon build --packages-up-to scan_planner n01_scan_dynacbf_bridge \
   exit 4
 fi
 if [[ ! -f install/setup.bash ]]; then RESULT="FAIL"; REASON="overlay_missing"; exit 4; fi
+say "Loading built ROS 2 overlay"
+set +u
 # shellcheck disable=SC1091
-source install/setup.bash
+if source install/setup.bash > "$OUT/logs/install_overlay_setup.log" 2>&1; then
+  :
+else
+  setup_rc=$?
+  set -u
+  RESULT="FAIL"
+  REASON="install_overlay_setup_failed_rc_$setup_rc"
+  cat "$OUT/logs/install_overlay_setup.log"
+  exit 4
+fi
+set -u
 
 say "3/5 Checking isolated ROS graph"
 if ! timeout 15s ros2 node list > "$OUT/logs/preflight_nodes.txt" 2>&1; then
