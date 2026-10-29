@@ -24,6 +24,7 @@ if os.environ.get("ROS_DOMAIN_ID") != "88" or os.environ.get("ROS_LOCALHOST_ONLY
     raise RuntimeError("G1 acceptance requires ROS_DOMAIN_ID=88 and ROS_LOCALHOST_ONLY=1")
 import rclpy
 from rclpy.node import Node
+from rclpy.executors import ExternalShutdownException
 from rclpy.qos import qos_profile_sensor_data
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry
@@ -322,8 +323,8 @@ class G1Acceptance(Node):
                     "max_lateral_deviation_m": m["max_lateral_deviation_m"],
                     "max_vertical_deviation_m": m["max_vertical_deviation_m"],
                 })
-            if not any(x["collision_samples"] == 0 for x in examined):
-                issues.append("all_candidate_paths_intersect_inflated_occupancy")
+            if any(x["collision_samples"] > 0 for x in examined):
+                issues.append("candidate_path_intersects_inflated_occupancy")
             if self.scenario == "blocked":
                 detours = [m for m in examined if m["collision_samples"] == 0
                            and (m["max_lateral_deviation_m"] >= .22
@@ -368,7 +369,7 @@ def main(args=None):
     node = G1Acceptance(options.scenario, options.report)
     try:
         rclpy.spin(node)
-    except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         node.destroy_node()
