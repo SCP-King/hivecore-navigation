@@ -111,3 +111,12 @@ Run `bash scripts/run_n01_bag_functional.sh` after pulling main. See [真实 Bag
 此前 RViz `/cloud` 是真实 Bag 的逐帧点云，并不是完整的已保存 PCD 整图；`/nav/test/global_path` 也只是 SCAN 的局部参考（旧 Bag 的测试目标约前方 1.5m），G3 数值候选时域约 1.5s，不等于厂区全局 A→B 导航。
 
 新增可选只读 `n01_static_pcd` 与 RViz 静态底图 `/n01/offline/static_pcd_map`。必须先确认用户 PCD 和历史 Bag `map` 是同一坐标系，然后在运行演示脚本前设置 `N01_STATIC_PCD_PATH=/真实路径/地图.pcd` 和 `N01_PCD_MAP_FRAME_ASSERTED=1`。当前支持未压缩 ASCII/BINARY PCD；不支持 `binary_compressed`。不设置路径时仍显示逐帧点云，并明确告知未加载整图。灰色整图仅用于显示，不进入规划器、不发送底盘控制，不能作为地图配准证明或导航安全授权。详细步骤见 [G1-G3 演示文档](docs/n01_g123_demo_recording.md)。
+
+
+## G4.0 PCD 栅格与目标点路线预览（已开发、待真实 PCD 验收）
+
+新增 `scripts/n01_pcd_goal_preview.py` 和纯 Python 模块 `pcd_goal_grid.py`，将可读的整图 PCD 转为带未知/自由/占据区分的 2D PGM/YAML 栅格并保存 SVG。必须先确认地面高度 `--floor-z`，未提供时只显示 PCD 高程直方统计；可在提供 `--start X Y --goal X Y` 后生成**独立 A* 全图参考折线预览**。默认将未知区域视为不可通行，若显式允许穿越未知区域，结果只供研究可视化。
+
+**本阶段全图 A* 不是 SCAN 输出。** 原生 SCAN 支持 `fsm.navi_mode=3` 接收 `initial_path`，但尚未将这份整图参考路径与静态占据地图接入其局部 B 样条优化，也未真实 PCD/起终点验证。项目此前在真实 Bag 上通过的 SCAN 是局部轨迹规划而非全厂 A→B 导航。开发/验收要求见 [G4 说明](docs/n01_g4_pcd_goal_planning.md)。严格保持离线、无底盘输出。
+
+另外已修复 G3.1 `Path` 名称冲突（ROS Path 覆盖 pathlib.Path）造成的启动崩溃；须在用户 ROS 2 Humble 环境复测。
