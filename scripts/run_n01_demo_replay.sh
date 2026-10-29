@@ -38,7 +38,7 @@ stop_owned() {
     python3 "$GUARD" signal --signal "$phase" \
       > "$OUT/logs/signal_$phase.json" 2>&1 || true
     for i in 1 2 3 4 5; do
-      if python3 "$GUARD" verify >"$OUT/logs/verify_$phase_$i.json" 2>&1; then
+      if python3 "$GUARD" verify >"$OUT/logs/verify_${phase}_${i}.json" 2>&1; then
         return 0
       fi
       sleep 1
@@ -114,7 +114,7 @@ for bin in ffmpeg ffprobe xdotool rviz2 colcon; do
   if [[ "$bin" == "colcon" || "$bin" == "rviz2" ]]; then continue; fi
   if ! command -v "$bin" >/dev/null; then
     RESULT="FAIL"; REASON="missing_dependency_$bin"
-    say "Install ffmpeg, xdotool, x11-utils; no packages auto-installed"; exit 2
+    say "Missing dependency: $bin. Install ffmpeg, xdotool, x11-utils; no packages auto-installed"; exit 2
   fi
 done
 if ! ffmpeg -hide_banner -h demuxer=x11grab 2>&1 | grep -q window_id; then
