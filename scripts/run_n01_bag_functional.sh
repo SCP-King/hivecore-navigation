@@ -97,6 +97,16 @@ PY
     REASON="owned_processes_or_ros_nodes_remaining"
     rc=12
   fi
+  # Validate read-only per-frame numerical provenance after child shutdown.
+  if [[ "$RESULT" == "BAG_FUNCTIONAL_PATH_SMOKE_PASS" ]]; then
+    if ! PYTHONPATH="$ROOT/src/n01_offline_integration${PYTHONPATH:+:$PYTHONPATH}" \
+      python3 -m n01_offline_integration.g3_frame_evidence \
+      "$OUT/g3_frame_evidence.jsonl" "$OUT/g3_evidence_summary.json" \
+      "$OUT/recorded_bag_report.json" \
+      > "$OUT/logs/g3_evidence_check.log" 2>&1; then
+      RESULT="INCOMPLETE"; REASON="g3_frame_evidence_validation_failed"; rc=11
+    fi
+  fi
   if [[ -f "$OUT/recorded_bag_report.json" ]]; then
     cp "$OUT/recorded_bag_report.json" "$OUT/logs/bag_report_final.json"
   fi
