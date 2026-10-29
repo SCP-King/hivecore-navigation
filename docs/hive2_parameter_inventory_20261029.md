@@ -16,18 +16,23 @@
 | 轮胎 | 半径 0.095 m；直径 0.19 m；轮宽 0.04 m | URDF |
 | **整机最大外廓** | **未确认** | 必须计入外壳、腿、轮及多姿态包络 |
 
-## 2. 高度基准已选定：0.90 m；运行态仍需核验（P0）
+## 2. 已选定高度 0.90 m，但 SLAM 最新默认仍发布 0.30 m（P0）
 
-**2026-10-29 用户决策：Hive2 运动栈最新、已适配的 `base_footprint → base_link` 高度采用 `z=+0.90 m`。** 此值作为后续适配工作的**当前配置基准**。先前 SLAM 栈 `footprint_xyz="0 0 0.3"` 是**历史配置记录**，不再与 0.90 m 并列作为待选方案。
+**已确认的配置选择（2026-10-29）：** Hive2 运动栈 `base_footprint → base_link` 目标高度 **z=+0.90 m**；不会再把 0.30 m 作为可选的 Hive2 正式参数。
 
-| 来源 | 高度 | 当前地位 |
+**最新代码审计纠正（2026-10-26 构建版、用户只读检查 `/home/demo/latest/slam3d_release`）：** `preprocessing.launch.py` 和 `console_slam3d_bringup.py` 中 `launch_robot_state_publisher` **默认仍为 true**；`hivecore_robot.urdf.xacro` 的 `footprint_xyz="0 0 0.3"` **仍然是当前源码默认值**。因此“0.30 m 已停用”这一推断**不成立**：默认同时启动 SLAM 和 Hive2 运动栈，可能出现两家 RSP 发布同一 TF 边。
+
+| 发布者 / 来源 | z 值 | 当前结论 |
 | --- | ---: | --- |
-| Hive2 运动栈 `hivecore_sensor_frames.xacro` | **0.90 m** | **已选定**；用户确认最新系统已适配 |
-| 历史 SLAM 栈 `hivecore_robot.urdf.xacro` 默认值 | 0.30 m | **旧值，仅作溯源**；不得作为当前 Hive2 运行配置 |
+| 运动栈 `hive2_driver` RSP，`hivecore_sensor_frames.xacro` | **0.90 m** | **选定的权威配置基准**；实际运行态尚未独立核实 |
+| 最新 SLAM `mount_tf_publisher_node`（ROS 节点名 `robot_state_publisher`） | **0.30 m** | **旧值但仍默认启用**，需在 SLAM 启动时显式关闭 |
+| 推荐 SLAM 启动覆盖 | `launch_robot_state_publisher:=false` | **下一次联调前必须确认生效**；这里仅记录，不代甲方改文件 |
 
-**注意证据层级：** 用户确认了配置选择和“已适配”，但本次仓库更新未读取最新运动栈/SLAM 原件，也未观测运行时 TF，因此**尚未独立验证**当前唯一发布者、`/tf`/`/tf_static` 实际高度和定位有效状态。若 0.30 m 旧静态边仍被发布，则仍有真实运行冲突；验证完成才能关闭该 P0 运行态风险。
+`mount_tf_publisher_node` 使用节点名 `robot_state_publisher`，可能与运动栈 RSP 同名；即使 TF 值碰巧一致，同名节点与双权威也需要排查。用户审计还提到 `robot_state_publisher/set_enable_publish {data:false}` 运行时开关，可作为备选，但**不应替代可审计的启动参数配置**；实际服务类型、完整名称与生效行为应在对应版本确认后使用。
 
-用户审计在 `hive2_leg_parameters.yaml` 中还记录：`motion.leg.length=[0.38,0.48]` m、`foot_height_min=0.5885` m、`foot_height_max=0.8585` m、home 角度 pitch1=+45°、pitch2=-75°。所报 home 几何下轮底约悬空 **0.1206 m**，与实际接地状态矛盾，**真实运行中的最小离地间隙仍未确认**。轮足运动时 `base_link` 相对地面的高度是否变化也需要确认。现场记录雷达球心离地约 **0.8943 m** 是独立测量，不能代替实时 TF。
+**解锁 P0-1 的条件**：SLAM 的 mount RSP 确认关闭；Hive2 运动栈 RSP 正常运行；实际 `base_footprint → base_link` 变换为 z=0.90 m，且只剩**一个该 TF 边的权威发布源**。仅统计整个 `/tf_static` 话题发布者数量**不足以证明单一权威**，因为同一话题还可能承载其他边，消息本身也不包含发布者身份；须结合启动配置、ROS 图发布者信息和该边实际消息检查，不可凭一张 TF 树图推断。
+
+用户审计在 `hive2_leg_parameters.yaml` 中记录 `motion.leg.length=[0.38,0.48]` m，`foot_height_min=0.5885` m、`foot_height_max=0.8585` m，home pitch1=+45°、pitch2=-75°。所报 home 几何下轮底约悬空 0.1206 m，与实际接地状态矛盾；**真实最小离地间隙仍未确认**。现场测量雷达球心离地约 0.8943 m 也不能替代最新运行态 TF。
 
 ## 3. Livox MID-360 与点云接口
 
@@ -55,10 +60,10 @@ map
                 └── livox_frame ← SLAM static_tf_publisher
 ```
 
-- `map → base_footprint` 仅在 GUI-SLAM **有效定位时**可信；旧离线情形曾无 `map` frame，`tf2_echo map lidar_link` 失败。
-- 历史配置中该 TF 边曾出现 z=0.90/0.30 m 两种定义；用户已选定最新适配值 0.90 m。必须核实旧 0.30 m 发布源确已停用，不能仅凭“已适配”宣告运行态无冲突。
+- 最新 SLAM `slam3d_node` 是 `map → base_footprint` 唯一预期发布者，Mapping Live 或 Localization Tracking 时可发布；**导航就绪必须进一步要求 `/localization_status` 显示 outer=Localization、inner=tracking 且 `registration_output_tf_published=true`**，并核实状态及时有效。单有 `map` TF 不够。
+- 2026-10-26 最新 SLAM release **默认依旧开启 z=0.30 m 的 mount RSP**；需要显式 `launch_robot_state_publisher:=false`，之后再核实 Hive2 RSP 是该边唯一发布源。运动栈与 SLAM mount 节点还存在同名 `robot_state_publisher` 的风险。
 - 记录中 `bag_20261027_225100` 曾出现完整链及 IMU/Livox 静态边；**不证明当前在线状态存在相同链**。
-- 真实 `lidar_link` 点云需按消息时间戳转换到统一规划坐标系。**不能仅把 frame_id 改为 `world`**。
+- 最新预处理链是 `/livox/lidar` (`livox_frame`) → 在 `base_link` 做几何过滤 → `/livox/lidar/geo_filtered` **输出仍是 `lidar_link`**。真实点云须按 **PointCloud2 原始采集时间戳**解析 `map ← lidar_link`，才能作为 SCAN `map` 规划输入。**不能仅把 frame_id 改为 `world` 或用最新时刻 TF 偷换扫描时刻**。本仓库 `n01_sensor.yaml` 还配置了 `target_frame: odom`，它与规划目标 `map` 的关系需要在接口适配时统一，不可暗改。
 
 ## 5. 速度、规划响应与药厂安全标准
 
@@ -105,11 +110,13 @@ map
 
 | 编号 | 优先级 | 必须先解决 |
 | --- | --- | --- |
-| TF-HEIGHT | **P0** | **高度配置已选定 0.90 m**；核实唯一 TF 发布源、旧 0.30 m 是否停用，以及轮足姿态下是否需要动态高度 |
-| TF-LOCALIZATION | **P0** | 验证有效定位状态下的 `map → base_footprint` 及时间同步 |
-| SCAN-COORDS | **P0** | 将 `lidar_link` 点云经正确 TF 转换后供 SCAN 使用，不能混用合成 `world` |
+| TF-HEIGHT | **P0** | 最新 SLAM 默认 **仍开启 0.30 m mount RSP**；启动时显式关闭并核实 motion RSP 唯一发布 0.90 m（含同名节点风险） |
+| TF-LOCALIZATION | **P0** | 采用 `/localization_status` 的 `registration_output_tf_published=true` 且 outer=Localization、inner=tracking；状态需新鲜，检查扫描时刻 TF |
+| SCAN-COORDS | **P0** | `geo_filtered` 输出是 `lidar_link`；按采集时间转换到 `map`，并对齐现有 `target_frame: odom` 与合成 `world` 的不同约定 |
 | BODY-ENVELOPE | **P1** | 核实全身腿轮/外壳/步态碰撞包络 |
 | GROUND-CLEARANCE | **P1** | 实测最小离地间隙并核实机身高度是否变化 |
 | FACTORY-SAFETY | **P1** | 甲方确认安全距离、角速度、速度相关制动距离等约束 |
+
+**下一次联调的详细只读 preflight 规格：** [`hive2_slam_p0_readiness_preflight.md`](hive2_slam_p0_readiness_preflight.md)。以下状态均为“预检条件已定义，尚未运行/验证”。
 
 **维护规则：** 这是一份独立于可执行配置的**参数台账**。后续每一个参数的确认需补充来源文件、测量条件、责任人和日期；从“用户确认配置选择 / 用户审计报告 / 未确认”变更为“运行态或真机验证完成”须有对应证据。G1 离线场景与实际 Hive2 参数分别保存；在 P0 运行态校验完成前，不改动 `planner.yaml`、SLAM RSP、运动栈 TF 或底盘实际控制值。

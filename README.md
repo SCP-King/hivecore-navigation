@@ -51,4 +51,6 @@ If the planner prints `final_plan_success=1` but the observer reports `bspline_m
 - [Hive2 参数审计与未决冲突（中文）](docs/hive2_parameter_inventory_20261029.md)
 - [机器可读 Hive2 参数清单（JSON）](config/reference/hive2_parameter_inventory_20261029.json)
 
-参数清单记录 Hive2 运动栈与 SLAM 的已报告尺寸、Livox MID-360 外参、点云/TF 接口、速度需求，以及**用户已选定的 Hive2 当前高度 0.90 m**、历史 SLAM 旧值 0.30 m（保留溯源）、仍需核验的 TF 唯一发布者和药厂安全距离。**只读参考，不是 ROS 可执行配置**。本仓库的 G1 `planner.yaml` 仍然使用独立的合成测试几何值；不能将其当作 Hive2 真机参数。当前高度基准已确定但运行态未验证，故不自动修改启动配置。
+参数清单记录 Hive2 运动栈与 SLAM 的已报告尺寸、Livox MID-360 外参、点云/TF 接口、速度需求，以及**用户已选定的 Hive2 当前高度 0.90 m**、最新 SLAM release 中**仍默认开启**的 0.30 m mount RSP（须显式关闭）、仍需核验的 TF 唯一发布者和药厂安全距离。**只读参考，不是 ROS 可执行配置**。本仓库的 G1 `planner.yaml` 仍然使用独立的合成测试几何值；不能将其当作 Hive2 真机参数。当前高度基准虽确定，但最新 SLAM 的双发布风险仍存在，运行态未验证，故不自动修改启动配置。
+
+**P0 接口与只读预检规格：** [Hive2 SLAM / SCAN P0 Readiness Preflight](docs/hive2_slam_p0_readiness_preflight.md)，涵盖显式禁用 SLAM mount RSP、`/localization_status` tracking/配准判据和 `lidar_link→map` 点云采集时刻转换。**尚未执行、不作为真机运行许可。**
