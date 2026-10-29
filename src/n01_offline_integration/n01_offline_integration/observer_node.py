@@ -47,7 +47,14 @@ class IntegrationObserver(Node):
                        "path_risk_posthoc_projected_frames":0,
                        "path_risk_conflict_frames":0,
                        "dynamic_track_messages":0,"dynamic_track_processed":0,
-                       "moving_hypothesis_frames":0}
+                       "moving_hypothesis_frames":0,
+                       "g3_solver_reports":0,
+                       "g3_exact_stamp_pairs":0,
+                       "g3_solver_attempts":0,
+                       "g3_nominal_only_frames":0,
+                       "g3_dynamic_cbf_candidate_frames":0,
+                       "g3_posthoc_solver_frames":0,
+                       "g3_candidate_paths":0}
         self.health = {}
         self.bag_health = {}
         self.cmd_seen = False
@@ -70,8 +77,14 @@ class IntegrationObserver(Node):
         self.dynamic_port = {}
         self.dynamic_tracks = {}
         self.path_risk = {}
+        self.g3 = {}
         self.create_subscription(String,"/n01/offline/path_risk",
                                  self.on_path_risk,10)
+        if self.historical_mode:
+            self.create_subscription(String,"/n01/offline/g3_solver_report",
+                                     self.on_g3,10)
+            self.create_subscription(RosPath,"/n01/offline/g3_candidate_path",
+                                     self.on_g3_candidate,10)
         self.create_timer(.5,self.tick)
 
     def on_cloud(self, msg):
@@ -101,6 +114,36 @@ class IntegrationObserver(Node):
     def on_path(self, msg):
         if msg.poses and msg.header.frame_id == "map":
             self.counts["reference_paths"] += 1
+
+    def on_g3_candidate(self,msg):
+        if msg.poses and msg.header.frame_id=="map":
+            self.counts["g3_candidate_paths"]+=1
+
+    def on_g3(self,msg):
+        self.counts["g3_solver_reports"]+=1
+        try:
+            data=json.loads(msg.data)
+            if not isinstance(data,dict) or data.get("schema")!=(
+                    "n01.offline.g3_mpc_cbf.v1"):
+                return
+            self.g3=data
+            # ROS candidate messages may be bursty during post-hoc Bag
+            # backfill; count the producer's cumulative evidence as well.
+            self.counts["g3_candidate_paths"]=max(
+                self.counts["g3_candidate_paths"],
+                int(data.get("g3_candidate_paths_published",0)))
+            keys={
+                "g3_exact_stamp_pairs":"exact_recorded_stamp_pairs",
+                "g3_solver_attempts":"solver_executed_frames",
+                "g3_nominal_only_frames":"nominal_only_solutions",
+                "g3_dynamic_cbf_candidate_frames":"dynamic_cbf_candidate_solutions",
+                "g3_posthoc_solver_frames":"posthoc_solver_frames",
+            }
+            for local,remote in keys.items():
+                self.counts[local]=max(
+                    self.counts[local],int(data.get(remote,0)))
+        except (ValueError,TypeError,OverflowError):
+            self.g3={"parse_error":True}
 
     def on_path_risk(self,msg):
         self.counts["path_risk_messages"] += 1
@@ -203,6 +246,12 @@ class IntegrationObserver(Node):
                 issues.append("no_usable_path_projection_live_or_posthoc")
             if not c["dynamic_track_processed"]:
                 issues.append("no_dynamic_map_cloud_processing")
+            if not c["g3_exact_stamp_pairs"]:
+                issues.append("g3_no_real_bag_exact_stamp_inputs")
+            if not c["g3_solver_attempts"]:
+                issues.append("g3_real_bag_data_never_reached_optimizer")
+            if not c["g3_candidate_paths"]:
+                issues.append("g3_no_candidate_path_from_real_bag")
             if not self.bag_health:
                 issues.append("historical_bag_status_missing")
             if not self.bag_health.get("output_clouds",0):
@@ -223,6 +272,9 @@ class IntegrationObserver(Node):
               "dynamic_port":self.dynamic_port,
               "last_dynamic_tracks":self.dynamic_tracks,
               "last_path_risk":self.path_risk,
+              "g3_offline_solver":self.g3,
+              "g3_discrete_mpc_cbf_prototype_executed":
+                  bool(c["g3_solver_attempts"]),
               "historical_bag_health":self.bag_health,
               "historical_bag_mode":self.historical_mode,
               "old_height_from_bag_ignored_in_reconstructed_transform":self.historical_mode,

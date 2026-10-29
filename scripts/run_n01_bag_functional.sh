@@ -205,6 +205,16 @@ if ! python3 -m unittest discover -s src/n01_offline_integration/test -p 'test_*
   tail -n 55 "$OUT/logs/integration_unit_tests.log"
   exit 3
 fi
+# Positive evidence that the G3 optimizer actually changes a trajectory
+# under a KNOWN synthetic moving obstacle. Real Bag remains a separate test.
+say "1.5/5 Running G3 positive synthetic moving-obstacle optimization"
+if ! PYTHONPATH="$ROOT/src/n01_offline_integration${PYTHONPATH:+:$PYTHONPATH}" \
+     python3 scripts/g3_offline_solver_demo.py \
+     > "$OUT/logs/g3_synthetic_solver_evidence.json" 2> "$OUT/logs/g3_synthetic_solver_stderr.log"; then
+  RESULT="FAIL"; REASON="g3_synthetic_constrained_solver_failed"
+  cat "$OUT/logs/g3_synthetic_solver_stderr.log"
+  exit 3
+fi
 say "2/5 Building SCAN, bridge and offline integration"
 if ! colcon build --packages-up-to scan_planner n01_scan_dynacbf_bridge n01_offline_integration \
      --event-handlers console_direct+ > "$OUT/logs/colcon_build.log" 2>&1; then
@@ -305,6 +315,7 @@ from n01_offline_integration.historical_tf import HistoricalMapTf
 from n01_offline_integration.dynamic_tracker_node import OfflineDynamicTracker
 from n01_offline_integration.path_risk_node import OfflinePathRisk
 from n01_offline_integration.dynamic_port_node import DynamicPort
+from n01_offline_integration.g3_solver_node import OfflineG3Solver
 print("ROS Bag, dynamic tracking and risk modules import: PASS")
 PY
 then
@@ -315,7 +326,7 @@ fi
 
 say "5/5 Launching real Bag -> reconstructed map cloud -> real SCAN"
 setsid ros2 launch n01_offline_integration bag_pipeline.launch.py \
-    bag_path:="$BAG" duration_s:=95.0 \
+    bag_path:="$BAG" duration_s:=165.0 max_clouds:=2000 scan_rate_hz:=8.0 \
     > "$OUT/logs/integration_launch.log" 2>&1 &
 A=$!
 PIDS+=("$A")
@@ -325,7 +336,7 @@ if ! kill -0 "$A" 2>/dev/null; then
 fi
 
 critical_child_died() {
-  grep -Eq '^\[ERROR\] \[(n01_historical_bag|n01_offline_observer|scan_planner_node|scan_bspline_bridge|n01_dynamic_tracker|n01_dynamic_port|n01_path_risk)-[0-9]+\]: process has died' \
+  grep -Eq '^\[ERROR\] \[(n01_historical_bag|n01_offline_observer|scan_planner_node|scan_bspline_bridge|n01_dynamic_tracker|n01_dynamic_port|n01_path_risk|n01_g3_optimizer)-[0-9]+\]: process has died' \
     "$OUT/logs/integration_launch.log"
 }
 if critical_child_died; then
@@ -347,7 +358,7 @@ then
   RESULT="ABORT"; REASON="unexpected_cmd_vel_publisher"; exit 7
 fi
 
-deadline=$((SECONDS+140))
+deadline=$((SECONDS+240))
 while [[ ! -s "$N01_OFFLINE_REPORT_PATH" ]]; do
   if ! kill -0 "$A" 2>/dev/null; then
     RESULT="FAIL"; REASON="bag_launch_exited_before_report"; exit 8
@@ -364,7 +375,7 @@ while [[ ! -s "$N01_OFFLINE_REPORT_PATH" ]]; do
   fi
   sleep 2
 done
-if python3 - "$N01_OFFLINE_REPORT_PATH" > "$OUT/logs/evaluation.txt" <<'PY'
+if python3 - "$N01_OFFLINE_REPORT_PATH" "$OUT/bag_inventory.json" > "$OUT/logs/evaluation.txt" <<'PY'
 import json,sys
 d=json.load(open(sys.argv[1],encoding="utf-8"))
 print("result:",d.get("result"))
@@ -378,6 +389,19 @@ b=d.get("historical_bag_health",{})
 assert b.get("raw_tf_republished") is False
 assert b.get("cmd_vel_created") is False
 assert b.get("output_clouds",0)>0
+# G3 is no longer an early-180-cloud smoke run. All recorded filtered cloud
+# messages must be READ and either transformed or explicitly rejected.
+inventory=json.load(open(sys.argv[2],encoding="utf-8"))
+expected=int(inventory["topics"]["/livox/lidar/geo_filtered"]["count"])
+assert expected>0
+assert b.get("finished") is True, "Bag reader did not reach EOF"
+assert b.get("input_clouds")==expected, (
+    "Only %s / %s Bag clouds were attempted" %
+    (b.get("input_clouds"),expected))
+assert b.get("output_clouds",0)+b.get("rejected_clouds",0)==expected
+print("G3 full Bag input accounted:",expected,
+      "map cloud accepted:",b.get("output_clouds"),
+      "TF or data rejected:",b.get("rejected_clouds"))
 # G2.3 counts only genuinely usable path projections. A body outside the
 # 1.5m corridor can NEVER make the validation pass. Post-hoc projections are
 # allowed as separately labeled OFFLINE comparisons, not contemporaneous plans.
@@ -396,6 +420,20 @@ assert (counts.get("path_risk_posthoc_projected_frames",0)+
 assert risk.get("path_header_is_historical_stamp") is False
 assert d.get("last_path_risk",{}).get("safety_authorization")=="NEVER"
 assert d.get("dynamic_port",{}).get("actuator_output")=="DISABLED"
+# G3 REQUIRES actual recorded Bag frames entering the numerical optimizer.
+# Synthetic positive tests are independently reported and cannot substitute
+# for the real input-flow evidence here.
+g3=d.get("g3_offline_solver",{})
+assert counts.get("g3_exact_stamp_pairs",0)>0, "G3 no paired Bag inputs"
+assert counts.get("g3_solver_attempts",0)>0, "G3 Bag data never reached optimizer"
+assert counts.get("g3_candidate_paths",0)>0, "G3 emitted no candidate path"
+assert g3.get("safety_authorization")=="NEVER"
+assert g3.get("actuator_output")=="DISABLED"
+print("G3 attempted solve on real Bag frames:",counts["g3_solver_attempts"])
+print("G3 dynamic-constraint candidate frames:",
+      counts.get("g3_dynamic_cbf_candidate_frames",0),
+      "nominal-only frames:",counts.get("g3_nominal_only_frames",0))
+print("G3 path observations: OFFLINE ONLY; no control authority")
 PY
 then
   RESULT="BAG_FUNCTIONAL_PATH_SMOKE_PASS"

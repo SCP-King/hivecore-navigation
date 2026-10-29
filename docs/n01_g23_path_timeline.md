@@ -88,3 +88,7 @@ cd /home/demo/lyy/hivecore-navigation && git -c http.version=HTTP/1.1 pull --ff-
 复验报告必须分别列出 LIVE 与 POST_HOC 投影；只有确实存在**走廊内**的投影才可证明历史几何关联功能。若仅 POST_HOC 有效，脚本会显式输出 `real_bag_SCAN_pass_G23_POST_HOC_projection_only_NOT_live_risk`；这**不等于**实时风险评估完成。若这两类投影都没有，测试应标记 `BAG_FUNCTIONAL_INCOMPLETE`，不能再把 4 帧超界冒充 PASS。
 
 **代码尚未在用户的 ROS 2 Humble 环境重跑。** 上述修复是新的待验收版本，不应反过来改变旧日志实际结果。
+
+## G3 已启动：回放全量已有药厂 Bag + 数值 CBF 约束轨迹原型
+
+G2.3 保留其时间对齐、Path 迟到的 POST_HOC 严格标签和不可用几何拒绝等数据边界；本阶段在此基础上**增加真正执行多步约束搜索的独立离线 G3 模块**，处理整份药厂 Bag 的已过滤点云，不再围绕 G2 微小指标单独推进。见 [G3 全链开发](n01_g3_full_data_pipeline.md)。此前 G2.3 的用户测试不证明新 G3 已通过，本次待 Ubuntu 实测。

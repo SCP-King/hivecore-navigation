@@ -35,6 +35,10 @@ class DynamicPort(Node):
         self.risk_worst_scan_stamp_ns=None
         self.risk_posthoc_projections=0
         self.risk_posthoc_evaluations=0
+        self.g3_reports_seen=0
+        self.g3_solver_attempts=0
+        self.g3_dynamic_candidate_solutions=0
+        self.g3_last_status="NOT_RECEIVED"
         self.status=self.create_publisher(String,"/n01/offline/dynamic_port_status",10)
         self.create_subscription(Path,"/nav/test/global_path",self.on_path,10)
         self.create_subscription(String,"/n01/offline/readiness",self.on_ready,10)
@@ -42,6 +46,8 @@ class DynamicPort(Node):
                                  self.on_tracks,10)
         self.create_subscription(String,"/n01/offline/path_risk",
                                  self.on_risk,10)
+        self.create_subscription(String,"/n01/offline/g3_solver_report",
+                                 self.on_g3,10)
         self.create_timer(1.0,self.tick)
 
     def on_path(self,msg):
@@ -100,6 +106,21 @@ class DynamicPort(Node):
         except (ValueError,TypeError):
             self.last_risk_status="INVALID"
 
+    def on_g3(self,msg):
+        self.g3_reports_seen+=1
+        try:
+            item=json.loads(msg.data)
+            if item.get("schema")!="n01.offline.g3_mpc_cbf.v1":
+                return
+            self.g3_solver_attempts=max(
+                self.g3_solver_attempts,int(item.get("solver_executed_frames",0)))
+            self.g3_dynamic_candidate_solutions=max(
+                self.g3_dynamic_candidate_solutions,
+                int(item.get("dynamic_cbf_candidate_solutions",0)))
+            self.g3_last_status=item.get("last_solver_status","UNKNOWN")
+        except (AttributeError,ValueError,TypeError,OverflowError):
+            self.g3_last_status="BAD_REPORT"
+
     def tick(self):
         result={"dynamic_detection":("HEURISTIC_VOXEL_TRACKING_RESEARCH_ONLY"
                   if self.processed_track_frames else "WAITING_FOR_PROCESSED_CLOUD"),
@@ -122,6 +143,11 @@ class DynamicPort(Node):
                 "path_risk_posthoc_projected_frames":self.risk_posthoc_projections,
                 "path_risk_posthoc_evaluable_previews":self.risk_posthoc_evaluations,
                 "last_path_risk_status":self.last_risk_status,
+                "g3_offline_approximate_mpc_cbf":"FINITE_CONTROL_BEAM_SEARCH_RESEARCH_ONLY",
+                "g3_solver_reports_seen":self.g3_reports_seen,
+                "g3_solver_attempts_seen":self.g3_solver_attempts,
+                "g3_dynamic_candidate_solutions_seen":self.g3_dynamic_candidate_solutions,
+                "g3_last_solver_status":self.g3_last_status,
                 "kalman_prediction":"NOT_IMPLEMENTED",
                 "mpc_cbf_solver":"NOT_IMPLEMENTED",
                 "actuator_output":"DISABLED",

@@ -22,7 +22,9 @@ def generate_launch_description():
     duration=LaunchConfiguration("duration_s")
     return LaunchDescription([
         DeclareLaunchArgument("bag_path"),
-        DeclareLaunchArgument("duration_s",default_value="95.0"),
+        DeclareLaunchArgument("duration_s",default_value="165.0"),
+        DeclareLaunchArgument("max_clouds",default_value="2000"),
+        DeclareLaunchArgument("scan_rate_hz",default_value="8.0"),
         Node(package="scan_planner",executable="scan_planner_node",
              name="scan_planner_node",parameters=[pcfg,{
                  "grid_map.frame_id":"map", "grid_map.cloud_is_world":True,
@@ -42,6 +44,9 @@ def generate_launch_description():
         Node(package="n01_offline_integration",executable="n01_path_risk",
              name="n01_offline_path_risk",
              parameters=[{"use_sim_time":False}],output="screen"),
+        Node(package="n01_offline_integration",executable="n01_g3_optimizer",
+             name="n01_g3_offline_optimizer",
+             parameters=[{"use_sim_time":False}],output="screen"),
         Node(package="n01_offline_integration",executable="n01_dynamic_port",
              name="n01_dynamic_avoidance_interface",
              parameters=[{"use_sim_time":False}],output="screen"),
@@ -55,8 +60,8 @@ def generate_launch_description():
         Node(package="n01_offline_integration",executable="n01_historical_bag",
              name="n01_historical_bag_replay",parameters=[{
                  "bag_path":ParameterValue(bag,value_type=str),
-                 "max_clouds":180,
-                 "scan_rate_hz":4.0,
+                 "max_clouds":ParameterValue(LaunchConfiguration("max_clouds"),value_type=int),
+                 "scan_rate_hz":ParameterValue(LaunchConfiguration("scan_rate_hz"),value_type=float),
                  "max_map_tf_age_s":1.0,
                  "goal_forward_m":1.5,
                  "use_sim_time":False

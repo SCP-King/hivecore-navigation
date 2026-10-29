@@ -8,7 +8,7 @@ ROS 2 Humble source-only N-01 navigation research. Apache-2.0.
 - `src/n01_scan_dynacbf_bridge/`: test-only SCAN B-spline to `nav_msgs/Path` reference adapter and default-disarmed output validator, **not** real dynamic-avoidance MPC.
 - Other `src/n01_*` packages: legacy N-01 baseline; do not count the legacy 2D A* as SCAN.
 
-**Status: source migrated, NOT yet verified with this main-branch code on your Ubuntu/ROS 2 machine. NOT ready for a real robot.** No DynaCBF detection/Kalman/MPC-CBF integration yet.
+**Current status:** G2.2 real-Bag functional smoke has passed, G2.3 strict path geometry needs more runtime evidence, and G3 now adds an **unverified offline finite-control MPC-CBF approximation**. There is **no real robot motion authorization**. Kalman/full Hive2 MPC-CBF control is not implemented or safety-certified.
 
 ## G1 build
 
@@ -88,3 +88,7 @@ Run `bash scripts/run_n01_bag_functional.sh` after pulling main. See [真实 Bag
 新增 `ReplayPathSynchronizer`：按历史 Bag 扫描时间戳严格配对 `/body_pose` 和动态目标报告，投影当前记录的机器人位置到**仅作诊断的保留 SCAN Path**；用明确假设的行进速度与目标匀速预测计算相对 ETA、可能重叠位置及跨帧最差风险记录。Path 当前时钟 header **不**等同历史 Bag 时戳。只读输出 `/n01/offline/path_risk`，不创建任何底盘控制话题；仍未实现真 MPC-CBF 求解器。按 `bash scripts/run_n01_bag_functional.sh` 一次性验收。见 [G2.3 开发说明](docs/n01_g23_path_timeline.md)。
 
 **G2.3 21:54 验收复盘：** 原版 `bd60a5a` 时间戳精确配对 99 帧，但 SCAN Path 出现前 95 帧，余下 4 帧均超出 1.5m 走廊，实际可计算动态风险帧数 0。原 runner 的 PASS 含“路径存在但投影不可用也被计为复用”的验收假阳性。新修复对路径超界严格拒绝，另外加最多 160 帧的显式 POST-HOC 历史 Path 几何对照，且与同时序 LIVE 风险严格分账；未在用户 Ubuntu 复测。见 [G2.3 复盘与修复](docs/n01_g23_path_timeline.md)。
+
+## G3 已有真实 Bag 全链数据流与有限时域约束优化（开发版，待 Ubuntu 验收）
+
+不急于做 RViz。现把历史药厂过滤点云（已知 928 帧）尽可能全部送入 map/SCAN/动态跟踪/预测/简化 MPC-CBF 求解器；输出离线约束报告和 `/n01/offline/g3_candidate_path`，**绝不输出底盘运动命令**。一键脚本另生成有真值合成运动障碍的求解正向证据，严格区分它与没有真值的药厂 Bag。见 [G3 数据全流程说明](docs/n01_g3_full_data_pipeline.md)。
