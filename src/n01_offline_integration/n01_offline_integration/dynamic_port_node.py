@@ -1,8 +1,8 @@
 """Non-actuating dynamic-avoidance interface placeholder.
 
-Consumes SCAN reference paths and bridge state; advertises explicitly
-NOT_IMPLEMENTED/DISARMED. No dynamic obstacle estimator, MPC/CBF solver
-or command publisher is installed by this scaffold.
+Consumes SCAN reference paths, bridge state and OFFLINE moving-obstacle
+hypotheses. Reports the constant-velocity predictor interface; NO Kalman,
+MPC/CBF solver, safety authorization or command publisher exists.
 """
 import json
 import os
@@ -20,9 +20,15 @@ class DynamicPort(Node):
         super().__init__("n01_dynamic_avoidance_interface")
         self.path_count=0
         self.last_ready="NOT_READY"
+        self.track_messages=0
+        self.processed_track_frames=0
+        self.last_tracks={}
+        self.max_moving_hypotheses=0
         self.status=self.create_publisher(String,"/n01/offline/dynamic_port_status",10)
         self.create_subscription(Path,"/nav/test/global_path",self.on_path,10)
         self.create_subscription(String,"/n01/offline/readiness",self.on_ready,10)
+        self.create_subscription(String,"/n01/offline/dynamic_tracks",
+                                 self.on_tracks,10)
         self.create_timer(1.0,self.tick)
 
     def on_path(self,msg):
@@ -35,8 +41,28 @@ class DynamicPort(Node):
         except ValueError:
             self.last_ready="NOT_READY"
 
+    def on_tracks(self,msg):
+        self.track_messages+=1
+        try:
+            data=json.loads(msg.data)
+            self.last_tracks=data
+            if data.get("schema")=="n01.offline.tracks.v1" and data.get("status")=="PROCESSED":
+                self.processed_track_frames+=1
+                self.max_moving_hypotheses=max(
+                    self.max_moving_hypotheses,int(data.get("moving_hypotheses",0)))
+        except (ValueError,TypeError):
+            self.last_tracks={"parse_error":True}
+
     def tick(self):
-        result={"dynamic_detection":"NOT_IMPLEMENTED",
+        result={"dynamic_detection":("HEURISTIC_VOXEL_TRACKING_RESEARCH_ONLY"
+                  if self.processed_track_frames else "WAITING_FOR_PROCESSED_CLOUD"),
+                "short_horizon_prediction":("CONSTANT_VELOCITY_RESEARCH_ONLY"
+                  if self.processed_track_frames else "NOT_READY"),
+                "trajectory_prediction_verified_on_real_dynamic_obstacles":False,
+                "dynamic_tracks_messages_seen":self.track_messages,
+                "dynamic_processed_frames_seen":self.processed_track_frames,
+                "maximum_moving_hypotheses_seen":self.max_moving_hypotheses,
+                "last_dynamic_input_status":self.last_tracks.get("status","NOT_RECEIVED"),
                 "kalman_prediction":"NOT_IMPLEMENTED",
                 "mpc_cbf_solver":"NOT_IMPLEMENTED",
                 "actuator_output":"DISABLED",

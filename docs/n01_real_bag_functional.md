@@ -82,3 +82,7 @@ cd /home/demo/lyy/hivecore-navigation && git -c http.version=HTTP/1.1 pull --ff-
 **结论：** 已证明**真实药厂 Bag → 历史坐标重建 → SCAN 三维地图 → 有效 B 样条 → 参考 Path**链路具备离线功能；**未验证**真实定位 Tracking、完整规划碰撞安全、全身包络、动态障碍预测、MPC-CBF、运动控制及性能要求。这个 PASS 不允许解锁真机运动。
 
 **后续优先级（功能优先）：** 进一步扩大具有可信 TF 的真实数据覆盖范围；搭建动态障碍观测与轨迹预测的离线数据接口；再补实际 MPC-CBF 求解器和无控制输出的轨迹级安全验证。规划时延和 8h 长期性能评测留后。
+
+## 新增 G2 动态候选接口（独立验收待测）
+
+后续开发添加 `/n01/offline/dynamic_tracks`，在本模式已转换的 map 点云上输出障碍物候选、估计速度和匀速预测。真实 Bag 不保证含有运动物体；原首次 PASS 仅涵盖 Bag→SCAN，不包括本次新增动态跟踪。见 [G2 离线动态检测阶段](n01_dynamic_tracking_stage.md)。

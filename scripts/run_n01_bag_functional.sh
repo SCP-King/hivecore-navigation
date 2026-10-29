@@ -322,7 +322,7 @@ if ! kill -0 "$A" 2>/dev/null; then
 fi
 
 critical_child_died() {
-  grep -Eq '^\[ERROR\] \[(n01_historical_bag|n01_offline_observer|scan_planner_node|scan_bspline_bridge)-[0-9]+\]: process has died' \
+  grep -Eq '^\[ERROR\] \[(n01_historical_bag|n01_offline_observer|scan_planner_node|scan_bspline_bridge|n01_dynamic_tracker|n01_dynamic_port)-[0-9]+\]: process has died' \
     "$OUT/logs/integration_launch.log"
 }
 if critical_child_died; then

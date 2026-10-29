@@ -70,3 +70,7 @@ If the planner prints `final_plan_success=1` but the observer reports `bspline_m
 Run `bash scripts/run_n01_bag_functional.sh` after pulling main. See [真实 Bag 功能回放说明](docs/n01_real_bag_functional.md) for one-command test and precise limitations. Synthetic fixture smoke baseline remains unchanged.
 
 **2026-10-29 实际 Bag 开环功能冒烟：PASS**（提交 `91eb96c`，读取过滤点云 180 条、map 转换 99 条、有效 SCAN B 样条 2/2、Path 1 条，零 /cmd_vel，清理 CLEAN）。其余 **81 条因扫描时刻 map TF 不可用被拒绝**；历史 0.30/0.90 m 冲突仍记录为风险。本结果不代表完整碰撞验收或真机定位/动态 MPC-CBF 已实现。
+
+## G2 离线动态障碍功能阶段（新增，待实测）
+
+从真实 Bag 重建后的 map 点云输入新增动态聚类、跨帧关联与匀速短时预测，输出 `/n01/offline/dynamic_tracks`，供禁用控制的动态接口读取。**Kalman/MPC-CBF 求解器和真机控制仍未实现；不能视为真实动态障碍安全验收。** 见 [功能说明](docs/n01_dynamic_tracking_stage.md)。

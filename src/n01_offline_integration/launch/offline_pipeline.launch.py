@@ -49,6 +49,9 @@ def generate_launch_description():
                  "odom_timeout_s":.75, "trajectory_timeout_s":3.0,
                  "use_sim_time":sim
              }], output="screen"),
+        Node(package="n01_offline_integration", executable="n01_dynamic_tracker",
+             name="n01_offline_dynamic_tracker",
+             parameters=[{"use_sim_time":sim}], output="screen"),
         Node(package="n01_offline_integration", executable="n01_dynamic_port",
              name="n01_dynamic_avoidance_interface",
              parameters=[{"use_sim_time":sim}], output="screen"),

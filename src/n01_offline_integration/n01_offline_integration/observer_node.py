@@ -39,7 +39,9 @@ class IntegrationObserver(Node):
                        "body_pose":0,"sensor_pose":0,"map_messages":0,
                        "max_inflated_points":0,"goals":0,"splines":0,"valid_splines":0,
                        "invalid_splines":0,"readiness_updates":0,
-                       "reference_paths":0,"dynamic_port_status":0}
+                       "reference_paths":0,"dynamic_port_status":0,
+                       "dynamic_track_messages":0,"dynamic_track_processed":0,
+                       "moving_hypothesis_frames":0}
         self.health = {}
         self.bag_health = {}
         self.cmd_seen = False
@@ -57,7 +59,10 @@ class IntegrationObserver(Node):
         self.create_subscription(RosPath,"/nav/test/global_path",self.on_path,10)
         self.create_subscription(String,"/n01/offline/dynamic_port_status",
                                  self.on_dynamic_port,10)
+        self.create_subscription(String,"/n01/offline/dynamic_tracks",
+                                 self.on_dynamic_tracks,10)
         self.dynamic_port = {}
+        self.dynamic_tracks = {}
         self.create_timer(.5,self.tick)
 
     def on_cloud(self, msg):
@@ -87,6 +92,18 @@ class IntegrationObserver(Node):
     def on_path(self, msg):
         if msg.poses and msg.header.frame_id == "map":
             self.counts["reference_paths"] += 1
+
+    def on_dynamic_tracks(self,msg):
+        self.counts["dynamic_track_messages"] += 1
+        try:
+            data=json.loads(msg.data)
+            self.dynamic_tracks=data
+            if data.get("status")=="PROCESSED" and data.get("frame_id")=="map":
+                self.counts["dynamic_track_processed"] += 1
+                if int(data.get("moving_hypotheses",0))>0:
+                    self.counts["moving_hypothesis_frames"] += 1
+        except (ValueError,TypeError):
+            self.dynamic_tracks={"parse_error":True}
 
     def on_dynamic_port(self, msg):
         self.counts["dynamic_port_status"] += 1
@@ -143,6 +160,8 @@ class IntegrationObserver(Node):
               or self.dynamic_port.get("actuator_output") != "DISABLED"):
             issues.append("dynamic_port_incorrectly_armed")
         if self.historical_mode:
+            if not c["dynamic_track_processed"]:
+                issues.append("no_dynamic_map_cloud_processing")
             if not self.bag_health:
                 issues.append("historical_bag_status_missing")
             if not self.bag_health.get("output_clouds",0):
@@ -161,6 +180,7 @@ class IntegrationObserver(Node):
                   ("OFFLINE_INTEGRATION_OBSERVED" if not issues else "NOT_COMPLETE")),
               "issues":issues,"counts":c,"last_bridge_health":self.health,
               "dynamic_port":self.dynamic_port,
+              "last_dynamic_tracks":self.dynamic_tracks,
               "historical_bag_health":self.bag_health,
               "historical_bag_mode":self.historical_mode,
               "old_height_from_bag_ignored_in_reconstructed_transform":self.historical_mode,
