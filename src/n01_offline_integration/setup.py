@@ -24,5 +24,6 @@ setup(
         'n01_path_risk = n01_offline_integration.path_risk_node:main',
         'n01_g3_optimizer = n01_offline_integration.g3_solver_node:main',
         'n01_demo_markers = n01_offline_integration.demo_markers_node:main',
+        'n01_static_pcd = n01_offline_integration.pcd_static_node:main',
     ]},
 )
