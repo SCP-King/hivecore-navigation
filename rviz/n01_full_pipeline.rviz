@@ -27,7 +27,8 @@ Visualization Manager:
         Depth: 5
       Style: Points
       Size (Pixels): 2
-      Color Transformer: Intensity
+      Color Transformer: FlatColor
+      Color: 195; 215; 235
     - Class: rviz_default_plugins/PointCloud2
       Enabled: true
       Name: SCAN Inflated Obstacles
