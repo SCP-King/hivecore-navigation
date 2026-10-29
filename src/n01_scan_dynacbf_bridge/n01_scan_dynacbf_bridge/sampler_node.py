@@ -8,6 +8,7 @@ if os.environ.get('ROS_DOMAIN_ID') != '88' or os.environ.get('ROS_LOCALHOST_ONLY
 
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry, Path
 from std_msgs.msg import Bool
@@ -42,7 +43,8 @@ class SamplerNode(Node):
         self.path_pub = self.create_publisher(Path, get('path_topic'), 10)
         self.valid_pub = self.create_publisher(Bool, '/nav/test/bridge_valid', 10)
         self.create_subscription(Bspline, get('bspline_topic'), self.on_trajectory, 10)
-        self.create_subscription(Odometry, get('odom_topic'), self.on_odom, 10)
+        self.create_subscription(Odometry, get('odom_topic'), self.on_odom,
+                                 qos_profile_sensor_data)
         self.create_timer(0.1, self.on_timer)
 
     def on_trajectory(self, msg):

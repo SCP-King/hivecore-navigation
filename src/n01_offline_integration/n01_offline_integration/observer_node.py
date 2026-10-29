@@ -13,7 +13,7 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from std_msgs.msg import String
 from sensor_msgs.msg import PointCloud2
-from nav_msgs.msg import Odometry
+from nav_msgs.msg import Odometry, Path
 from geometry_msgs.msg import PoseStamped
 from scan_planner_msgs.msg import Bspline
 from n01_scan_dynacbf_bridge.scan_g1_monitor import valid_bspline
@@ -36,7 +36,8 @@ class IntegrationObserver(Node):
         self.counts = {"transformed_clouds":0,"wrong_frame_clouds":0,
                        "body_pose":0,"sensor_pose":0,"map_messages":0,
                        "max_inflated_points":0,"goals":0,"splines":0,"valid_splines":0,
-                       "invalid_splines":0,"readiness_updates":0}
+                       "invalid_splines":0,"readiness_updates":0,
+                       "reference_paths":0,"dynamic_port_status":0}
         self.health = {}
         self.cmd_seen = False
         self.create_subscription(PointCloud2,"/cloud",self.on_cloud,qos_profile_sensor_data)
@@ -47,6 +48,10 @@ class IntegrationObserver(Node):
         self.create_subscription(PoseStamped,"/move_base_simple/goal",self.on_goal,10)
         self.create_subscription(Bspline,"/planning/bspline",self.on_spline,10)
         self.create_subscription(String,"/n01/offline/readiness",self.on_health,10)
+        self.create_subscription(Path,"/nav/test/global_path",self.on_path,10)
+        self.create_subscription(String,"/n01/offline/dynamic_port_status",
+                                 self.on_dynamic_port,10)
+        self.dynamic_port = {}
         self.create_timer(.5,self.tick)
 
     def on_cloud(self, msg):
@@ -72,6 +77,17 @@ class IntegrationObserver(Node):
     def on_spline(self, msg):
         self.counts["splines"] += 1
         self.counts["valid_splines" if valid_bspline(msg) else "invalid_splines"] += 1
+
+    def on_path(self, msg):
+        if msg.poses and msg.header.frame_id == "map":
+            self.counts["reference_paths"] += 1
+
+    def on_dynamic_port(self, msg):
+        self.counts["dynamic_port_status"] += 1
+        try:
+            self.dynamic_port = json.loads(msg.data)
+        except ValueError:
+            self.dynamic_port = {"parse_error":True}
 
     def on_health(self, msg):
         self.counts["readiness_updates"] += 1
@@ -107,6 +123,13 @@ class IntegrationObserver(Node):
             issues.append("no_real_scan_valid_bspline")
         if not c["goals"]:
             issues.append("no_goal_observed")
+        if not c["reference_paths"]:
+            issues.append("no_bspline_reference_path")
+        if not c["dynamic_port_status"]:
+            issues.append("no_dynamic_interface_status")
+        elif (self.dynamic_port.get("mpc_cbf_solver") != "NOT_IMPLEMENTED"
+              or self.dynamic_port.get("actuator_output") != "DISABLED"):
+            issues.append("dynamic_port_incorrectly_armed")
         if self.health.get("tf_conflict"):
             issues.append("base_link_height_conflict")
         if self.health.get("readiness") != "OFFLINE_FIXTURE_ONLY":
@@ -114,6 +137,7 @@ class IntegrationObserver(Node):
         data={"test_type":"N01_OFFLINE_INTEGRATION_FIXTURE",
               "result":"OFFLINE_INTEGRATION_OBSERVED" if not issues else "NOT_COMPLETE",
               "issues":issues,"counts":c,"last_bridge_health":self.health,
+              "dynamic_port":self.dynamic_port,
               "cmd_vel_publishers_seen":self.cmd_seen,
               "slam_real_status_tested":False,"real_bag_tested":False,
               "real_hive2_motion_tested":False,

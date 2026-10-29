@@ -293,6 +293,15 @@ sleep 8
 if ! kill -0 "$A" 2>/dev/null; then
   RESULT="FAIL"; REASON="integration_launch_exited_early"; exit 6
 fi
+# ros2 launch may remain alive after an individual child crashes.
+# Do not wait for the 75s observer timeout after a known fixture failure.
+if grep -Eq '^\[ERROR\] \[(n01_offline_fixture|n01_offline_bridge|scan_planner_node|scan_bspline_bridge|n01_offline_observer)-[0-9]+\]: process has died' \
+    "$OUT/logs/integration_launch.log"; then
+  RESULT="FAIL"
+  REASON="critical_offline_pipeline_process_crashed"
+  grep -A 7 -B 3 -E 'Traceback|process has died' "$OUT/logs/integration_launch.log" | tail -n 60 || true
+  exit 8
+fi
 if ! snapshot running; then
   RESULT="FAIL"; REASON="running_graph_probe_failed"; exit 7
 fi
@@ -317,6 +326,10 @@ while [[ ! -s "$N01_OFFLINE_REPORT_PATH" ]]; do
   fi
   if (( SECONDS >= deadline )); then
     RESULT="FAIL"; REASON="offline_integration_report_timeout"; exit 8
+  fi
+  if grep -Eq '^\[ERROR\] \[(n01_offline_fixture|n01_offline_bridge|scan_planner_node|scan_bspline_bridge|n01_offline_observer)-[0-9]+\]: process has died' \
+      "$OUT/logs/integration_launch.log"; then
+    RESULT="FAIL"; REASON="critical_offline_pipeline_process_crashed"; exit 8
   fi
   sleep 2
 done

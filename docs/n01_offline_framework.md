@@ -118,3 +118,11 @@ cd /home/demo/lyy/hivecore-navigation && git pull --ff-only origin main && N01_B
 - 新框架不能独立证明 `/tf_static` 上某条边只有单一发布者：TFMessage 不携带发送者身份，仍需结合甲方启动参数和 ROS 图检查，**存在疑点就不放行**。
 - 本次通过的结果名最多为 `OFFLINE_INTEGRATION_SMOKE_PASS`，不是 G1/G2/药厂现场验收通过。
 - 测试独立 ROS 域，脚本对所有由其创建的进程使用 per-run token 清理；不得 `pkill -f ros` 或干扰其他 ROS 工作域。
+
+## 2026-10-29 首次一键日志复盘（19:20 本地）
+
+首次执行的 **源码编译及全部已有 Python 单测通过、进程与 ROS 图清理 CLEAN**；但 `n01_offline_fixture` 在第一次发送 TF 时因 Humble 严格浮点字段收到 Python int 抛出 `AssertionError`，导致 `/livox/lidar/geo_filtered`、状态和目标均未发布。日志同时报告 B-spline reference bridge 对 `/body_pose` 使用 reliable 订阅，而 sensor publisher best effort，造成 QoS 不兼容。
+
+修复方向：合成 TF 数值全部强制 `float`、加入 ROS 消息类型回归单测、B-spline bridge 的 odom 订阅改为 sensor-data QoS；一键脚本发现核心子节点异常退出立即失败，不再等待观察器直到超时；观察器补充真正 Path reference 和未激活动态端口的证据。**改动未经 Ubuntu/ROS 2 再次实际运行验证，不应声称整链已通过。**
+
+同轮 **真实 Bag 只读审计**（`/home/demo/lyy/slam_data/bags/bag_20261027_225100`）已确认 `/livox/lidar/geo_filtered`=928 条、`/tf`=2731 条、`/tf_static`=12 条、`/robot_pose`=609 条，`/localization_status` **缺失**；限额扫描 120000 条消息显示 `base_footprint→base_link` z **0.30/0.90 m 双值历史冲突**，点云帧 `lidar_link`。因此此 Bag 可作为**历史 TF/点云数据审计依据**，不可直接以严格 LocalizationStatus tracking 判据宣称真机定位就绪。该事实不受合成 fixture 修复影响。

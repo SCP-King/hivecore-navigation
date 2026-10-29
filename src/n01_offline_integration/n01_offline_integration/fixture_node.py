@@ -27,7 +27,11 @@ def new_tf(stamp, parent, child, xyz):
     tf = TransformStamped()
     tf.header.stamp = stamp
     tf.header.frame_id, tf.child_frame_id = parent, child
-    tf.transform.translation.x, tf.transform.translation.y, tf.transform.translation.z = xyz
+    # ROS 2 Humble generated Vector3 setters reject Python int, even for zero.
+    x, y, z = (float(value) for value in xyz)
+    tf.transform.translation.x = x
+    tf.transform.translation.y = y
+    tf.transform.translation.z = z
     tf.transform.rotation.w = 1.0
     return tf
 
