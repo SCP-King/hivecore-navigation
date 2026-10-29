@@ -35,9 +35,13 @@ source /home/demo/lyy/hivecore-navigation/install/setup.bash
 
 - Terminal A: `ros2 launch scan_planner n01_isolated.launch.py` (real SCAN algorithms, no controller)
 - Terminal B: `ros2 run n01_scan_dynacbf_bridge scan_g1_feed` (deterministic offline pointcloud/poses/goal; no TF or cmd_vel)
-- Terminal C: `ros2 run n01_scan_dynacbf_bridge scan_g1_monitor` (40-second observer, saves `$ROS_HOME/g1_smoke_report.json`)
+- Terminal C: `ros2 run n01_scan_dynacbf_bridge scan_g1_monitor` (diagnostic observer, max 90 seconds or 8 seconds after first valid spline; saves `$ROS_HOME/g1_smoke_report.json`)
 - Verify: `ros2 topic info /cmd_vel -v`; no real command publisher allowed. When all tests are stopped, report results.
 
 **Never run `bridge_smoke_feed` alongside `scan_g1_feed` or real SCAN**, because the former publishes synthetic `/planning/bspline`. This G1 smoke test checks live message observations only; trajectory collision, actual MPC, robot-model compatibility, 500 ms requirement and long-duration tests remain NOT TESTED.
 
 Keep PCD, Bag, manuals, offline test outputs and reports outside this source-only repository.
+
+## G1 diagnostic note
+
+If the planner prints `final_plan_success=1` but the observer reports `bspline_messages=0`, do **not** mark G1 as PASS. The diagnostic monitor records publisher discovery, topic types/QoS, received `/cloud`, `/body_pose`, `/move_base_simple/goal`, and presence of real `/cmd_vel` publishers to distinguish missing input, DDS endpoint mismatch and observation-window timing. The test feed repeats the same stationary offline goal at 4, 17, 32 and 52 seconds. A stationary synthetic robot is not evidence of physical motion or obstacle-free trajectory execution.

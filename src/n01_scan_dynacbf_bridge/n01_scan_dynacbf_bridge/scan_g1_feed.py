@@ -63,7 +63,8 @@ class G1Feed(Node):
         self.points = test_obstacle_points()
         self.started = time.monotonic()
         self.count = 0
-        self.goal_sent = False
+        self.goal_times = (4.0, 17.0, 32.0, 52.0)
+        self.goal_attempts = 0
         self.create_timer(.05, self.tick)
         self.get_logger().warning("G1 TEST FEED; no fake TF or actuator output")
 
@@ -80,7 +81,8 @@ class G1Feed(Node):
             pub.publish(msg)
         if self.count % 2 == 0:
             self.cloud_pub.publish(xyz_cloud(stamp, self.points))
-        if not self.goal_sent and time.monotonic() - self.started > 4.0:
+        if (self.goal_attempts < len(self.goal_times)
+                and time.monotonic() - self.started >= self.goal_times[self.goal_attempts]):
             goal = PoseStamped()
             goal.header.stamp = stamp
             goal.header.frame_id = "world"
@@ -89,8 +91,10 @@ class G1Feed(Node):
             goal.pose.position.z = 0.4
             goal.pose.orientation.w = 1.0
             self.goal_pub.publish(goal)
-            self.goal_sent = True
-            self.get_logger().info("Published one offline goal at (2.0, 0.0, 0.4)")
+            self.goal_attempts += 1
+            self.get_logger().info(
+                "Published offline goal attempt %d/%d at (2.0, 0.0, 0.4)" %
+                (self.goal_attempts, len(self.goal_times)))
 
 
 def main(args=None):
