@@ -80,11 +80,22 @@
       "slam_stack": 0.3,
       "motion_source": "hivecore_sensor_frames.xacro",
       "slam_source": "hivecore_robot.urdf.xacro (footprint_xyz = '0 0 0.3')",
-      "status": "CRITICAL_UNRESOLVED_TF_DUPLICATE",
-      "resolution": "待唯一 TF 发布者、动态机身高度、实机标定与甲方统一确认；禁止自行选值覆盖"
+      "status": "HISTORICAL_CONFLICT_USER_SELECTED_0_90__LIVE_TF_NOT_VERIFIED",
+      "resolution": "User selected Hive2 motion-stack 0.90 m as current baseline; historical 0.30 m is not a candidate. Remaining: check unique TF publisher and effective transform during actual localization; consider whether leg posture makes height dynamic.",
+      "selected_value_m": 0.9,
+      "deprecated_historical_slam_default_m": 0.3,
+      "slam_stack_is_current": false,
+      "slam_stack_note": "Historical default reported; user states latest system already adapted to 0.90 m. Current live SLAM setup not independently inspected."
     },
     "reported_lidar_sphere_measured_height_m": 0.8943,
-    "reported_lidar_sphere_measured_height_note": "独立现场测量记录，不等同于实时 base_link/雷达坐标变换"
+    "reported_lidar_sphere_measured_height_note": "独立现场测量记录，不等同于实时 base_link/雷达坐标变换",
+    "selected_base_footprint_to_base_link_translation_m": [
+      0,
+      0,
+      0.9
+    ],
+    "selected_height_status": "USER_CONFIRMED_LATEST_ADAPTED_CONFIG__RUNTIME_TF_UNVERIFIED",
+    "motion_wheel_leg_height_varies_unverified": true
   },
   "lidar": {
     "model": "Livox MID-360",
@@ -138,8 +149,8 @@
       {
         "from": "base_footprint",
         "to": "base_link",
-        "source": "Hive2 motion RSP（候选权威源）",
-        "availability": "高度 0.90 / 0.30 m 两套定义冲突，未定版"
+        "source": "Hive2 motion RSP (user-selected authority candidate, 0.90 m configuration)",
+        "availability": "User confirms latest adapted baseline 0.90 m; verify runtime has one authority, and actual height validity."
       },
       {
         "from": "base_link",
@@ -232,8 +243,9 @@
     {
       "id": "TF-HEIGHT",
       "priority": "P0",
-      "detail": "base_footprint -> base_link 唯一发布源及正确/动态高度 0.90 vs 0.30",
-      "owner": "需运动栈与 SLAM 系统联合核实"
+      "detail": "0.90 m baseline selected and reportedly adapted; VERIFY actual TF value (especially absence of old 0.30 publisher), single publisher and whether posture requires dynamic update.",
+      "owner": "Hive2 motion stack / SLAM integration",
+      "status": "CONFIG_DECISION_MADE_RUNTIME_UNVERIFIED"
     },
     {
       "id": "TF-LOCALIZATION",
@@ -267,5 +279,20 @@
     "记录中 hardware external_reported 不代表已完成现场测量/真机校准",
     "G1 离线合成环境与真机参数必须分别管理",
     "任何实机集成前需解决 P0 项并通过离线参数/TF 校验；严禁用离线冒烟结果声称可直接实机运行"
+  ],
+  "last_updated": "2026-10-29",
+  "decision_log": [
+    {
+      "date": "2026-10-29",
+      "item": "base_footprint -> base_link height",
+      "selected_value_m": 0.9,
+      "selected_source": "Hive2 motion stack (hivecore_sensor_frames.xacro)",
+      "source_of_decision": "user explicitly selected 0.90 m as the latest adapted value",
+      "superseded_value_m": 0.3,
+      "superseded_source": "historical SLAM hivecore_robot.urdf.xacro default",
+      "decision_status": "USER_CONFIRMED_CONFIG_BASELINE",
+      "runtime_tf_validated": false,
+      "note": "Historical 0.30 m is retained only for provenance, not used as current Hive2 reference; confirm no duplicate publisher at runtime."
+    }
   ]
 }
