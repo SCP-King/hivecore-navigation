@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src" / "n01_offline_integration"))
 from n01_offline_integration.pcd_static_preview import sample_pcd
 from n01_offline_integration.pcd_goal_grid import project, route, save_outputs
+from n01_offline_integration.pcd_floor_diagnostics import free_component_stats
 
 
 def main(argv=None):
@@ -57,6 +58,7 @@ def main(argv=None):
         floor_tolerance=args.floor_tolerance,
         obstacle_min_z=args.obstacle_min_z,
         obstacle_max_z=args.obstacle_max_z, clearance=args.clearance)
+    component_stats = free_component_stats(mapdata)
     path = None
     error = None
     if args.start is not None:
@@ -67,6 +69,7 @@ def main(argv=None):
             error = str(exc)
     summary = save_outputs(mapdata, args.output_prefix, path)
     reportfile = args.output_prefix.with_suffix(".json")
+    summary.update(component_stats)
     summary.update({
         "requested_start_xy_m": args.start,
         "requested_goal_xy_m": args.goal,
@@ -81,6 +84,10 @@ def main(argv=None):
     print(f"PREVIEW: {args.output_prefix.with_suffix('.svg')}")
     print(f"REPORT: {reportfile}")
     print("SCAN NATIVE LOCAL PLANNER NOT YET CONNECTED; NO MOTION COMMANDS.")
+    if component_stats["largest_free_component_cells"] < 25:
+        print("MAP_QUALITY_WARNING: largest 4-connected candidate free region has "
+              f"only {component_stats['largest_free_component_cells']} cells; "
+              "do NOT pick arbitrary goals. Verify floor height and scan coverage.")
     if error:
         print("ROUTE_NOT_FOUND:", error, file=sys.stderr)
         return 3
