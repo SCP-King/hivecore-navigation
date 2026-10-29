@@ -19,5 +19,6 @@ setup(
         'n01_offline_fixture = n01_offline_integration.fixture_node:main',
         'n01_offline_observer = n01_offline_integration.observer_node:main',
         'n01_dynamic_port = n01_offline_integration.dynamic_port_node:main',
+        'n01_historical_bag = n01_offline_integration.historical_bag_node:main',
     ]},
 )

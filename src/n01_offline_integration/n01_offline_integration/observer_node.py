@@ -22,6 +22,8 @@ from n01_scan_dynacbf_bridge.scan_g1_monitor import valid_bspline
 class IntegrationObserver(Node):
     def __init__(self):
         super().__init__("n01_offline_integration_observer")
+        self.declare_parameter("historical_bag_mode", False)
+        self.historical_mode = bool(self.get_parameter("historical_bag_mode").value)
         self.declare_parameter("duration_s", 75.0)
         self.declare_parameter("report_path", "")
         self.duration = float(self.get_parameter("duration_s").value)
@@ -39,6 +41,7 @@ class IntegrationObserver(Node):
                        "invalid_splines":0,"readiness_updates":0,
                        "reference_paths":0,"dynamic_port_status":0}
         self.health = {}
+        self.bag_health = {}
         self.cmd_seen = False
         self.create_subscription(PointCloud2,"/cloud",self.on_cloud,qos_profile_sensor_data)
         self.create_subscription(PointCloud2,"/grid_map/occupancy_inflate",
@@ -48,6 +51,9 @@ class IntegrationObserver(Node):
         self.create_subscription(PoseStamped,"/move_base_simple/goal",self.on_goal,10)
         self.create_subscription(Bspline,"/planning/bspline",self.on_spline,10)
         self.create_subscription(String,"/n01/offline/readiness",self.on_health,10)
+        if self.historical_mode:
+            self.create_subscription(String,"/n01/offline/bag_replay_status",
+                                     self.on_bag_health,10)
         self.create_subscription(RosPath,"/nav/test/global_path",self.on_path,10)
         self.create_subscription(String,"/n01/offline/dynamic_port_status",
                                  self.on_dynamic_port,10)
@@ -89,6 +95,12 @@ class IntegrationObserver(Node):
         except ValueError:
             self.dynamic_port = {"parse_error":True}
 
+    def on_bag_health(self,msg):
+        try:
+            self.bag_health=json.loads(msg.data)
+        except ValueError:
+            self.bag_health={"parse_error":True}
+
     def on_health(self, msg):
         self.counts["readiness_updates"] += 1
         try:
@@ -111,7 +123,7 @@ class IntegrationObserver(Node):
         self.done = True
         c=self.counts
         issues=[]
-        if self.cmd_seen or self.health.get("cmd_vel_seen"):
+        if self.cmd_seen or self.health.get("cmd_vel_seen") or self.bag_health.get("cmd_vel_publishers_seen"):
             issues.append("unexpected_cmd_vel_publisher")
         if c["wrong_frame_clouds"]:
             issues.append("cloud_not_in_map")
@@ -130,16 +142,30 @@ class IntegrationObserver(Node):
         elif (self.dynamic_port.get("mpc_cbf_solver") != "NOT_IMPLEMENTED"
               or self.dynamic_port.get("actuator_output") != "DISABLED"):
             issues.append("dynamic_port_incorrectly_armed")
+        if self.historical_mode:
+            if not self.bag_health:
+                issues.append("historical_bag_status_missing")
+            if not self.bag_health.get("output_clouds",0):
+                issues.append("historical_bag_cloud_not_delivered")
         if self.health.get("tf_conflict"):
             issues.append("base_link_height_conflict")
-        if self.health.get("readiness") != "OFFLINE_FIXTURE_ONLY":
+        if not self.historical_mode and self.health.get("readiness") != "OFFLINE_FIXTURE_ONLY":
             issues.append("fixture_readiness_not_observed")
-        data={"test_type":"N01_OFFLINE_INTEGRATION_FIXTURE",
-              "result":"OFFLINE_INTEGRATION_OBSERVED" if not issues else "NOT_COMPLETE",
+        data={"test_type":("N01_HISTORICAL_BAG_FUNCTIONAL_REPLAY" if self.historical_mode
+                           else "N01_OFFLINE_INTEGRATION_FIXTURE"),
+              "result":(
+                  ("BAG_FUNCTIONAL_PATH_OBSERVED" if not issues else
+                   "BAG_INPUTS_OBSERVED_BUT_PATH_INCOMPLETE" if c["transformed_clouds"] and c["body_pose"]
+                   else "BAG_DATA_FLOW_NOT_COMPLETE")
+                  if self.historical_mode else
+                  ("OFFLINE_INTEGRATION_OBSERVED" if not issues else "NOT_COMPLETE")),
               "issues":issues,"counts":c,"last_bridge_health":self.health,
               "dynamic_port":self.dynamic_port,
+              "historical_bag_health":self.bag_health,
+              "historical_bag_mode":self.historical_mode,
+              "old_height_from_bag_ignored_in_reconstructed_transform":self.historical_mode,
               "cmd_vel_publishers_seen":self.cmd_seen,
-              "slam_real_status_tested":False,"real_bag_tested":False,
+              "slam_real_status_tested":False,"real_bag_tested":self.historical_mode,
               "real_hive2_motion_tested":False,
               "dynamic_mpc_cbf_tested":False,
               "g1_full_collision_acceptance":False}
