@@ -134,3 +134,29 @@ cd /home/demo/lyy/hivecore-navigation && git pull --ff-only origin main && N01_B
 **新阻断点不是数据缺失：** 观察器 `observer_node.py` 同时 `from pathlib import Path` 和 `from nav_msgs.msg import Odometry, Path`，后一个 `Path` 覆盖文件路径类，导致构造 `Path(target)` 时抛出 `TypeError: Path.__init__() takes 1 positional argument but 2 were given`。脚本检测到 `n01_offline_observer` 异常退出并提前终止，**没有获得 B 样条或碰撞验收结论**。本次修复将两者分别命名 `FilePath` / `RosPath`，加入独立 AST 回归单测以及构建后不启动 ROS 节点的导入预检；**尚未重新在用户的 Humble 系统运行验证**。
 
 相同 Bag 的只读审计继续显示 `/localization_status` 缺失，`/mapping_status` 存在；限额扫描见历史 `base_footprint→base_link` 的 z=0.30 与 0.90 m 两个取值，点云帧为 `lidar_link`。这说明 Bag 可继续做数据流开发，但不能直接证明当前运行态的唯一 RSP 或严格定位就绪。
+
+## 2026-10-29 第三次离线整体框架验收（19:47，本轮 PASS）
+
+**提交版本：** `0af1e75`。**原始证据：** 用户上传的 `n01_offline_framework_20261029_194749_956839.tar.gz`（本仓库不保存实际日志/Bag 大文件）。该记录是已完成的**隔离合成输入集成冒烟验收**，**不是**真实 Bag 时序回放、G1 全路径碰撞验收、G2 MPC-CBF 求解器测试或实机导航。
+
+| 证据项 | 第三轮实际结果 |
+| --- | --- |
+| 一键运行摘要 | `OFFLINE_INTEGRATION_SMOKE_PASS`；退出码 0 |
+| 离线接口单测 | 10 / 10 PASS |
+| ROS 2 `colcon` 编译和观察器导入预检 | PASS |
+| 合成 TF | `map→base_footprint→base_link(z=0.90)→lidar_link` 已驱动测试输入；并非在线 RSP 唯一性证明 |
+| `/livox/lidar/geo_filtered` → `/cloud(map)` | 观察器收到 375 条转换后点云；桥接器最后记录输入/输出 370/370，拒绝 0、TF 失败 0（观察者异步采样计数不同） |
+| `/body_pose`、`/sensor_pose` | 各收到 375 条 |
+| SCAN 膨胀地图 | 32 条，最大点数 31,965 |
+| SCAN B 样条 | 4 条，全部通过消息结构有效性检查；日志 4 次 `final_plan_success=1` |
+| 参考路径 | `/nav/test/global_path` 收到 4 条 |
+| 合成目标 | 3 条；FSM 有 `GEN_NEW_TRAJ`、`EXEC_TRAJ`、`REPLAN_TRAJ` |
+| 动态避障接口 | 74 条状态；`dynamic_detection`、`kalman_prediction`、`mpc_cbf_solver` 仍 `NOT_IMPLEMENTED`；`actuator_output=DISABLED` |
+| 控制输出与收尾 | `/cmd_vel` 发布者 0；本轮进程及 ROS 图清理 **CLEAN** |
+| 测试报告 issues | `[]`（本轮该测试规格下无异常） |
+
+本轮日志中 4 次 SCAN 内部成功规划的总计算耗时约 **6.15–6.30 ms**，但不能据此推断整链从感知到动作的端到端 500 ms 指标合格；静态/动态避障的碰撞安全及长时稳定性均未被该冒烟报告证实。
+
+**真实录制 Bag 的独立只读证据保持不变：** `bag_20261027_225100` 记录了 928 条过滤点云、2731 条 `/tf`、12 条 `/tf_static`、609 条 `/robot_pose`；`/mapping_status` 存在，`/localization_status` 缺失。当前扫描器按上限仅读取前 120000 条消息，观察到 `base_footprint→base_link` **0.30 m 与 0.90 m 两种高度**。该历史 Bag **没有被本次 PASS 测试实际回放给 SCAN**，也没有证明运行中的唯一 TF 发布源；不能将合成 fixture 门控结果记为真实 SLAM Tracking 已通过。
+
+**推荐下一步**：保留已通过的合成集成测试作为回归基线；优先建设只读取指定白名单话题、隔离且不会广播控制命令的真实 Bag 输入链路，同时在独立数据集隔离或重新映射下审核历史 TF 冲突和缺失的定位状态。G1 碰撞验收、动态障碍检测/预测、MPC-CBF 实现继续保持未通过/未实现状态。没有必要为该已通过的合成冒烟测试立即再跑一次。

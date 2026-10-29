@@ -60,3 +60,5 @@ If the planner prints `final_plan_success=1` but the observer reports `bspline_m
 **一键验证：** `bash scripts/run_n01_offline_framework.sh`，自动启动隔离 TF/点云 fixture、严格输入桥接、真实 SCAN、B 样条参考路径与禁用的动态避障接口，并清理打包。可选 `N01_BAG_PATH=/path/to/bag` 对已录制 Bag 做只读清单；本轮**不会自动回放可能含运动命令的 Bag**。
 
 详细边界、流程、验收状态与下一阶段步骤：[N-01 离线集成框架](docs/n01_offline_framework.md)。
+
+**2026-10-29 第三轮离线合成框架验收：PASS**（提交 `0af1e75`，10/10 单测、375 条 map 点云、4/4 条有效 SCAN B 样条、4 条参考路径、零实机指令、清理 CLEAN）。这**不包括真实 Bag 回放、完整 G1 碰撞验收或 DynaCBF/MPC-CBF 求解器**；第三轮的原始测试日志由用户单独保存。
