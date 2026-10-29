@@ -1,0 +1,106 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Global Options:
+    Fixed Frame: map
+    Background Color: 24; 29; 38
+    Frame Rate: 20
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Enabled: true
+      Name: Ground Reference Grid
+      Cell Size: 1
+      Plane: XY
+      Color: 60; 70; 80
+    - Class: rviz_default_plugins/PointCloud2
+      Enabled: true
+      Name: Historical Map Cloud
+      Topic:
+        Value: /cloud
+        Reliability Policy: Best Effort
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 5
+      Style: Points
+      Size (Pixels): 2
+      Color Transformer: Intensity
+    - Class: rviz_default_plugins/PointCloud2
+      Enabled: true
+      Name: SCAN Inflated Obstacles
+      Topic:
+        Value: /grid_map/occupancy_inflate
+        Reliability Policy: Best Effort
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 5
+      Style: Points
+      Size (Pixels): 3
+      Color Transformer: FlatColor
+      Color: 255; 115; 55
+    - Class: rviz_default_plugins/Path
+      Enabled: true
+      Name: SCAN Reference Path
+      Topic:
+        Value: /nav/test/global_path
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 5
+      Color: 0; 185; 255
+      Alpha: 1
+      Line Style: Lines
+      Line Width: 0.07
+    - Class: rviz_default_plugins/Path
+      Enabled: true
+      Name: G3 Original Nominal
+      Topic:
+        Value: /n01/offline/demo_nominal_path
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 5
+      Color: 255; 210; 80
+      Alpha: 1
+      Line Style: Lines
+      Line Width: 0.08
+    - Class: rviz_default_plugins/Path
+      Enabled: true
+      Name: G3 Optimized Candidate ONLY
+      Topic:
+        Value: /n01/offline/demo_candidate_path
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 5
+      Color: 70; 240; 130
+      Alpha: 1
+      Line Style: Lines
+      Line Width: 0.10
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Historical Robot and Moving Hypotheses
+      Marker Topic:
+        Value: /n01/offline/demo_markers
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 5
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/Measure
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 17
+      Focal Point: {X: 0, Y: 0, Z: 0}
+      Pitch: 0.72
+      Yaw: 0.78
+Window Geometry:
+  Width: 1400
+  Height: 850
+  X: 60
+  Y: 40

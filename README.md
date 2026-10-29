@@ -94,3 +94,7 @@ Run `bash scripts/run_n01_bag_functional.sh` after pulling main. See [真实 Bag
 不急于做 RViz。现把历史药厂过滤点云（已知 928 帧）尽可能全部送入 map/SCAN/动态跟踪/预测/简化 MPC-CBF 求解器；输出离线约束报告和 `/n01/offline/g3_candidate_path`，**绝不输出底盘运动命令**。一键脚本另生成有真值合成运动障碍的求解正向证据，严格区分它与没有真值的药厂 Bag。见 [G3 数据全流程说明](docs/n01_g3_full_data_pipeline.md)。
 
 **G3 用户真 Bag 实测（2026-10-29 22:52，代码 `1a8a36f`）：** 整份 928 条点云已读取，571 条成功进入 map，569 帧按历史时间戳进入 G3 精确配对；61 帧实际执行数值 MPC-CBF 近似求解并生成候选 Path（51 名义 + 10 含未经认证运动候选约束），SCAN 4/4 有效 B 样条，82/82 集成测试 PASS、零 `/cmd_vel`、清理 CLEAN。**这不是 Hive2 真实动态避障认证**；另有 357 条历史 TF 缺失及 P0 未决。完整审计见 [G3 实测记录](docs/n01_g3_full_data_pipeline.md)。
+
+## 真实 Bag 全链 RViz 演示与 MP4 / GIF（待图形桌面验收）
+
+新增 `bash scripts/run_n01_demo_replay.sh`，将现有 G1/G2/G3 离线结果显示为 RViz 历史点云、SCAN 参考、动态目标、名义/优化轨迹，并录制**RViz 单个窗口**的 MP4、GIF 与 PNG。保持零底盘指令；晚到 Path 的事后计算被显著标记 POST-HOC。详见 [演示使用说明](docs/n01_g123_demo_recording.md)。
