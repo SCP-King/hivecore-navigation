@@ -67,6 +67,12 @@ def evaluate_path_preview(path_points, tracks, *,
         "maximum_overlap_radius_m":None,
         "nearest_track_id":None,
         "at_time_s":None,
+        "nearest_robot_path_xy_m":None,
+        "nearest_predicted_obstacle_xy_m":None,
+        "robot_path_distance_assumed_m":None,
+        "time_basis":"RELATIVE_TO_EXACT_MATCHED_RECORDED_SCAN",
+        "dynamics_model":"CONSTANT_VELOCITY_HYPOTHESIS",
+
     }
     path=[]
     if isinstance(path_points,(list,tuple)):
@@ -86,7 +92,8 @@ def evaluate_path_preview(path_points, tracks, *,
     for item in tracks:
         if not isinstance(item,dict) or item.get("classification")!="MOVING_HYPOTHESIS_UNVERIFIED":
             continue
-        if item.get("motion_consistency_passed") is not True or item.get("hits",0)<4:
+        if (item.get("motion_consistency_passed") is not True or
+                not isinstance(item.get("hits"),int) or item["hits"]<4):
             continue
         center=_xy(item.get("position_map_m"))
         velocity=_xy(item.get("velocity_xy_mps"))
@@ -115,6 +122,11 @@ def evaluate_path_preview(path_points, tracks, *,
                 report["maximum_overlap_radius_m"]=round(radius,4)
                 report["nearest_track_id"]=track_id
                 report["at_time_s"]=round(dt,3)
+                report["nearest_robot_path_xy_m"]=[round(ego[0],4),round(ego[1],4)]
+                report["nearest_predicted_obstacle_xy_m"]=[
+                    round(obstacle[0],4),round(obstacle[1],4)]
+                report["robot_path_distance_assumed_m"]=round(
+                    dt*assumed_speed_mps,4)
     report["minimum_barrier_proxy_m2"]=round(minimum,5)
     report["status"]=("POTENTIAL_PROXIMITY_CONFLICT" if minimum<=0 else
                       "NO_PROXY_OVERLAP_UNDER_UNVERIFIED_ASSUMPTIONS")

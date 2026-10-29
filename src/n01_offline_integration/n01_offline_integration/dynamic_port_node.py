@@ -28,6 +28,11 @@ class DynamicPort(Node):
         self.risk_evaluations=0
         self.risk_conflicts=0
         self.last_risk_status="NOT_RECEIVED"
+        self.risk_aligned_frames=0
+        self.risk_path_reused_frames=0
+        self.risk_min_barrier_proxy=None
+        self.risk_worst_track_id=None
+        self.risk_worst_scan_stamp_ns=None
         self.status=self.create_publisher(String,"/n01/offline/dynamic_port_status",10)
         self.create_subscription(Path,"/nav/test/global_path",self.on_path,10)
         self.create_subscription(String,"/n01/offline/readiness",self.on_ready,10)
@@ -73,6 +78,17 @@ class DynamicPort(Node):
                     self.risk_evaluations,int(risk.get("evaluated_previews",0)))
                 self.risk_conflicts=max(
                     self.risk_conflicts,int(risk.get("potential_conflict_previews",0)))
+                self.risk_aligned_frames=max(
+                    self.risk_aligned_frames,int(risk.get("aligned_replay_frames",0)))
+                self.risk_path_reused_frames=max(
+                    self.risk_path_reused_frames,
+                    int(risk.get("aligned_replay_frames",0))-
+                    int(risk.get("aligned_frames_before_first_path",0))-
+                    int(risk.get("body_outside_reference_frames",0)))
+                self.risk_min_barrier_proxy=risk.get(
+                    "minimum_barrier_proxy_across_recorded_frames_m2")
+                self.risk_worst_track_id=risk.get("worst_recorded_frame_track_id")
+                self.risk_worst_scan_stamp_ns=risk.get("worst_recorded_frame_stamp_ns")
         except (ValueError,TypeError):
             self.last_risk_status="INVALID"
 
@@ -90,6 +106,11 @@ class DynamicPort(Node):
                 "path_risk_reports_seen":self.risk_reports,
                 "path_risk_evaluations_seen":self.risk_evaluations,
                 "path_risk_conflict_previews_seen":self.risk_conflicts,
+                "path_risk_exact_replay_frames":self.risk_aligned_frames,
+                "path_risk_retained_reference_frames_estimated":self.risk_path_reused_frames,
+                "path_risk_minimum_barrier_proxy_m2":self.risk_min_barrier_proxy,
+                "path_risk_worst_track_id":self.risk_worst_track_id,
+                "path_risk_worst_recorded_scan_ns":self.risk_worst_scan_stamp_ns,
                 "last_path_risk_status":self.last_risk_status,
                 "kalman_prediction":"NOT_IMPLEMENTED",
                 "mpc_cbf_solver":"NOT_IMPLEMENTED",

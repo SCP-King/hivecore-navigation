@@ -96,3 +96,7 @@ cd /home/demo/lyy/hivecore-navigation && git -c http.version=HTTP/1.1 pull --ff-
 **仍未解决的数据风险：** 81/180 条原始点云缺扫描时刻 map TF；旧 Bag 的 `base_footprint→base_link` 高度同时含 0.30 / 0.90 m；`/localization_status` 缺失。历史离线回放的 PASS 不是 P0 严格定位验收。
 
 **操作：** 本轮只需将上述验收记录归档，无须重复运行已通过的 G2.2 测试。随后开发新功能时，再执行统一离线回归。
+
+## G2.3 继续开发：历史轨迹与目标时间融合（待本机验收）
+
+G2.2 实测风险接口绝大多数是未评估心跳，因此 G2.3 只保留 SCAN Path 的几何参考，严格按照历史 Bag 的 **body_pose 与动态报告同一 scan stamp** 进行反复评估，当前 Path 消息时间不能假装成历史采样时间。原 G2.2 PASS 不覆盖新增 G2.3，详情见 [G2.3](n01_g23_path_timeline.md)。

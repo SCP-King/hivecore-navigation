@@ -378,6 +378,13 @@ b=d.get("historical_bag_health",{})
 assert b.get("raw_tf_republished") is False
 assert b.get("cmd_vel_created") is False
 assert b.get("output_clouds",0)>0
+# G2.3 must receive exact recorded-stamp body+track pairs AND a retained
+# SCAN Path geometry projection at least once, not just idle heartbeats.
+counts=d.get("counts",{})
+assert counts.get("path_risk_aligned_frames",0)>0, "No exact-time risk inputs"
+assert counts.get("path_risk_retained_frames",0)>0, "No matched retained Path evidence"
+assert d.get("last_path_risk",{}).get("safety_authorization")=="NEVER"
+assert d.get("dynamic_port",{}).get("actuator_output")=="DISABLED"
 PY
 then
   RESULT="BAG_FUNCTIONAL_PATH_SMOKE_PASS"

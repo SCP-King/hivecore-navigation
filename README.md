@@ -82,3 +82,7 @@ Run `bash scripts/run_n01_bag_functional.sh` after pulling main. See [真实 Bag
 在已运行的真实 Bag→SCAN→动态候选链上增加多帧静态栅格过滤、过大聚类排除、运动方向一致性，以及**只读路径近距离风险预览** `/n01/offline/path_risk`。该模块不求解 MPC-CBF，不对真机发任何控制命令，不将“无风险候选”视为安全。沿用 `bash scripts/run_n01_bag_functional.sh` 验证，见 [G2.2 开发与验收范围](docs/n01_g22_functional.md)。
 
 **G2.2 修复版实测（2026-10-29 21:05，提交 `ef851fe`）：** 用户 ROS 2 Humble 一键真实 Bag 测试 PASS（44/44 新集成包单测，99 条 map 点云，运动候选帧 16/99，SCAN 有效 B 样条 2/2，路径风险诊断 95 条，其中 1 次可评估，零 /cmd_vel，清理 CLEAN）。对照旧版 87/99 只能说明过滤输出变化，不证明真实误报率；新阶段优先改善路径/目标时序和有标注动态障碍验证。参见 [G2.2 验收记录](docs/n01_g22_functional.md)。
+
+## G2.3 历史路径与动态障碍时间轴融合（待本机验收）
+
+新增 `ReplayPathSynchronizer`：按历史 Bag 扫描时间戳严格配对 `/body_pose` 和动态目标报告，投影当前记录的机器人位置到**仅作诊断的保留 SCAN Path**；用明确假设的行进速度与目标匀速预测计算相对 ETA、可能重叠位置及跨帧最差风险记录。Path 当前时钟 header **不**等同历史 Bag 时戳。只读输出 `/n01/offline/path_risk`，不创建任何底盘控制话题；仍未实现真 MPC-CBF 求解器。按 `bash scripts/run_n01_bag_functional.sh` 一次性验收。见 [G2.3 开发说明](docs/n01_g23_path_timeline.md)。

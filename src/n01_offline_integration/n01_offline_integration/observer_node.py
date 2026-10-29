@@ -41,6 +41,9 @@ class IntegrationObserver(Node):
                        "invalid_splines":0,"readiness_updates":0,
                        "reference_paths":0,"dynamic_port_status":0,
                        "path_risk_messages":0,"path_risk_evaluable":0,
+                       "path_risk_aligned_frames":0,
+                       "path_risk_retained_frames":0,
+                       "path_risk_conflict_frames":0,
                        "dynamic_track_messages":0,"dynamic_track_processed":0,
                        "moving_hypothesis_frames":0}
         self.health = {}
@@ -104,8 +107,14 @@ class IntegrationObserver(Node):
             if not isinstance(risk,dict):
                 raise ValueError("non-object risk report")
             self.path_risk=risk
-            if risk.get("evaluated_pairs",0)>0:
-                self.counts["path_risk_evaluable"] += 1
+            if risk.get("is_new_aligned_recorded_frame") is True:
+                self.counts["path_risk_aligned_frames"] += 1
+                if risk.get("reference_reused_without_replanning") is True:
+                    self.counts["path_risk_retained_frames"] += 1
+                if risk.get("evaluated_pairs",0)>0:
+                    self.counts["path_risk_evaluable"] += 1
+                if risk.get("status")=="POTENTIAL_PROXIMITY_CONFLICT":
+                    self.counts["path_risk_conflict_frames"] += 1
         except (ValueError,TypeError):
             self.path_risk={"parse_error":True}
 
@@ -178,6 +187,10 @@ class IntegrationObserver(Node):
         if self.historical_mode:
             if not c["path_risk_messages"]:
                 issues.append("no_offline_path_risk_diagnostic")
+            if not c["path_risk_aligned_frames"]:
+                issues.append("no_exact_timestamp_aligned_replay_frames")
+            if not c["path_risk_retained_frames"]:
+                issues.append("no_reference_path_with_exact_recorded_pose")
             if not c["dynamic_track_processed"]:
                 issues.append("no_dynamic_map_cloud_processing")
             if not self.bag_health:
