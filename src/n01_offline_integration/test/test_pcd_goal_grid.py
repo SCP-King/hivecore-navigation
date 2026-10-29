@@ -41,8 +41,9 @@ class PcdGoalPreviewTests(unittest.TestCase):
         a = world_cell(grid,(0.,0.))
         b = world_cell(grid,(1.,1.))
         self.assertNotEqual(a,b)
-        result=route(grid,(0.,0.),(1.,1.))
-        self.assertGreater(len(result["grid_cells"]), 2)
+        # The only straight escape would cut between two occupied cells.
+        with self.assertRaisesRegex(ValueError, "no route found"):
+            route(grid,(0.,0.),(1.,1.))
 
     def test_invalid_goal_and_inputs_fail_closed(self):
         grid = project(self.fixture())
