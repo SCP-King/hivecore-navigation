@@ -65,6 +65,25 @@ python3 scripts/export_n01_demo_gif.py --video /tmp/n01_demo.mp4 --gif /tmp/n01_
 
 新增数据仍然是有限时域平面点模型 + 未经真值标注的运动假设，不能用 `minimum_candidate_h_m2 >= 0` 推断实机碰撞安全。此前已生成的 MP4 不包含 JSONL；要取得 G3.1 证据需在图形桌面重新运行脚本，旧视频本身不代表新阶段通过。
 
+## G3.2 可选整图 PCD 背景与短时轨迹辨识（代码已提交，待 Ubuntu 验收）
+
+**重要区别：现有 `/cloud` 来自历史 Bag 的每帧 Livox 扫描，`/grid_map/occupancy_inflate` 来自 SCAN 局部障碍；两者都不是已保存的整张 PCD 地图。** 现增加只读 `/n01/offline/static_pcd_map` 灰色底图和更明显的黄色/绿色短时 Path 图层。PCD **只作背景展示**，不会被接入 SCAN、G3 或机器人运动控制，因此不代表全图全局规划已经实现。
+
+1. 在 Ubuntu 主机查找真实整图：`find /home/demo/lyy -type f -iname '*.pcd' -printf '%s %p\n' | sort -nr | head -20`。
+2. 查看目标 PCD 的头部直到 `DATA ...` 一行：`awk '{print} /^DATA[[:space:]]/{exit}' /真实路径/地图.pcd`，确认是否为 `ascii` 或 `binary`。当前**不支持** `binary_compressed`；若遇到此格式，只对拷贝进行格式转换，不修改原始文件。
+3. **必须核实静态 PCD 坐标基准与旧 Bag 的 `map` 一致**：依据建图导出来源、SLAM 地图坐标原点与真实固定特征对齐证据；仅有 PCD 头部、相同文件名或设置 RViz `Fixed Frame=map` 均不足以证明这一点。当前代码仅能记录人为确认标志，不会自动验证地图配准。
+4. 经确认后，再在 Ubuntu 图形桌面显式设置：
+   ```bash
+   cd /home/demo/lyy/hivecore-navigation
+   export N01_STATIC_PCD_PATH="/真实路径/药厂整体地图.pcd"
+   export N01_PCD_MAP_FRAME_ASSERTED=1
+   bash scripts/run_n01_demo_replay.sh
+   ```
+   不设置 `N01_STATIC_PCD_PATH` 时保留旧演示，日志明确提示未加载整图；设置路径但未确认坐标系则主动中止。
+5. 如启用成功，目录会增加 `pcd_static_preview.json`，包含读取格式、原始点数、抽样点数、XYZ 边界及“只读、未经 Bag 配准验证”的告警。退出后 `summary.txt` 显示 `static_pcd_requested=YES` 和 `static_pcd_report=YES`。灰色图层为 PCD 底图，白蓝色是帧点云，橙色是局部膨胀障碍；浅蓝色是 SCAN 参考，黄色是 G3 名义短时轨迹，绿色是 G3 候选短时轨迹。
+
+当前 G3 搜索时域约 1.5s，目标由历史位姿约 1.5m 前方生成，**不是厂区 A→B 的全局路径规划**。黄绿两条线可能重合（没有合格动态候选约束时尤为常见），不可凭看不到偏移断言算法未运行。要做真正整厂全局路线，后续还需要确认 PCD 如何转换为可通行性/障碍地图、目标终点、机器人包络和长距离路径规划，这与本次“背景可视化”是不同阶段。
+
 ## 安全边界与验收
 
 1. 同现有离线功能链相同，强制 ROS_DOMAIN_ID=88、ROS_LOCALHOST_ONLY=1、N01_HISTORICAL_BAG_ONLY=1。禁止底盘命令、真实 TF 广播和运动授权。
