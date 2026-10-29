@@ -62,3 +62,29 @@ cd /home/demo/lyy/hivecore-navigation && git -c http.version=HTTP/1.1 pull --ff-
 ## 后续模块
 
 在本轮软件接口通过后，下一步可开发基于 B 样条参数化轨迹时间、已知障碍真值和真实机器人状态的离线约束评估；进一步增加运动学/制动模型并实现真正的 MPC-CBF 求解器。**在 P0 定位状态、TF 权威冲突、实机安全包络与控制约束闭环未验证前，依旧禁止任何实机控制输出。**
+
+## 2026-10-29 21:54 实测复盘：发现“保留 Path”验收假阳性，现已在下一提交修复
+
+原始用户日志：`n01_bag_functional_20261029_215431_1019311.tar.gz`；测试版本 `bd60a5a`。
+
+**该版本的基础链路结果：** runner 标记 `BAG_FUNCTIONAL_PATH_SMOKE_PASS`、退出码 0，ROS 2 Humble 8 包编译、61/61 集成包单测、9/9 路径桥接测试、清理守护测试均通过；99 条真实录制点云转换成功，81 条因扫描时刻 map TF 不可用被拒；动态模块处理 99 帧，16 帧出现未经真值验证的运动候选；SCAN 产生 1/1 条合法 B 样条与 1 条 Path；无 `/cmd_vel` 发布者，清理 CLEAN。
+
+**但 G2.3 风险联调不合格：** `aligned_replay_frames=99` 证明精准历史 stamp 配对；`aligned_frames_before_first_path=95`，其余 **4 帧全部在保留 Path 的 1.5m 允许走廊之外**（`body_outside_reference_frames=4`）；`aligned_frames_with_proximity_pairs=0`、`path_risk_evaluable=0`、`minimum_barrier_proxy_across_recorded_frames_m2=null`。根因是 `ReplayPathSynchronizer` 在“已找到 Path 几何，但位姿超出走廊”的诊断结果上也错误地设置了 `reference_reused_without_replanning=true`，被 observer 误计为 4 帧有效复用，造成验收脚本假阳性。**上述旧版 PASS 仅指 Bag→SCAN 与时间对齐，不代表 G2.3 完成有效路径风险计算。**
+
+### 修复设计及新增功能
+
+1. **明确判据：** 只有机器人位置到 Path 最近投影距离不超过 1.5m、且投影后仍有真实剩余路径几何，才记 `path_projection_usable=true`；路径超界、到达路径终点或缺数据均记为 `false`。它们**不得**使新 G2.3 验收通过。
+2. **非实时的有界事后对照**：ROS 历史录制流通常在 Path 生成前已播放多帧。允许最多暂存 160 条**已经精确同 stamp 配对**的历史机器人位姿与障碍候选；当 SCAN Path 后来抵达时，使用该条路径几何对先前帧做 **POST_HOC_PATH_GEOMETRY_COMPARISON_NOT_HISTORICAL_PLANNING** 比较。这是历史几何研究，**不是**“当时有该 Path”或闭环避障证据。
+3. **两种证据隔离**：`live_projected_reference_frames` 为 Path 已经进入图后的真实消息顺序投影数量；`posthoc_projected_reference_frames` 为后来 Path 对旧帧事后投影数量；`aligned_replay_frames` 仍只统计输入时同 stamp 配对的帧，不将事后对照重复计为新帧。动态避障真实距离候选配对也分 `aligned_frames_with_proximity_pairs` 与 `posthoc_proximity_pairs`。
+4. **严格无指令**：新节点仍只发布 `/n01/offline/path_risk` 诊断；风险 proxy、posthoc 最危险值与扫描 stamp 属于假定速度、未知目标真值下的探索结果，`safety_authorization=NEVER`、CBF/MPC 求解器未实现、`actuator_output=DISABLED`。
+5. **新回归测试**：超出走廊不计“有效 Path”；后到 Path 对前序精确配对帧可做事后处理，但不冒充 contemporaneous；历史缓冲有上限、重复消费不重复计数；时钟倒退清空历史缓冲及参考路径。
+
+**复验命令不变：**
+
+```bash
+cd /home/demo/lyy/hivecore-navigation && git -c http.version=HTTP/1.1 pull --ff-only origin main && bash scripts/run_n01_bag_functional.sh
+```
+
+复验报告必须分别列出 LIVE 与 POST_HOC 投影；只有确实存在**走廊内**的投影才可证明历史几何关联功能。若仅 POST_HOC 有效，脚本会显式输出 `real_bag_SCAN_pass_G23_POST_HOC_projection_only_NOT_live_risk`；这**不等于**实时风险评估完成。若这两类投影都没有，测试应标记 `BAG_FUNCTIONAL_INCOMPLETE`，不能再把 4 帧超界冒充 PASS。
+
+**代码尚未在用户的 ROS 2 Humble 环境重跑。** 上述修复是新的待验收版本，不应反过来改变旧日志实际结果。

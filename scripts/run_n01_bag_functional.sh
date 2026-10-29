@@ -378,17 +378,32 @@ b=d.get("historical_bag_health",{})
 assert b.get("raw_tf_republished") is False
 assert b.get("cmd_vel_created") is False
 assert b.get("output_clouds",0)>0
-# G2.3 must receive exact recorded-stamp body+track pairs AND a retained
-# SCAN Path geometry projection at least once, not just idle heartbeats.
+# G2.3 counts only genuinely usable path projections. A body outside the
+# 1.5m corridor can NEVER make the validation pass. Post-hoc projections are
+# allowed as separately labeled OFFLINE comparisons, not contemporaneous plans.
 counts=d.get("counts",{})
+risk=d.get("last_path_risk",{})
 assert counts.get("path_risk_aligned_frames",0)>0, "No exact-time risk inputs"
-assert counts.get("path_risk_retained_frames",0)>0, "No matched retained Path evidence"
+live=int(risk.get("live_projected_reference_frames",0))
+posthoc=int(risk.get("posthoc_projected_reference_frames",0))
+print("G2.3 projected frames LIVE:",live,"POST_HOC:",posthoc)
+print("G2.3 actual trajectory-obstacle pairs LIVE:",
+      risk.get("aligned_frames_with_proximity_pairs",0),
+      "POST_HOC:",risk.get("posthoc_proximity_pairs",0))
+assert live+posthoc>0, "Path received but not usable for ANY projected recorded pose"
+assert (counts.get("path_risk_posthoc_projected_frames",0)+
+        counts.get("path_risk_retained_frames",0))>0
+assert risk.get("path_header_is_historical_stamp") is False
 assert d.get("last_path_risk",{}).get("safety_authorization")=="NEVER"
 assert d.get("dynamic_port",{}).get("actuator_output")=="DISABLED"
 PY
 then
   RESULT="BAG_FUNCTIONAL_PATH_SMOKE_PASS"
   REASON="real_recorded_bag_to_SCAN_map_and_bspline_reference_seen"
+  if grep -q 'G2.3 projected frames LIVE: 0 POST_HOC: [1-9]' "$OUT/logs/evaluation.txt"; then
+    REASON="real_bag_SCAN_pass_G23_POST_HOC_projection_only_NOT_live_risk"
+    say "G2.3 has only POST-HOC geometry comparison; real-time risk NOT VERIFIED"
+  fi
   say "Recorded Bag passed OPEN-LOOP functional replay; localization tracking, G1 collision and real control NOT TESTED"
 else
   RESULT="BAG_FUNCTIONAL_INCOMPLETE"

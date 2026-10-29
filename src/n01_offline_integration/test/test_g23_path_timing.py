@@ -77,6 +77,9 @@ class RecordedTimeAlignmentTests(unittest.TestCase):
         r=s.put_tracks(candidate(1000000000))
         self.assertEqual(r["status"],"BODY_OUTSIDE_RETAINED_PATH_CORRIDOR")
         self.assertEqual(r["evaluated_pairs"],0)
+        self.assertIs(r["path_projection_usable"],False)
+        self.assertIs(r["reference_reused_without_replanning"],False)
+        self.assertEqual(s.evidence()["live_projected_reference_frames"],0)
         self.assertEqual(r["safety_authorization"],"NEVER")
 
     def test_reverse_time_invalidates_reference_and_requires_new_path(self):
@@ -151,6 +154,65 @@ class RecordedTimeAlignmentTests(unittest.TestCase):
         self.assertEqual(report["path_reference_seq"],2)
         self.assertEqual(report["path_header_stamp_ns"],999)
         self.assertFalse(report["path_header_is_historical_stamp"])
+
+    def test_late_path_posthoc_keeps_separate_coverage(self):
+        s=ReplayPathSynchronizer()
+        for i in range(1,7):
+            stamp=i*250_000_000
+            s.put_body(stamp,(i*.1,0.))
+            result=s.put_tracks(candidate(stamp,moving=True))
+            self.assertEqual(result["status"],"NO_RETAINED_REFERENCE_GEOMETRY")
+        self.assertEqual(s.frames_aligned,6)
+        self.assertTrue(s.set_path([(0.,0.),(1.,0.),(2.,0.)],header_stamp_ns=999))
+        backfill=s.drain_posthoc()
+        self.assertEqual(len(backfill),6)
+        self.assertEqual(s.evidence()["posthoc_projected_reference_frames"],6)
+        self.assertEqual(s.evidence()["live_projected_reference_frames"],0)
+        self.assertEqual(s.evidence()["aligned_replay_frames"],6)
+        self.assertEqual(s.evidence()["posthoc_proximity_pairs"],6)
+        self.assertEqual(s.drain_posthoc(),[])
+        for item in backfill:
+            self.assertTrue(item["path_projection_usable"])
+            self.assertTrue(item["post_hoc_reference_comparison"])
+            self.assertFalse(item["reference_reused_without_replanning"])
+            self.assertFalse(item["contemporaneous_path_at_recorded_scan"])
+            self.assertIn("POST_HOC",item["reference_provenance"])
+            self.assertEqual(item["safety_authorization"],"NEVER")
+
+    def test_late_path_outside_corridor_cannot_be_counted(self):
+        s=ReplayPathSynchronizer()
+        s.put_body(1_000_000_000,(5.,5.))
+        s.put_tracks(candidate(1_000_000_000))
+        s.set_path([(0.,0.),(1.,0.),(2.,0.)])
+        items=s.drain_posthoc()
+        self.assertEqual(len(items),1)
+        self.assertEqual(items[0]["status"],"BODY_OUTSIDE_RETAINED_PATH_CORRIDOR")
+        self.assertFalse(items[0]["path_projection_usable"])
+        self.assertFalse(items[0]["reference_reused_without_replanning"])
+        self.assertEqual(s.evidence()["posthoc_projected_reference_frames"],0)
+        self.assertEqual(s.evidence()["posthoc_body_outside_frames"],1)
+
+    def test_posthoc_buffer_is_bounded_and_drained(self):
+        s=ReplayPathSynchronizer(max_posthoc_frames=8)
+        for i in range(1,15):
+            stamp=i*250_000_000
+            s.put_body(stamp,(0.,0.))
+            s.put_tracks(candidate(stamp,moving=False))
+        self.assertEqual(s.evidence()["posthoc_buffer_pending"],8)
+        s.set_path([(0.,0.),(2.,0.)])
+        self.assertEqual(len(s.drain_posthoc()),8)
+        self.assertEqual(s.evidence()["posthoc_buffer_pending"],0)
+
+    def test_reverse_time_clears_undelivered_posthoc_frames(self):
+        s=ReplayPathSynchronizer()
+        s.put_body(2_000_000_000,(0.,0.))
+        s.put_tracks(candidate(2_000_000_000))
+        s.put_body(1_000_000_000,(0.,0.))
+        r=s.put_tracks(candidate(1_000_000_000))
+        self.assertEqual(r["status"],"REPLAY_TIMESTAMP_REVERSED")
+        self.assertEqual(s.evidence()["posthoc_buffer_pending"],0)
+        s.set_path([(0.,0.),(2.,0.)])
+        self.assertEqual(s.drain_posthoc(),[])
 
     def test_scan_gap_recorded_without_claiming_sync_success(self):
         s=self.make_sync()

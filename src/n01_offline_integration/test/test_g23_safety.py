@@ -42,7 +42,7 @@ class ReadOnlyTemporalRisk(unittest.TestCase):
 
     def test_observer_requires_retained_reference_witness(self):
         code=(PKG/"observer_node.py").read_text(encoding="utf-8")
-        self.assertIn("no_reference_path_with_exact_recorded_pose",code)
+        self.assertIn("no_usable_path_projection_live_or_posthoc",code)
         runner=PKG.parents[2]/"scripts"/"run_n01_bag_functional.sh"
         self.assertIn("No matched retained Path evidence",
                       runner.read_text(encoding="utf-8"))

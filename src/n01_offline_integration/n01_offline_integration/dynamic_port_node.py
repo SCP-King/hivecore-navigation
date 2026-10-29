@@ -33,6 +33,8 @@ class DynamicPort(Node):
         self.risk_min_barrier_proxy=None
         self.risk_worst_track_id=None
         self.risk_worst_scan_stamp_ns=None
+        self.risk_posthoc_projections=0
+        self.risk_posthoc_evaluations=0
         self.status=self.create_publisher(String,"/n01/offline/dynamic_port_status",10)
         self.create_subscription(Path,"/nav/test/global_path",self.on_path,10)
         self.create_subscription(String,"/n01/offline/readiness",self.on_ready,10)
@@ -89,6 +91,12 @@ class DynamicPort(Node):
                     "minimum_barrier_proxy_across_recorded_frames_m2")
                 self.risk_worst_track_id=risk.get("worst_recorded_frame_track_id")
                 self.risk_worst_scan_stamp_ns=risk.get("worst_recorded_frame_stamp_ns")
+                self.risk_posthoc_projections=max(
+                    self.risk_posthoc_projections,
+                    int(risk.get("posthoc_projected_reference_frames",0)))
+                self.risk_posthoc_evaluations=max(
+                    self.risk_posthoc_evaluations,
+                    int(risk.get("retrospective_evaluable_previews",0)))
         except (ValueError,TypeError):
             self.last_risk_status="INVALID"
 
@@ -111,6 +119,8 @@ class DynamicPort(Node):
                 "path_risk_minimum_barrier_proxy_m2":self.risk_min_barrier_proxy,
                 "path_risk_worst_track_id":self.risk_worst_track_id,
                 "path_risk_worst_recorded_scan_ns":self.risk_worst_scan_stamp_ns,
+                "path_risk_posthoc_projected_frames":self.risk_posthoc_projections,
+                "path_risk_posthoc_evaluable_previews":self.risk_posthoc_evaluations,
                 "last_path_risk_status":self.last_risk_status,
                 "kalman_prediction":"NOT_IMPLEMENTED",
                 "mpc_cbf_solver":"NOT_IMPLEMENTED",

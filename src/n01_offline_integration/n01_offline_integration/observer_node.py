@@ -43,6 +43,8 @@ class IntegrationObserver(Node):
                        "path_risk_messages":0,"path_risk_evaluable":0,
                        "path_risk_aligned_frames":0,
                        "path_risk_retained_frames":0,
+                       "path_risk_posthoc_messages":0,
+                       "path_risk_posthoc_projected_frames":0,
                        "path_risk_conflict_frames":0,
                        "dynamic_track_messages":0,"dynamic_track_processed":0,
                        "moving_hypothesis_frames":0}
@@ -107,6 +109,13 @@ class IntegrationObserver(Node):
             if not isinstance(risk,dict):
                 raise ValueError("non-object risk report")
             self.path_risk=risk
+            # Cumulative metadata on each report remains available even when
+            # individual post-hoc messages are lost by a ROS queue.
+            self.counts["path_risk_posthoc_projected_frames"]=max(
+                self.counts["path_risk_posthoc_projected_frames"],
+                int(risk.get("posthoc_projected_reference_frames",0)))
+            if risk.get("is_retrospective_path_comparison") is True:
+                self.counts["path_risk_posthoc_messages"]+=1
             if risk.get("is_new_aligned_recorded_frame") is True:
                 self.counts["path_risk_aligned_frames"] += 1
                 if risk.get("reference_reused_without_replanning") is True:
@@ -189,8 +198,9 @@ class IntegrationObserver(Node):
                 issues.append("no_offline_path_risk_diagnostic")
             if not c["path_risk_aligned_frames"]:
                 issues.append("no_exact_timestamp_aligned_replay_frames")
-            if not c["path_risk_retained_frames"]:
-                issues.append("no_reference_path_with_exact_recorded_pose")
+            if not (c["path_risk_retained_frames"] or
+                    c["path_risk_posthoc_projected_frames"]):
+                issues.append("no_usable_path_projection_live_or_posthoc")
             if not c["dynamic_track_processed"]:
                 issues.append("no_dynamic_map_cloud_processing")
             if not self.bag_health:

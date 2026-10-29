@@ -39,6 +39,11 @@ class OfflinePathRisk(Node):
         self.report_count=0
         self.evaluable=0
         self.potential_conflicts=0
+        self.posthoc_evaluable=0
+        self.posthoc_conflicts=0
+        self.posthoc_min_barrier_proxy=None
+        self.posthoc_worst_stamp_ns=None
+        self.posthoc_worst_track_id=None
         self.last_status="WAITING_FOR_INPUTS"
         self.last_matched_wall=None
         self.last_result=None
@@ -62,7 +67,16 @@ class OfflinePathRisk(Node):
             self.sync.set_path([],stamp_ns(msg.header.stamp))
             return
         points=[(pose.pose.position.x,pose.pose.position.y) for pose in msg.poses]
-        self.sync.set_path(points,stamp_ns(msg.header.stamp))
+        accepted=self.sync.set_path(points,stamp_ns(msg.header.stamp))
+        if accepted:
+            retrospective=self.sync.drain_posthoc()
+            for result in retrospective:
+                self._publish_matched(result,retrospective=True)
+            if retrospective:
+                self.get_logger().warning(
+                    "POST-HOC ONLY comparison on %d historical frames, "
+                    "usable path projections %d. Not contemporaneous planning."
+                    % (len(retrospective),self.sync.posthoc_projected_frames))
 
     def on_pose(self,msg):
         self.pose_count+=1
@@ -85,23 +99,37 @@ class OfflinePathRisk(Node):
         if candidate is not None:
             self._publish_matched(candidate)
 
-    def _publish_matched(self,result):
-        self.last_matched_wall=time.monotonic()
-        self.last_result=result
-        self.last_status=result["status"]
+    def _publish_matched(self,result,retrospective=False):
+        # Historical backfill is a POST-HOC comparison, not a new scan frame
+        # or a current estimate. Do not refresh the live-heartbeat clock.
+        if not retrospective:
+            self.last_matched_wall=time.monotonic()
+            self.last_result=result
+            self.last_status=result["status"]
         if result["evaluated_pairs"]>0:
-            self.evaluable+=1
             value=result["minimum_barrier_proxy_m2"]
-            if value is not None and (
-                    self.min_barrier_proxy is None or value<self.min_barrier_proxy):
-                self.min_barrier_proxy=value
-                self.worst_track_id=result.get("nearest_track_id")
-                self.worst_at_scan_stamp_ns=result.get("recorded_scan_stamp_ns")
+            if retrospective:
+                self.posthoc_evaluable+=1
+                if value is not None and (
+                        self.posthoc_min_barrier_proxy is None or
+                        value<self.posthoc_min_barrier_proxy):
+                    self.posthoc_min_barrier_proxy=value
+                    self.posthoc_worst_track_id=result.get("nearest_track_id")
+                    self.posthoc_worst_stamp_ns=result.get("recorded_scan_stamp_ns")
+            else:
+                self.evaluable+=1
+                if value is not None and (
+                        self.min_barrier_proxy is None or value<self.min_barrier_proxy):
+                    self.min_barrier_proxy=value
+                    self.worst_track_id=result.get("nearest_track_id")
+                    self.worst_at_scan_stamp_ns=result.get("recorded_scan_stamp_ns")
         if result["status"]=="POTENTIAL_PROXIMITY_CONFLICT":
-            self.potential_conflicts+=1
-        self._publish(result,frame_event=True)
+            if retrospective:self.posthoc_conflicts+=1
+            else:self.potential_conflicts+=1
+        self._publish(result,frame_event=not retrospective,
+                      retrospective_event=retrospective)
 
-    def _publish(self,result,frame_event):
+    def _publish(self,result,frame_event,retrospective_event=False):
         output=dict(result)
         self.report_count+=1
         output.update({
@@ -111,10 +139,16 @@ class OfflinePathRisk(Node):
             "diagnostic_reports_published":self.report_count,
             "evaluated_previews":self.evaluable,
             "potential_conflict_previews":self.potential_conflicts,
+            "retrospective_evaluable_previews":self.posthoc_evaluable,
+            "retrospective_potential_conflict_previews":self.posthoc_conflicts,
+            "retrospective_minimum_barrier_proxy_m2":self.posthoc_min_barrier_proxy,
+            "retrospective_worst_recorded_frame_stamp_ns":self.posthoc_worst_stamp_ns,
+            "retrospective_worst_track_id":self.posthoc_worst_track_id,
             "minimum_barrier_proxy_across_recorded_frames_m2":self.min_barrier_proxy,
             "worst_recorded_frame_track_id":self.worst_track_id,
             "worst_recorded_frame_stamp_ns":self.worst_at_scan_stamp_ns,
             "is_new_aligned_recorded_frame":bool(frame_event),
+            "is_retrospective_path_comparison":bool(retrospective_event),
             "scope":"OPEN_LOOP_OFFLINE_ONLY",
             "trusted_moving_objects":False,
             "offline_path_preview_alive":True,

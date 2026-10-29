@@ -86,3 +86,5 @@ Run `bash scripts/run_n01_bag_functional.sh` after pulling main. See [真实 Bag
 ## G2.3 历史路径与动态障碍时间轴融合（待本机验收）
 
 新增 `ReplayPathSynchronizer`：按历史 Bag 扫描时间戳严格配对 `/body_pose` 和动态目标报告，投影当前记录的机器人位置到**仅作诊断的保留 SCAN Path**；用明确假设的行进速度与目标匀速预测计算相对 ETA、可能重叠位置及跨帧最差风险记录。Path 当前时钟 header **不**等同历史 Bag 时戳。只读输出 `/n01/offline/path_risk`，不创建任何底盘控制话题；仍未实现真 MPC-CBF 求解器。按 `bash scripts/run_n01_bag_functional.sh` 一次性验收。见 [G2.3 开发说明](docs/n01_g23_path_timeline.md)。
+
+**G2.3 21:54 验收复盘：** 原版 `bd60a5a` 时间戳精确配对 99 帧，但 SCAN Path 出现前 95 帧，余下 4 帧均超出 1.5m 走廊，实际可计算动态风险帧数 0。原 runner 的 PASS 含“路径存在但投影不可用也被计为复用”的验收假阳性。新修复对路径超界严格拒绝，另外加最多 160 帧的显式 POST-HOC 历史 Path 几何对照，且与同时序 LIVE 风险严格分账；未在用户 Ubuntu 复测。见 [G2.3 复盘与修复](docs/n01_g23_path_timeline.md)。
