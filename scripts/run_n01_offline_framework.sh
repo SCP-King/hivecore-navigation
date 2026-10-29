@@ -227,6 +227,21 @@ else
   exit 4
 fi
 set -u
+# Catch Python/ROS message import and file-path name collisions before launch.
+# Import only: no rclpy.init(), no DDS node, no actuators.
+if ! python3 - > "$OUT/logs/observer_import_check.log" 2>&1 <<'PY'
+from pathlib import Path
+from n01_offline_integration import observer_node
+assert observer_node.FilePath is Path, "observer output path must use pathlib.Path"
+assert observer_node.RosPath.__module__.startswith("nav_msgs.msg"), "ROS Path message alias invalid"
+assert observer_node.FilePath("/tmp/observer-import-only.json").suffix == ".json"
+print("observer Path aliases and ROS message imports: PASS")
+PY
+then
+  RESULT="FAIL"; REASON="observer_import_check_failed"
+  tail -n 40 "$OUT/logs/observer_import_check.log"
+  exit 4
+fi
 GRAPH_READY=1
 
 say "3/5 Checking isolated ROS graph (without persistent daemon)"

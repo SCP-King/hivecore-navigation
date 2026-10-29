@@ -126,3 +126,11 @@ cd /home/demo/lyy/hivecore-navigation && git pull --ff-only origin main && N01_B
 修复方向：合成 TF 数值全部强制 `float`、加入 ROS 消息类型回归单测、B-spline bridge 的 odom 订阅改为 sensor-data QoS；一键脚本发现核心子节点异常退出立即失败，不再等待观察器直到超时；观察器补充真正 Path reference 和未激活动态端口的证据。**改动未经 Ubuntu/ROS 2 再次实际运行验证，不应声称整链已通过。**
 
 同轮 **真实 Bag 只读审计**（`/home/demo/lyy/slam_data/bags/bag_20261027_225100`）已确认 `/livox/lidar/geo_filtered`=928 条、`/tf`=2731 条、`/tf_static`=12 条、`/robot_pose`=609 条，`/localization_status` **缺失**；限额扫描 120000 条消息显示 `base_footprint→base_link` z **0.30/0.90 m 双值历史冲突**，点云帧 `lidar_link`。因此此 Bag 可作为**历史 TF/点云数据审计依据**，不可直接以严格 LocalizationStatus tracking 判据宣称真机定位就绪。该事实不受合成 fixture 修复影响。
+
+## 2026-10-29 第二次一键日志复盘（19:38 本地）
+
+日志归档 `n01_offline_framework_20261029_193835_951563.tar.gz`；执行 commit `330bb97`。**9 项新包单元测试通过，ROS 2 构建通过，清理进程及 ROS 图均 CLEAN**。最新合成 fixture 已成功发布 TF、`/body_pose`，SCAN 日志记录收到 z=0.900 m 的首次位姿和第一个目标，且 FSM 从 `INIT` 到 `WAIT_TARGET` 再到 `GEN_NEW_TRAJ`。
+
+**新阻断点不是数据缺失：** 观察器 `observer_node.py` 同时 `from pathlib import Path` 和 `from nav_msgs.msg import Odometry, Path`，后一个 `Path` 覆盖文件路径类，导致构造 `Path(target)` 时抛出 `TypeError: Path.__init__() takes 1 positional argument but 2 were given`。脚本检测到 `n01_offline_observer` 异常退出并提前终止，**没有获得 B 样条或碰撞验收结论**。本次修复将两者分别命名 `FilePath` / `RosPath`，加入独立 AST 回归单测以及构建后不启动 ROS 节点的导入预检；**尚未重新在用户的 Humble 系统运行验证**。
+
+相同 Bag 的只读审计继续显示 `/localization_status` 缺失，`/mapping_status` 存在；限额扫描见历史 `base_footprint→base_link` 的 z=0.30 与 0.90 m 两个取值，点云帧为 `lidar_link`。这说明 Bag 可继续做数据流开发，但不能直接证明当前运行态的唯一 RSP 或严格定位就绪。

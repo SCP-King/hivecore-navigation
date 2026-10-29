@@ -1,7 +1,7 @@
 """Offline-only integration observer with atomic JSON evidence file."""
 import json
 import os
-from pathlib import Path
+from pathlib import Path as FilePath
 import time
 
 if os.environ.get("ROS_DOMAIN_ID") != "88" or os.environ.get("ROS_LOCALHOST_ONLY") != "1":
@@ -13,7 +13,7 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from std_msgs.msg import String
 from sensor_msgs.msg import PointCloud2
-from nav_msgs.msg import Odometry, Path
+from nav_msgs.msg import Odometry, Path as RosPath
 from geometry_msgs.msg import PoseStamped
 from scan_planner_msgs.msg import Bspline
 from n01_scan_dynacbf_bridge.scan_g1_monitor import valid_bspline
@@ -30,7 +30,7 @@ class IntegrationObserver(Node):
             target = os.environ.get("N01_OFFLINE_REPORT_PATH","")
         if not target or not 10 <= self.duration <= 180:
             raise ValueError("duration and report_path required")
-        self.path = Path(target)
+        self.path = FilePath(target)
         self.start = time.monotonic()
         self.done = False
         self.counts = {"transformed_clouds":0,"wrong_frame_clouds":0,
@@ -48,7 +48,7 @@ class IntegrationObserver(Node):
         self.create_subscription(PoseStamped,"/move_base_simple/goal",self.on_goal,10)
         self.create_subscription(Bspline,"/planning/bspline",self.on_spline,10)
         self.create_subscription(String,"/n01/offline/readiness",self.on_health,10)
-        self.create_subscription(Path,"/nav/test/global_path",self.on_path,10)
+        self.create_subscription(RosPath,"/nav/test/global_path",self.on_path,10)
         self.create_subscription(String,"/n01/offline/dynamic_port_status",
                                  self.on_dynamic_port,10)
         self.dynamic_port = {}
