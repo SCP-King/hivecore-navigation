@@ -137,6 +137,20 @@ trap 'RESULT="INTERRUPTED"; REASON="terminated"; exit 143' TERM
 trap 'RESULT="INTERRUPTED"; REASON="hangup"; exit 129' HUP
 
 say "N01 recorded Bag functional replay start; output: $OUT"
+
+# Refuse running a mixed checkout. A failed git pull can leave remote G3
+# files untracked and modified alongside an old Git HEAD. That combination
+# previously reached the synthetic solver demo and crashed with TypeError.
+# This guard does not modify or delete any user files.
+if [[ -n "$(git -C "$ROOT" status --porcelain=v1 --untracked-files=all -- scripts src/n01_offline_integration)" ]]; then
+  RESULT="FAIL"
+  REASON="dirty_or_mixed_offline_sources_refuse_run"
+  git -C "$ROOT" status --short -- scripts src/n01_offline_integration |
+    tee "$OUT/logs/dirty_sources.txt"
+  say "Source checkout contains local tracked/untracked changes. STOP: do not reset or overwrite user files."
+  say "Use a clean sibling clone for this isolated G3 test."
+  exit 2
+fi
 {
   date --iso-8601=seconds
   git -C "$ROOT" log -1 --oneline

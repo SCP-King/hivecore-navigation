@@ -114,7 +114,7 @@ class G3RealBagPipelineTests(unittest.TestCase):
             out=p.put_tracks(report(stamp,[]))
             self.assertEqual(out[0]["status"],"WAITING_FOR_SCAN_PATH")
         self.assertEqual(p.input_pairs,6)
-        solved=p.set_path(PATH,999)
+        solved=p.set_path(PATH,path_header_ns=999)
         self.assertEqual(len(solved),6)
         self.assertEqual(p.evidence()["solver_executed_frames"],6)
         self.assertEqual(p.evidence()["posthoc_solver_frames"],6)

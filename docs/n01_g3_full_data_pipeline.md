@@ -91,3 +91,13 @@ cd /home/demo/lyy/hivecore-navigation && git -c http.version=HTTP/1.1 pull --ff-
 - 暂不做 RViz、性能优化或真机运动测试。
 
 **完成本轮全链数据流后，再集中把数值模型、碰撞安全判据和真实动态障碍真值验证逐步升级，而不是退回 G2 无限细分。**
+
+## 2026-10-29 22:40：G3 合成正向检查失败的修复及脏目录保护
+
+**用户终端证据：** 原工作目录的 `git pull --ff-only` 因多个已修改跟踪文件及同名未跟踪 G3 文件会被覆盖而中止。此时原 HEAD 仍可能是旧版，但工作树含有部分 G3 新文件。随后直接运行 `bash scripts/run_n01_bag_functional.sh`，在 `1.5/5 Running G3 positive synthetic moving-obstacle optimization` 阶段报 `TypeError: G3HistoricalCoordinator.set_path() got an unexpected keyword argument 'header_stamp_ns'`；`result=FAIL`、`reason=g3_synthetic_constrained_solver_failed`，进程和 ROS 图清理 CLEAN。
+
+**直接根因：** `g3_pipeline_core.py` 中定义的是 `set_path(..., path_header_ns=0)`，但 `scripts/g3_offline_solver_demo.py` 用 `header_stamp_ns=999` 调用；这是代码参数命名不一致，不代表 G3 数值求解器已经求解失败，也没有开始运行完整 Bag。
+
+**修复：** 正向演示脚本改为 `path_header_ns=999`，配套单元测试也显式用这个关键字调用，阻止同类接口漂移。对 `run_n01_bag_functional.sh` 增加离线 `scripts` / `src/n01_offline_integration` 的 Git 工作树脏文件检查；若发现文件已修改或未跟踪就 FAIL，禁止混合代码产生“成功”报告，**该检查不会修改、重置或删除用户文件**。
+
+**安全拉取建议：** 不对原工作目录执行 `git reset --hard` 或 `git clean -fd`。如果有本地未合并修改，使用新的并列克隆目录获取 `main` 并运行一键脚本；既不覆盖原文件，也能得到干净、可复现的 G3 版本。**本修复尚待用户 ROS 2 环境复验。**

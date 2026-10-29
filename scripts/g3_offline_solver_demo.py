@@ -17,7 +17,7 @@ moving={
 }
 stamp=1_765_000_000_000_000_000
 pipe=G3HistoricalCoordinator()
-pipe.set_path(path,header_stamp_ns=999)
+pipe.set_path(path,path_header_ns=999)
 assert not pipe.put_pose(stamp,(0.,0.,.9))
 solved=pipe.put_tracks({
     "schema":"n01.offline.tracks.v1",
