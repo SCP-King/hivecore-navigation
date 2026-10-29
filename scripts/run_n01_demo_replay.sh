@@ -76,6 +76,15 @@ PY
         --video "$VIDEO" --gif "$GIF" --still "$PNG" \
         --start 18 --seconds 12 > "$OUT/logs/gif_export.log" 2>&1; then gif_ok=0; fi
   fi
+  # Independent G3.1 frame journal must be present for a new demo PASS.
+  if [[ "$RESULT" == "PASS" ]]; then
+    if ! PYTHONPATH="$ROOT/src/n01_offline_integration${PYTHONPATH:+:$PYTHONPATH}" \
+      python3 -m n01_offline_integration.g3_frame_evidence \
+      "$OUT/g3_frame_evidence.jsonl" "$OUT/g3_evidence_summary.json" "$REPORT" \
+      > "$OUT/logs/g3_evidence_check.log" 2>&1; then
+      RESULT="INCOMPLETE"; REASON="g3_frame_evidence_validation_failed"; rc=11
+    fi
+  fi
   if (( cleaned!=0 || graph_clean!=0 )); then
     RESULT="CLEANUP_FAILED"; REASON="owned_process_or_ros_graph_residual"; rc=12
   elif [[ "$RESULT" == "PASS" ]] && (( vid_ok!=0 || gif_ok!=0 )); then
