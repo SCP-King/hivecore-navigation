@@ -127,3 +127,47 @@ python3 scripts/n01_pcd_floor_diagnose.py \
 重建，再与 PCD 静态表面融合。单张 PCD 通常不能证明“没有点=没有障碍”。
 建图视图中的已观测区、未知区、地面、可行驶区及 Hive2 多姿态包络
 必须分开建模，才能对真实路线做静态碰撞与未知区审计。
+
+## G4.2：仅有 PCD + 同次建图 Bag 时的下一步（2026-10-30）
+
+用户明确说明没有其他 PGM/OctoMap；不再寻找不存在的外部栅格。G4.1 的真实高度扫描已在 Ubuntu 通过 5/5 单元测试，按 0.25m 高度切片：
+- 假设 z=0.00m：候选自由 18 格，最大连通 3 格，未知 84.12%，不能规划；
+- 假设 z=-1.00m：候选自由 585 格，最大连通 538 格，未知 83.33%，**仅为待检查地面高度候选**；
+- 假设 z=2.25～2.75m：局部连续点也较多，但是高处可能是设备顶部/天花板，绝不能由最大连通分数自动选为地面。
+这些数据不能证明整厂地图的自由空间，因此不能自动给出已验证的 A→B 路线。
+
+**新增 G4.2 初始离线工具：** `scripts/n01_bag_ray_visibility.py`。
+它使用 ROS 2 的 rosbag2_py 只读打开 Bag，先从历史 `/tf` 获取带时间戳的
+`map→base_footprint`，再以已选定的**仅用于回放研究**的挂载关系复原
+`map←lidar_link`，逐帧对 `/livox/lidar/geo_filtered` 的原始时间戳配对；
+只考虑距离有限、近水平的激光射线，用经过栅格的射线统计已观测可见空间，
+以射线终点统计命中障碍。默认未知栅格始终未知，命中点优先于自由票数，
+输出一份独立 `PGM/YAML/SVG/JSON` 可见性证据图，不启动 ROS 图或底盘。
+
+执行（先小样本，避免一次处理过多射线）：
+
+```bash
+cd /home/demo/lyy/hivecore-navigation
+git -c http.version=HTTP/1.1 pull --ff-only origin main
+python3 -m unittest discover -s src/n01_offline_integration/test -p 'test_bag_ray_visibility.py' -v
+set +u
+source /opt/ros/humble/setup.bash
+python3 scripts/n01_bag_ray_visibility.py \
+  --pcd /home/demo/lyy/slam_data/maps/cloud_map_20261027_225549.pcd \
+  --bag /home/demo/lyy/slam_data/bags/bag_20261027_225100 \
+  --max-frames 180 --point-stride 32 \
+  --output-prefix /home/demo/lyy/n01_runtime/pcd_goal/bag_ray_$(date +%Y%m%d_%H%M%S)
+```
+
+输出汇报 `cloud_frames_processed`、`rays_accepted`、自由/障碍/未知格、每帧
+历史 TF 失败率。**第一版未显式选择 PCD 静态障碍高度时，PCD 只提供 XY
+边界，不会擅自把整张 PCD 的高架点/屋顶也视作地面障碍。**
+可选参数 `--pcd-obstacle-z-min/--pcd-obstacle-z-max` 必须成对给定，并须
+根据地面高度与实际障碍高度解释选值。禁止自动猜测或按最大 free 区选高度。
+
+**特别警告：** 该输出的 `FREE` 只是“某雷达高度水平射线在这个网格通过”的
+视觉证据，不能保证地面可行走、矮障碍不存在、机器人全高净空、碰撞/腿轮安全。
+还需要按雷达仰俯角与楼地面几何重建 3D 自由体素、与静态 PCD 面融合，
+继而建立多高度机器人通行检查；当前绝不能直接送入 SCAN 当成权威局部
+占据地图，也不能自动生成实机导航指令。当前该工具是代码提交阶段，尚未在用户
+Ubuntu 的真实 Bag 跑过，测试结果要由用户输出验证。
