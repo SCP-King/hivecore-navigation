@@ -73,12 +73,7 @@ class StaticPcdPreview(Node):
             "actuator_output": "DISABLED",
             "safety_authorization": "NEVER",
         }
-        report = os.environ.get("N01_PCD_PREVIEW_REPORT_PATH")
-        if report:
-            # Parent run directory is private to this demo; never overwrite.
-            with Path(report).open("x", encoding="utf-8") as file:
-                json.dump(self.status, file, indent=2, ensure_ascii=False)
-                file.write("\n")
+        self.report_path = os.environ.get("N01_PCD_PREVIEW_REPORT_PATH")
         self.sent = False
         self.create_timer(1.0, self.publish_once)
         self.get_logger().warning(
@@ -91,6 +86,11 @@ class StaticPcdPreview(Node):
             self.cloud_pub.publish(self.msg)
             self.status_pub.publish(
                 String(data=json.dumps(self.status, ensure_ascii=False)))
+            if self.report_path:
+                # Publish first, then record this attempt as observation.
+                with Path(self.report_path).open("x", encoding="utf-8") as file:
+                    json.dump(self.status, file, indent=2, ensure_ascii=False)
+                    file.write("\n")
             self.sent = True
 
 
