@@ -30,6 +30,12 @@ class G3OfflineOnlySafety(unittest.TestCase):
         self.assertNotIn("TransformBroadcaster",src)
         self.assertNotIn("ActionClient",src)
 
+    def test_g3_audit_uses_filesystem_path_not_ros_path(self):
+        src=(PKG/"g3_solver_node.py").read_text(encoding="utf-8")
+        self.assertIn("from pathlib import Path as FilePath", src)
+        self.assertIn("FilePath(report_path).with_name", src)
+        self.assertIn("from nav_msgs.msg import Path, Odometry", src)
+
     def test_optimizer_not_chassis_velocity_or_control_loop(self):
         src=(PKG/"g3_mpc_cbf_core.py").read_text(encoding="utf-8")
         self.assertIn('p[k+1] = p[k] + dt*v[k]',src)
