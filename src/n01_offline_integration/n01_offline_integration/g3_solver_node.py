@@ -7,7 +7,7 @@ ROS_DOMAIN_ID 88, localhost-only and explicit historical Bag mode required.
 import json
 import math
 import os
-from pathlib import Path
+from pathlib import Path as FilePath
 
 if (os.environ.get("ROS_DOMAIN_ID")!="88" or
         os.environ.get("ROS_LOCALHOST_ONLY")!="1" or
@@ -38,7 +38,7 @@ class OfflineG3Solver(Node):
         report_path=os.environ.get("N01_OFFLINE_REPORT_PATH")
         if report_path:
             # The runner owns this private, per-run directory. Never overwrite.
-            self.audit_file=Path(report_path).with_name("g3_frame_evidence.jsonl").open(
+            self.audit_file=FilePath(report_path).with_name("g3_frame_evidence.jsonl").open(
                 "x",encoding="utf-8")
         self.received_paths=0
         self.received_poses=0
