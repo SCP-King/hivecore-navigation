@@ -1,0 +1,17 @@
+=== Phase5 融合+A* 离线判定 ===
+verdict: FAIL  <-- 见 checks
+{
+  "fused_present": false,
+  "path_reported": false,
+  "path_collision_free_in_final_fused": false,
+  "plan_result_ok": false,
+  "frames_consistent_map": false,
+  "start_goal_snappable": false
+}
+fusion_stats: None
+plan/result : None
+path cells  : None on_free= None
+fused counts: None
+start_goal  : None
+frames: ['map'] / fused: None
+report -> /home/demo/lyy/hivecore-navigation/src/n01_map_fusion/output/verifier_report.json

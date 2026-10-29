@@ -1,0 +1,2 @@
+[INFO] [1793239365.596926101] [n01_static_map]: PCD 加载成功: /home/demo/lyy/slam_data/maps/cloud_map_20261027_225549.pcd  pts=100121 bounds x[-16.85,40.01] y[-13.18,33.05] z[-1.50,3.08]
+[INFO] [1793239365.610675458] [n01_static_map]: 体素化完成: 独立2D占位列=98966  @res=0.05  耗时0.0s 发布到 /grid_map/static_occupancy (frame=map, z窗口[-1.5,3.0])

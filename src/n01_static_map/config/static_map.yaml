@@ -1,0 +1,18 @@
+# n01_static_map 只读静态地图供给参数
+# 坐标语义:地图/障碍点云一律在甲方 SLAM map 帧(建图坐标系)。
+n01_static_map:
+  ros__parameters:
+    # 甲方 SLAM 保存的静态 PCD,绝对路径(外部只读;本节点绝不写入/覆盖)。
+    # 默认候选 = 2026-10-27 最新建图会话最终保存的 cloud map。
+    pcd_path: "/home/demo/lyy/slam_data/maps/cloud_map_20261027_225549.pcd"
+    # 体素边长(m);0.05 与 n01_scan scan_map.yaml resolution 一致。
+    resolution: 0.05
+    # 恒定发布速率(Hz):占位层,不给实时帧时序压力。
+    publish_rate: 2.0
+    # 输出 frame = 甲方 map frame(数据源铁律:只声明,不做 TF 假设)。
+    frame_id: "map"
+    # 参与静态占用点的 z 窗口(世界系,与 slide grid 语义对应)。
+    min_z: -1.5
+    max_z: 3.0
+    # 每体素列代表点 z 的随机取样种子(确定性可复现)。
+    seed: 0

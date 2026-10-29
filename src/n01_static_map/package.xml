@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema-instance"?>
+
+<package format="3">
+  <name>n01_static_map</name>
+  <version>0.1.0</version>
+  <description>只读静态地图供给节点(乙方新增):加载甲方 SLAM 保存的纯 xyz PCD 地图,发布为 map 帧
+    静态占用 PointCloud2(/grid_map/static_occupancy),供 N-01 全局规划与可视化层参考。
+    完全只读定稿源 PCD 文件(绝对路径参数),不修改甲方 SLAM 与原始数据。</description>
+  <maintainer email="n01@example.com">乙方 N-01</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

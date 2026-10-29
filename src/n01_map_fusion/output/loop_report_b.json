@@ -1,0 +1,2746 @@
+{
+  "wall_duration_s": 13.2,
+  "fused_grid_messages": 52,
+  "events": [
+    {
+      "t": 0.3,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196469.716334957 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 0.31,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 0.31,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 0.46,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196469.723635843 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 0.46,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 0.46,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 0.75,
+      "kind": "sim_status",
+      "data": "S0-init"
+    },
+    {
+      "t": 0.8,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196470.216361826 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 0.81,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 0.81,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 0.83,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 0.96,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196470.223648363 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 0.96,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 0.96,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 0.96,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 1.3,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196470.716360324 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 1.31,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 1.31,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 1.31,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 1.46,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196470.723636709 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 1.46,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 1.46,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 1.46,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 1.8,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196471.216347415 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 1.81,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 1.81,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 1.81,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 1.96,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196471.223616875 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 1.96,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 1.96,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 1.96,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 2.3,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196471.716358060 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 2.31,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 2.31,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 2.31,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 2.46,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196471.723656130 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 2.46,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 2.46,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 2.46,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 2.8,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196472.216358253 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 2.81,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 2.81,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 2.81,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 2.96,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196472.223632042 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 2.96,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 2.96,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 2.96,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 3.3,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196472.716380765 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 3.31,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 3.31,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 3.31,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 3.46,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196472.723618044 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 3.46,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 3.46,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 3.46,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 3.8,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196473.216357964 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 3.81,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 3.81,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 3.81,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 3.96,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196473.223617617 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 3.96,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 3.96,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 3.96,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 4.3,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196473.716375026 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 4.31,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 4.31,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 4.31,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 4.46,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196473.723638873 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 4.46,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 4.46,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 4.46,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 4.8,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196474.216354955 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 4.81,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 4.81,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 4.81,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 4.96,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196474.223633761 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 4.96,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 4.96,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 4.96,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 5.3,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196474.716398669 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 5.31,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 5.31,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 5.31,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 5.46,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196474.723656575 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 5.46,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 5.46,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 5.46,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 5.8,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196475.216388494 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 5.81,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 5.81,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 5.81,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 5.96,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196475.223659369 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 5.96,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 5.96,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 5.96,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 6.1,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 6.3,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196475.716366142 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 6.31,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 6.31,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 6.31,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 6.35,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 6.46,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196475.723572967 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 6.46,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 6.46,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 6.46,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 6.5,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 6.8,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196476.216363254 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 6.81,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 6.81,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 6.81,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 6.85,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 6.96,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196476.223818204 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 6.96,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 6.96,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 6.96,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 7.0,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 7.3,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196476.716372264 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 7.31,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 7.31,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 7.31,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 7.35,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 7.45,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196476.723640595 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 7.46,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 7.46,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 7.46,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 7.5,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 7.8,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196477.216359420 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 7.81,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 7.81,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 7.81,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 7.85,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 7.96,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196477.223645979 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 7.96,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 7.96,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 7.96,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 8.0,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 8.3,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196477.716330933 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 8.31,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 8.31,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 8.31,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 8.35,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 8.46,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196477.723628259 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 8.46,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 8.46,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 8.46,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 8.5,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 8.8,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196478.216366043 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 8.81,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 8.81,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 8.81,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 8.85,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 8.95,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196478.223632907 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 8.96,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 8.96,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 8.96,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 9.0,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 9.3,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196478.716365381 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 9.31,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 9.31,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 9.31,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 9.35,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 9.46,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196478.723639883 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 9.46,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 9.46,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 9.46,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 9.5,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 9.8,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196479.216375509 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 9.81,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 9.81,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 9.81,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 9.85,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 9.96,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196479.223643497 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 9.96,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 9.96,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 9.96,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 10.0,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 10.3,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196479.716360240 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 10.31,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 10.31,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 10.31,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 10.35,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 10.46,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196479.723613855 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 10.46,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 10.46,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 10.46,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 10.5,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 10.8,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196480.216357545 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 10.81,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 10.81,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 10.81,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 10.85,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 10.96,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196480.223635224 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 10.96,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 10.96,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 10.96,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 11.0,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 11.3,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196480.716363246 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 11.31,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 11.31,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 11.31,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 11.35,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 11.46,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196480.723634394 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 11.46,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 11.46,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 11.46,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 11.5,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 11.8,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196481.216367585 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 11.81,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 11.81,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 11.81,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 11.85,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 11.96,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196481.223637732 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 11.96,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 11.96,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 11.96,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 12.0,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 12.3,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196481.716354601 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 12.31,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 12.31,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 12.31,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 12.35,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 12.46,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196481.723581078 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 12.46,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 12.46,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 12.46,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 12.5,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 12.8,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196482.216364057 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 12.81,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 12.81,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 12.81,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 12.85,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 12.96,
+      "kind": "fusion_stats",
+      "data": "stamp=1793196482.223642746 static_occ=0 dynamic_occ=13 free_floor=807 unknown=216 ground=893 inflated=80 inflate_cells=4"
+    },
+    {
+      "t": 12.96,
+      "kind": "path",
+      "data": {
+        "n": 21,
+        "head": [
+          [
+            11.05,
+            7.95
+          ],
+          [
+            11.15,
+            7.95
+          ],
+          [
+            11.25,
+            7.85
+          ],
+          [
+            11.35,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            11.15,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 12.96,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=21 cost=23.73 expanded=135 partition=grid_refresh"
+    },
+    {
+      "t": 12.96,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 13.0,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    }
+  ]
+}

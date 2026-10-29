@@ -1,0 +1,6341 @@
+{
+  "wall_start_epoch": 1793239368.4949396,
+  "wall_duration_s": 29.0,
+  "fused_grid_messages": 112,
+  "events": [
+    {
+      "t": 0.23,
+      "kind": "sim_status",
+      "data": "S0-init"
+    },
+    {
+      "t": 0.26,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239368.611132829 static_occ=0 dynamic_occ=0 free_floor=893 unknown=223 ground=893 inflated=0 inflate_cells=4"
+    },
+    {
+      "t": 0.27,
+      "kind": "path",
+      "data": {
+        "n": 23,
+        "head": [
+          [
+            11.05,
+            8.55
+          ],
+          [
+            11.05,
+            8.45
+          ],
+          [
+            11.05,
+            8.35
+          ],
+          [
+            10.95,
+            8.35
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 0.27,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=23 cost=23.24 expanded=102 partition=grid_refresh"
+    },
+    {
+      "t": 0.29,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 0.76,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239369.111146653 static_occ=0 dynamic_occ=0 free_floor=893 unknown=223 ground=893 inflated=0 inflate_cells=4"
+    },
+    {
+      "t": 0.77,
+      "kind": "path",
+      "data": {
+        "n": 22,
+        "head": [
+          [
+            11.05,
+            8.45
+          ],
+          [
+            11.05,
+            8.35
+          ],
+          [
+            10.95,
+            8.35
+          ],
+          [
+            10.95,
+            8.25
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 0.77,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=22 cost=22.24 expanded=85 partition=grid_refresh"
+    },
+    {
+      "t": 0.77,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 1.26,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239369.611144100 static_occ=0 dynamic_occ=0 free_floor=893 unknown=223 ground=893 inflated=0 inflate_cells=4"
+    },
+    {
+      "t": 1.27,
+      "kind": "path",
+      "data": {
+        "n": 19,
+        "head": [
+          [
+            10.95,
+            8.25
+          ],
+          [
+            10.95,
+            8.15
+          ],
+          [
+            10.95,
+            8.05
+          ],
+          [
+            10.95,
+            7.95
+          ]
+        ],
+        "tail": [
+          [
+            11.05,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 1.27,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=19 cost=19.24 expanded=63 partition=grid_refresh"
+    },
+    {
+      "t": 1.27,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 1.76,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239370.111150426 static_occ=0 dynamic_occ=0 free_floor=893 unknown=223 ground=893 inflated=0 inflate_cells=4"
+    },
+    {
+      "t": 1.77,
+      "kind": "path",
+      "data": {
+        "n": 17,
+        "head": [
+          [
+            10.95,
+            8.05
+          ],
+          [
+            10.95,
+            7.95
+          ],
+          [
+            10.85,
+            7.85
+          ],
+          [
+            10.85,
+            7.75
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.55
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 1.77,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=17 cost=17.24 expanded=42 partition=grid_refresh"
+    },
+    {
+      "t": 1.77,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 2.24,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239370.733072776 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 2.24,
+      "kind": "path",
+      "data": {
+        "n": 20,
+        "head": [
+          [
+            10.85,
+            7.85
+          ],
+          [
+            10.85,
+            7.75
+          ],
+          [
+            10.75,
+            7.65
+          ],
+          [
+            10.65,
+            7.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 2.25,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=20 cost=22.73 expanded=113 partition=grid_refresh"
+    },
+    {
+      "t": 2.25,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 2.26,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239370.611157724 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 2.27,
+      "kind": "path",
+      "data": {
+        "n": 20,
+        "head": [
+          [
+            10.85,
+            7.85
+          ],
+          [
+            10.85,
+            7.75
+          ],
+          [
+            10.75,
+            7.65
+          ],
+          [
+            10.65,
+            7.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 2.27,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=20 cost=22.73 expanded=113 partition=grid_refresh"
+    },
+    {
+      "t": 2.27,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 2.74,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239371.232504749 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 2.74,
+      "kind": "path",
+      "data": {
+        "n": 18,
+        "head": [
+          [
+            10.75,
+            7.65
+          ],
+          [
+            10.65,
+            7.55
+          ],
+          [
+            10.55,
+            7.45
+          ],
+          [
+            10.45,
+            7.35
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 2.74,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=18 cost=20.31 expanded=73 partition=grid_refresh"
+    },
+    {
+      "t": 2.75,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 2.76,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239371.111158978 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 2.77,
+      "kind": "path",
+      "data": {
+        "n": 18,
+        "head": [
+          [
+            10.75,
+            7.65
+          ],
+          [
+            10.65,
+            7.55
+          ],
+          [
+            10.55,
+            7.45
+          ],
+          [
+            10.45,
+            7.35
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 2.77,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=18 cost=20.31 expanded=73 partition=grid_refresh"
+    },
+    {
+      "t": 2.77,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 3.24,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239371.732495271 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 3.24,
+      "kind": "path",
+      "data": {
+        "n": 17,
+        "head": [
+          [
+            10.65,
+            7.55
+          ],
+          [
+            10.55,
+            7.45
+          ],
+          [
+            10.45,
+            7.35
+          ],
+          [
+            10.35,
+            7.25
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 3.24,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=17 cost=18.90 expanded=68 partition=grid_refresh"
+    },
+    {
+      "t": 3.24,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 3.26,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239371.611153307 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 3.27,
+      "kind": "path",
+      "data": {
+        "n": 17,
+        "head": [
+          [
+            10.65,
+            7.55
+          ],
+          [
+            10.55,
+            7.45
+          ],
+          [
+            10.45,
+            7.35
+          ],
+          [
+            10.35,
+            7.25
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 3.27,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=17 cost=18.90 expanded=68 partition=grid_refresh"
+    },
+    {
+      "t": 3.27,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 3.74,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239372.232480080 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 3.74,
+      "kind": "path",
+      "data": {
+        "n": 15,
+        "head": [
+          [
+            10.45,
+            7.35
+          ],
+          [
+            10.35,
+            7.25
+          ],
+          [
+            10.25,
+            7.15
+          ],
+          [
+            10.25,
+            7.05
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 3.74,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=15 cost=16.07 expanded=48 partition=grid_refresh"
+    },
+    {
+      "t": 3.74,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 3.77,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239372.111161291 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 3.77,
+      "kind": "path",
+      "data": {
+        "n": 15,
+        "head": [
+          [
+            10.45,
+            7.35
+          ],
+          [
+            10.35,
+            7.25
+          ],
+          [
+            10.25,
+            7.15
+          ],
+          [
+            10.25,
+            7.05
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 3.77,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=15 cost=16.07 expanded=48 partition=grid_refresh"
+    },
+    {
+      "t": 3.77,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 4.24,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239372.732448842 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 4.24,
+      "kind": "path",
+      "data": {
+        "n": 14,
+        "head": [
+          [
+            10.35,
+            7.25
+          ],
+          [
+            10.25,
+            7.15
+          ],
+          [
+            10.25,
+            7.05
+          ],
+          [
+            10.25,
+            6.95
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 4.24,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=14 cost=14.66 expanded=42 partition=grid_refresh"
+    },
+    {
+      "t": 4.24,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 4.26,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239372.611107584 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 4.27,
+      "kind": "path",
+      "data": {
+        "n": 14,
+        "head": [
+          [
+            10.35,
+            7.25
+          ],
+          [
+            10.25,
+            7.15
+          ],
+          [
+            10.25,
+            7.05
+          ],
+          [
+            10.25,
+            6.95
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 4.27,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=14 cost=14.66 expanded=42 partition=grid_refresh"
+    },
+    {
+      "t": 4.27,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 4.74,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239373.232485763 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 4.74,
+      "kind": "path",
+      "data": {
+        "n": 12,
+        "head": [
+          [
+            10.25,
+            7.05
+          ],
+          [
+            10.25,
+            6.95
+          ],
+          [
+            10.35,
+            6.85
+          ],
+          [
+            10.45,
+            6.75
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 4.74,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=12 cost=12.24 expanded=29 partition=grid_refresh"
+    },
+    {
+      "t": 4.74,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 4.77,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239373.111149050 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 4.77,
+      "kind": "path",
+      "data": {
+        "n": 12,
+        "head": [
+          [
+            10.25,
+            7.05
+          ],
+          [
+            10.25,
+            6.95
+          ],
+          [
+            10.35,
+            6.85
+          ],
+          [
+            10.45,
+            6.75
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 4.77,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=12 cost=12.24 expanded=29 partition=grid_refresh"
+    },
+    {
+      "t": 4.77,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 5.24,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239373.732495759 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 5.24,
+      "kind": "path",
+      "data": {
+        "n": 10,
+        "head": [
+          [
+            10.35,
+            6.85
+          ],
+          [
+            10.45,
+            6.75
+          ],
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 5.24,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=10 cost=9.83 expanded=20 partition=grid_refresh"
+    },
+    {
+      "t": 5.24,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 5.26,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239373.611146361 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 5.27,
+      "kind": "path",
+      "data": {
+        "n": 10,
+        "head": [
+          [
+            10.35,
+            6.85
+          ],
+          [
+            10.45,
+            6.75
+          ],
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 5.27,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=10 cost=9.83 expanded=20 partition=grid_refresh"
+    },
+    {
+      "t": 5.27,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 5.74,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239374.232485006 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 5.74,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 5.74,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 5.74,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 5.76,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239374.111164273 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 5.77,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 5.77,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 5.77,
+      "kind": "sim_status",
+      "data": "S1-tracking"
+    },
+    {
+      "t": 6.08,
+      "kind": "sim_status",
+      "data": "S3-collision"
+    },
+    {
+      "t": 6.24,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239374.732475045 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 6.24,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 6.24,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 6.24,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 6.26,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239374.611150752 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 6.27,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 6.27,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 6.27,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 6.74,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239375.232484816 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 6.74,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 6.74,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 6.74,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 6.76,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239375.111174582 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 6.77,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 6.77,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 6.77,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 7.24,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239375.732486636 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 7.24,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 7.24,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 7.24,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 7.26,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239375.611162111 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 7.26,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 7.26,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 7.27,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 7.74,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239376.232520849 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 7.74,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 7.74,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 7.74,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 7.76,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239376.111157233 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 7.77,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 7.77,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 7.77,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 8.24,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239376.732464422 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 8.24,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 8.24,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 8.24,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 8.26,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239376.611162892 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 8.26,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 8.26,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 8.27,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 8.74,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239377.232512451 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 8.74,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 8.74,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 8.74,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 8.76,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239377.111170033 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 8.77,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 8.77,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 8.77,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 9.24,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239377.732489934 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 9.24,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 9.24,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 9.24,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 9.26,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239377.611149214 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 9.26,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 9.26,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 9.27,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 9.74,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239378.232488644 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 9.74,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 9.74,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 9.74,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 9.76,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239378.111167812 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 9.76,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 9.77,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 9.77,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 10.24,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239378.732502312 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 10.24,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 10.24,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 10.24,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 10.26,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239378.611167577 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 10.26,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 10.27,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 10.27,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 10.74,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239379.232472851 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 10.74,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 10.74,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 10.74,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 10.76,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239379.111153724 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 10.76,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 10.76,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 10.77,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 11.24,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239379.732497817 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 11.24,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 11.24,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 11.24,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 11.26,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239379.611146912 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 11.26,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 11.26,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 11.27,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 11.74,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239380.232498457 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 11.74,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 11.74,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 11.74,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 11.76,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239380.111138123 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 11.77,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 11.77,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 11.77,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 12.24,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239380.732489669 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 12.24,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 12.24,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 12.24,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 12.26,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239380.611147532 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 12.26,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 12.27,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 12.27,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 12.74,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239381.232441602 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 12.74,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 12.74,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 12.74,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 12.76,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239381.111147555 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 12.77,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 12.77,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 12.77,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 13.24,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239381.732479570 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 13.24,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 13.24,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 13.24,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 13.26,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239381.611150318 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 13.26,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 13.27,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 13.27,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 13.74,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239382.232459940 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 13.74,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 13.74,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 13.74,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 13.76,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239382.111149240 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 13.76,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 13.76,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 13.77,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 14.24,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239382.732509267 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 14.24,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 14.24,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 14.24,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 14.26,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239382.611152345 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 14.26,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 14.27,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 14.27,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 14.74,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239383.232476056 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 14.74,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 14.74,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 14.74,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 14.76,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239383.111149033 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 14.77,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 14.77,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 14.77,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 15.24,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239383.732496393 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 15.24,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 15.24,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 15.25,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 15.26,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239383.611144835 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 15.27,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 15.27,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 15.27,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 15.74,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239384.232495261 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 15.74,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 15.74,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 15.74,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 15.76,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239384.111140195 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 15.76,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 15.76,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 15.77,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 16.24,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239384.732488016 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 16.24,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 16.24,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 16.24,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 16.26,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239384.611166368 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 16.27,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 16.27,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 16.27,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 16.74,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239385.232484114 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 16.74,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 16.74,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 16.74,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 16.76,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239385.111130503 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 16.77,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 16.77,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 16.77,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 17.24,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239385.732491615 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 17.24,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 17.24,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 17.24,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 17.26,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239385.611166036 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 17.27,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 17.27,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 17.27,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 17.74,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239386.232451117 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 17.74,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 17.74,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 17.74,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 17.76,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239386.111154850 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 17.77,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 17.77,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 17.77,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 18.24,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239386.732468332 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 18.24,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 18.24,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 18.24,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 18.26,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239386.611174140 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 18.27,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 18.27,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 18.27,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 18.74,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239387.232496974 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 18.74,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 18.74,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 18.74,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 18.76,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239387.111153319 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 18.76,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 18.76,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 18.77,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 19.24,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239387.732534494 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 19.24,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 19.24,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 19.24,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 19.27,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 19.27,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 19.27,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 19.27,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239387.611162721 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 19.74,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239388.232459239 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 19.74,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 19.74,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 19.74,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 19.76,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239388.111143222 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 19.76,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 19.77,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 19.77,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 20.24,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239388.732521000 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 20.24,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 20.24,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 20.24,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 20.26,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239388.611124893 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 20.27,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 20.27,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 20.27,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 20.74,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239389.232490640 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 20.74,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 20.74,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 20.74,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 20.76,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239389.111161057 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 20.77,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 20.77,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 20.77,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 21.24,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239389.732449684 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 21.24,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 21.24,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 21.24,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 21.26,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239389.611157072 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 21.26,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 21.26,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 21.26,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 21.74,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239390.232516165 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 21.74,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 21.74,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 21.74,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 21.76,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239390.111124992 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 21.77,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 21.77,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 21.77,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 22.24,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239390.732483928 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 22.24,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 22.24,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 22.24,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 22.26,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239390.611106412 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 22.26,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 22.26,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 22.27,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 22.74,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239391.232472553 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 22.74,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 22.74,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 22.74,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 22.76,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239391.111114921 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 22.76,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 22.76,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 22.76,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 23.24,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239391.732487340 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 23.24,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 23.24,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 23.24,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 23.26,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239391.611182660 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 23.27,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 23.27,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 23.27,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 23.74,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239392.232491876 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 23.74,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 23.74,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 23.74,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 23.76,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239392.111155025 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 23.76,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 23.76,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 23.77,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 24.24,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239392.732488319 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 24.24,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 24.24,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 24.24,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 24.26,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239392.611172193 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 24.27,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 24.27,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 24.27,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 24.74,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239393.232478716 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 24.74,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 24.74,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 24.74,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 24.77,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 24.77,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 24.77,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 24.77,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239393.111152648 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 25.24,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239393.732485579 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 25.24,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 25.24,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 25.24,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 25.26,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239393.611158224 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 25.26,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 25.27,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 25.27,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 25.74,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239394.232491398 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 25.74,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 25.74,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 25.74,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 25.76,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239394.111134628 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 25.76,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 25.76,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 25.76,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 26.24,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239394.732476257 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 26.24,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 26.24,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 26.24,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 26.26,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239394.611145133 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 26.26,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 26.26,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 26.27,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 26.74,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239395.232489755 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 26.74,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 26.74,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 26.74,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 26.76,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239395.111148371 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 26.76,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 26.76,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 26.77,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 27.24,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239395.732476742 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 27.24,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 27.24,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 27.25,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 27.26,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239395.611153674 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 27.26,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 27.26,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 27.27,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 27.74,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239396.232478382 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 27.74,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 27.74,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 27.74,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 27.76,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239396.111148415 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 27.76,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 27.76,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 27.77,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 28.24,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239396.732476875 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 28.24,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 28.24,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 28.24,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 28.26,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239396.611150506 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 28.26,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 28.26,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 28.27,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 28.74,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239397.232500475 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 28.74,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 28.74,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 28.74,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    },
+    {
+      "t": 28.76,
+      "kind": "fusion_stats",
+      "data": "stamp=1793239397.111147569 static_occ=0 dynamic_occ=12 free_floor=813 unknown=219 ground=893 inflated=72 inflate_cells=4"
+    },
+    {
+      "t": 28.76,
+      "kind": "path",
+      "data": {
+        "n": 8,
+        "head": [
+          [
+            10.55,
+            6.75
+          ],
+          [
+            10.65,
+            6.75
+          ],
+          [
+            10.65,
+            6.65
+          ],
+          [
+            10.65,
+            6.55
+          ]
+        ],
+        "tail": [
+          [
+            10.95,
+            6.45
+          ],
+          [
+            11.05,
+            6.45
+          ]
+        ]
+      }
+    },
+    {
+      "t": 28.76,
+      "kind": "plan_result",
+      "data": "ok start_snap=0.00m goal_snap=0.00m n=8 cost=7.41 expanded=13 partition=grid_refresh"
+    },
+    {
+      "t": 28.77,
+      "kind": "sim_status",
+      "data": "S2-arrived"
+    }
+  ],
+  "poses": [
+    [
+      0.29,
+      11.050000003079575,
+      8.58,
+      -0.7071067267468513
+    ],
+    [
+      0.33,
+      11.050000006159149,
+      8.56,
+      -0.7071067267468506
+    ],
+    [
+      0.38,
+      11.050000007772258,
+      8.540000000000001,
+      -0.7071067526705217
+    ],
+    [
+      0.43,
+      11.050000009385368,
+      8.520000000000001,
+      -0.7071067526705211
+    ],
+    [
+      0.48,
+      11.050000010998478,
+      8.500000000000002,
+      -0.7071067526705204
+    ],
+    [
+      0.53,
+      11.050000012611587,
+      8.480000000000002,
+      -0.7071067526705194
+    ],
+    [
+      0.58,
+      11.050000014224697,
+      8.460000000000003,
+      -0.707106752670518
+    ],
+    [
+      0.63,
+      11.036546555944938,
+      8.44520120071375,
+      -0.9145143284793177
+    ],
+    [
+      0.68,
+      11.023093097665178,
+      8.430402401427498,
+      -0.9145143284793174
+    ],
+    [
+      0.73,
+      11.01558279159908,
+      8.411866077552643,
+      -0.8293115528270801
+    ],
+    [
+      0.78,
+      11.022466237898623,
+      8.3994928708338,
+      -0.5068764858841543
+    ],
+    [
+      0.83,
+      11.007972994640236,
+      8.389594305458726,
+      -0.9554531193021967
+    ],
+    [
+      0.88,
+      11.000302260175076,
+      8.37112379293836,
+      -0.8317261337898323
+    ],
+    [
+      0.93,
+      10.992631525709916,
+      8.352653280417993,
+      -0.8317261337898311
+    ],
+    [
+      0.98,
+      10.988514306490394,
+      8.333081655398633,
+      -0.7764859821580973
+    ],
+    [
+      1.03,
+      10.984397087270873,
+      8.313510030379273,
+      -0.7764859821580965
+    ],
+    [
+      1.08,
+      10.980279868051351,
+      8.293938405359913,
+      -0.7764859821580956
+    ],
+    [
+      1.13,
+      10.97616264883183,
+      8.274366780340554,
+      -0.7764859821580945
+    ],
+    [
+      1.18,
+      10.972045429612308,
+      8.254795155321194,
+      -0.776485982158093
+    ],
+    [
+      1.23,
+      10.969904872732833,
+      8.23491003484769,
+      -0.7439851624776292
+    ],
+    [
+      1.28,
+      10.965923902507603,
+      8.217928036073792,
+      -0.783656676971517
+    ],
+    [
+      1.33,
+      10.964035859125563,
+      8.198017353207865,
+      -0.7397304134284435
+    ],
+    [
+      1.38,
+      10.962147815743522,
+      8.178106670341938,
+      -0.7397304134284441
+    ],
+    [
+      1.43,
+      10.960259772361482,
+      8.158195987476011,
+      -0.7397304134284449
+    ],
+    [
+      1.48,
+      10.959275380899385,
+      8.138220227829645,
+      -0.7242995143947263
+    ],
+    [
+      1.53,
+      10.958290989437288,
+      8.11824446818328,
+      -0.7242995143947267
+    ],
+    [
+      1.58,
+      10.95730659797519,
+      8.098268708536914,
+      -0.7242995143947272
+    ],
+    [
+      1.63,
+      10.956322206513093,
+      8.078292948890548,
+      -0.7242995143947278
+    ],
+    [
+      1.68,
+      10.955337815050996,
+      8.058317189244182,
+      -0.7242995143947285
+    ],
+    [
+      1.73,
+      10.946312809093744,
+      8.040469240693394,
+      -0.8518363392878291
+    ],
+    [
+      1.78,
+      10.947050251596332,
+      8.022375400154308,
+      -0.69255947720727
+    ],
+    [
+      1.83,
+      10.937238185290164,
+      8.004947739530937,
+      -0.863308552983342
+    ],
+    [
+      1.88,
+      10.927426118983997,
+      7.9875200789075675,
+      -0.8633085529833422
+    ],
+    [
+      1.93,
+      10.917614052677829,
+      7.970092418284198,
+      -0.8633085529833416
+    ],
+    [
+      1.98,
+      10.90780198637166,
+      7.952664757660828,
+      -0.8633085529833411
+    ],
+    [
+      2.03,
+      10.902316534809936,
+      7.933431717829226,
+      -0.798208174001694
+    ],
+    [
+      2.08,
+      10.89683108324821,
+      7.914198677997624,
+      -0.7982081740016936
+    ],
+    [
+      2.13,
+      10.891345631686486,
+      7.894965638166022,
+      -0.7982081740016931
+    ],
+    [
+      2.18,
+      10.88586018012476,
+      7.87573259833442,
+      -0.7982081740016924
+    ],
+    [
+      2.23,
+      10.880374728563035,
+      7.856499558502819,
+      -0.7982081740016916
+    ],
+    [
+      2.28,
+      10.87488927700131,
+      7.837266518671217,
+      -0.7982081740016906
+    ],
+    [
+      2.33,
+      10.863792509123208,
+      7.820627355751782,
+      -0.8817137840323046
+    ],
+    [
+      2.38,
+      10.852695741245105,
+      7.803988192832347,
+      -0.8817137840323044
+    ],
+    [
+      2.43,
+      10.841598973367002,
+      7.787349029912912,
+      -0.881713784032304
+    ],
+    [
+      2.48,
+      10.8305022054889,
+      7.770709866993477,
+      -0.8817137840323037
+    ],
+    [
+      2.53,
+      10.819405437610797,
+      7.754070704074042,
+      -0.8817137840323032
+    ],
+    [
+      2.58,
+      10.808308669732694,
+      7.737431541154606,
+      -0.8817137840323024
+    ],
+    [
+      2.63,
+      10.79540347567799,
+      7.722152275255669,
+      -0.9069894439118887
+    ],
+    [
+      2.68,
+      10.782498281623285,
+      7.706873009356731,
+      -0.9069894439118878
+    ],
+    [
+      2.73,
+      10.769593087568582,
+      7.691593743457793,
+      -0.9069894439118875
+    ],
+    [
+      2.78,
+      10.756687893513877,
+      7.676314477558856,
+      -0.9069894439118885
+    ],
+    [
+      2.83,
+      10.743782699459175,
+      7.661035211659918,
+      -0.9069894439118874
+    ],
+    [
+      2.88,
+      10.73087750540447,
+      7.645755945760981,
+      -0.9069894439118888
+    ],
+    [
+      2.93,
+      10.717972311349767,
+      7.630476679862043,
+      -0.9069894439118873
+    ],
+    [
+      2.98,
+      10.704346447731096,
+      7.615836466726798,
+      -0.9168678151548173
+    ],
+    [
+      3.03,
+      10.690720584112425,
+      7.601196253591554,
+      -0.9168678151548172
+    ],
+    [
+      3.08,
+      10.677094720493754,
+      7.586556040456309,
+      -0.916867815154817
+    ],
+    [
+      3.13,
+      10.663468856875083,
+      7.571915827321065,
+      -0.9168678151548169
+    ],
+    [
+      3.18,
+      10.649842993256412,
+      7.55727561418582,
+      -0.9168678151548165
+    ],
+    [
+      3.23,
+      10.63621712963774,
+      7.542635401050576,
+      -0.9168678151548162
+    ],
+    [
+      3.28,
+      10.62259126601907,
+      7.527995187915331,
+      -0.9168678151548157
+    ],
+    [
+      3.33,
+      10.60866876980032,
+      7.513636772298039,
+      -0.9209030380386124
+    ],
+    [
+      3.38,
+      10.594746273581569,
+      7.499278356680747,
+      -0.9209030380386121
+    ],
+    [
+      3.43,
+      10.580823777362818,
+      7.484919941063454,
+      -0.9209030380386117
+    ],
+    [
+      3.48,
+      10.566901281144068,
+      7.470561525446162,
+      -0.9209030380386113
+    ],
+    [
+      3.53,
+      10.552978784925317,
+      7.45620310982887,
+      -0.9209030380386107
+    ],
+    [
+      3.58,
+      10.539056288706567,
+      7.441844694211578,
+      -0.92090303803861
+    ],
+    [
+      3.63,
+      10.525133792487818,
+      7.4274862785942855,
+      -0.9209030380386091
+    ],
+    [
+      3.68,
+      10.511086317391733,
+      7.4132501118551355,
+      -0.9225978958365985
+    ],
+    [
+      3.73,
+      10.497038842295648,
+      7.3990139451159855,
+      -0.9225978958365985
+    ],
+    [
+      3.78,
+      10.482991367199563,
+      7.384777778376836,
+      -0.9225978958365985
+    ],
+    [
+      3.83,
+      10.468943892103479,
+      7.370541611637686,
+      -0.9225978958365983
+    ],
+    [
+      3.88,
+      10.454896417007394,
+      7.356305444898536,
+      -0.9225978958365983
+    ],
+    [
+      3.93,
+      10.440848941911309,
+      7.342069278159386,
+      -0.9225978958365983
+    ],
+    [
+      3.98,
+      10.426801466815224,
+      7.327833111420236,
+      -0.9225978958365982
+    ],
+    [
+      4.03,
+      10.412700530239919,
+      7.31364989642154,
+      -0.9233219451429844
+    ],
+    [
+      4.08,
+      10.398599593664613,
+      7.299466681422845,
+      -0.9233219451429839
+    ],
+    [
+      4.13,
+      10.384498657089308,
+      7.28528346642415,
+      -0.9233219451429834
+    ],
+    [
+      4.18,
+      10.370397720514003,
+      7.2711002514254535,
+      -0.9233219451429828
+    ],
+    [
+      4.23,
+      10.356296783938697,
+      7.256917036426757,
+      -0.9233219451429828
+    ],
+    [
+      4.28,
+      10.342195847363392,
+      7.242733821428061,
+      -0.9233219451429828
+    ],
+    [
+      4.33,
+      10.328094910788087,
+      7.228550606429365,
+      -0.9233219451429828
+    ],
+    [
+      4.38,
+      10.320080341329021,
+      7.210226669178168,
+      -0.8368776711542909
+    ],
+    [
+      4.43,
+      10.312065771869955,
+      7.19190273192697,
+      -0.8368776711542898
+    ],
+    [
+      4.48,
+      10.30405120241089,
+      7.173578794675773,
+      -0.8368776711542883
+    ],
+    [
+      4.53,
+      10.296036632951825,
+      7.155254857424576,
+      -0.8368776711542866
+    ],
+    [
+      4.58,
+      10.291659576809627,
+      7.1357396997380995,
+      -0.7806576737309214
+    ],
+    [
+      4.63,
+      10.287282520667429,
+      7.116224542051623,
+      -0.7806576737309225
+    ],
+    [
+      4.68,
+      10.28290546452523,
+      7.0967093843651465,
+      -0.7806576737309239
+    ],
+    [
+      4.73,
+      10.27852840838303,
+      7.07719422667867,
+      -0.7806576737309256
+    ],
+    [
+      4.78,
+      10.274151352240832,
+      7.0576790689921935,
+      -0.7806576737309237
+    ],
+    [
+      4.83,
+      10.281012492431106,
+      7.038892777306781,
+      -0.5731243279107281
+    ],
+    [
+      4.88,
+      10.28787363262138,
+      7.020106485621369,
+      -0.5731243279107266
+    ],
+    [
+      4.93,
+      10.294734772811656,
+      7.001320193935957,
+      -0.573124327910725
+    ],
+    [
+      4.98,
+      10.30159591300193,
+      6.982533902250545,
+      -0.5731243279107271
+    ],
+    [
+      5.03,
+      10.308457053192207,
+      6.963747610565132,
+      -0.573124327910725
+    ],
+    [
+      5.08,
+      10.315318193382481,
+      6.94496131887972,
+      -0.5731243279107278
+    ],
+    [
+      5.13,
+      10.326685761665505,
+      6.928505973507144,
+      -0.4645544025454676
+    ],
+    [
+      5.18,
+      10.338053329948531,
+      6.912050628134567,
+      -0.4645544025454659
+    ],
+    [
+      5.23,
+      10.349420898231555,
+      6.895595282761991,
+      -0.46455440254546715
+    ],
+    [
+      5.28,
+      10.360788466514581,
+      6.879139937389414,
+      -0.4645544025454651
+    ],
+    [
+      5.33,
+      10.372156034797605,
+      6.862684592016838,
+      -0.46455440254546654
+    ],
+    [
+      5.38,
+      10.383523603080631,
+      6.846229246644262,
+      -0.46455440254546376
+    ],
+    [
+      5.43,
+      10.400838973410766,
+      6.8362203530825205,
+      -0.25906706032727295
+    ],
+    [
+      5.48,
+      10.418154343740902,
+      6.8262114595207795,
+      -0.2590670603272723
+    ],
+    [
+      5.53,
+      10.435469714071036,
+      6.816202565959038,
+      -0.25906706032727433
+    ],
+    [
+      5.58,
+      10.452785084401171,
+      6.806193672397297,
+      -0.25906706032727367
+    ],
+    [
+      5.63,
+      10.47201951221382,
+      6.800713089698348,
+      -0.13834487588556202
+    ],
+    [
+      5.68,
+      10.491253940026468,
+      6.795232506999399,
+      -0.13834487588556224
+    ],
+    [
+      5.73,
+      10.510488367839116,
+      6.78975192430045,
+      -0.13834487588556252
+    ],
+    [
+      5.78,
+      10.529722795651764,
+      6.784271341601501,
+      -0.13834487588556282
+    ],
+    [
+      5.83,
+      10.548957223464413,
+      6.778790758902552,
+      -0.13834487588556327
+    ],
+    [
+      5.88,
+      10.561302325284723,
+      6.7630554971936965,
+      -0.4374613748575349
+    ],
+    [
+      5.93,
+      10.573647427105033,
+      6.747320235484841,
+      -0.43746137485753445
+    ],
+    [
+      5.98,
+      10.585992528925344,
+      6.731584973775985,
+      -0.4374613748575338
+    ],
+    [
+      6.03,
+      10.592641419189146,
+      6.712722517460333,
+      -0.5777350114065453
+    ]
+  ],
+  "grid_before": {
+    "tag": "before",
+    "t": 0.26,
+    "sx": 31,
+    "sy": 36,
+    "ox": 9.5,
+    "oy": 5.4,
+    "res": 0.10000000149011612,
+    "occ": 0,
+    "unknown": 223,
+    "free": 893,
+    "grid_b64": "/////wD/AAAAAAAA/wAAAAAAAP//AP//AAAA/wAA/wAA/////////wAA//8AAAAAAAAAAAAAAAAAAAAA/wAAAAD/AAD///8AAP//AP8A//8A/wAAAAAAAAAAAP8A////////AP8AAAD/AAAAAAAAAAAAAAAAAAAAAAAAAP//////AAD/AAD//wAAAAAAAAD/AAAAAAAA//8AAP8AAAAAAAAA/wAAAAAAAP8AAAAAAAAAAAAAAAAAAP8AAAAA/wAA/wAA//8AAAAAAP8AAAAAAAAAAAD/AAAAAAAAAAAA/wAAAAAAAAAAAAAAAAAA/wAAAAAAAAAA/wD//wD/AAAAAAAAAAAAAP8AAAAAAAAAAAAAAAAA/wAAAP8AAAAAAAAAAAAAAAAAAAAA//8A/wAAAAD/AAAA////////AAAAAAAA/wAAAAAAAAAAAAAAAAAAAAD//wAAAP//AAD/AAAA/wAAAAAAAAAAAAAAAAAAAAAA/wD/AAAAAAAA/wAA//8A/wAAAAD/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD//wAAAP8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP8A/wAA/wAAAAAAAAAA/wAA/wD/AAD/AAAAAP8AAP8A/wAA/wAAAAAA/wAAAAAAAAAAAAAAAAAA/wAAAAAAAAAAAAAAAAAAAAAAAP8AAAAAAAAAAAD/AP8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA////AAAAAP8AAAAAAAAAAAAAAAAA/wAAAAAAAAAAAAAAAAAAAP8AAAAAAAAAAAAAAAAAAAAAAAAAAAAA/wD/AAAAAAAAAAAAAAAAAAAAAAAA/wD/AP8AAAAAAAD/AAAAAAD/AAAAAAAAAAAAAAAAAAAAAAAAAAAA/wAAAAAA//8AAAAAAAAAAAAAAP8AAAAAAAAAAAAA/wD/////AP//AAAAAAD//wAAAAAA/wAAAP8AAAAAAAAA//8AAP//AAAA/wAA/wAAAP8AAAAAAAAAAP8AAAD/AAAAAP//AAAAAAAAAP8AAP8AAAAAAAD/AAAAAP8AAP8AAP8AAAAAAAAAAAAAAAAAAAAAAAAAAAAA/wAAAAD///8AAAAA/wAA/wAA/wAAAAAAAP8AAAAA/wAAAAD/AAD/AAAAAAD/AAAA/wAAAAAAAAAA/wAAAAAAAAD/////AAAAAAD//wAA/wAAAAAAAAD/AAAAAP8AAP8A//8AAAAAAAD//wAAAAAAAAAAAP8AAAAAAAD/AAD/AP8AAAAAAAAA/wAAAP8AAAD/AP8AAP8AAAAAAAD/AAD/AAAAAAD/////AAAA/wAAAAAAAAAA/wAA/wAA/wD/AAD/AP8AAP8AAP8AAAAAAAAA/wAAAAAAAP8A//8AAAD/AAD/AAAAAAAA/wAAAAAA/wAAAAD/AAD/AP8AAAD/AAAAAAAA"
+  },
+  "grid_after": {
+    "tag": "after",
+    "t": 2.26,
+    "sx": 31,
+    "sy": 36,
+    "ox": 9.5,
+    "oy": 5.4,
+    "res": 0.10000000149011612,
+    "occ": 84,
+    "unknown": 219,
+    "free": 813,
+    "grid_b64": "/////wD/AAAAAAAA/wAAAAAAAP//AP//AAAA/wAA/wAA/////////wAA//8AAAAAAAAAAAAAAAAAAAAA/wAAAAD/AAD///8AAP//AP8A//8A/wAAAAAAAAAAAP8A////////AP8AAAD/AAAAAAAAAAAAAAAAAAAAAAAAAP//////AAD/AAD//wAAAAAAAAD/AAAAAAAA//8AAP8AAAAAAAAA/wAAAAAAAP8AAAAAAAAAAAAAAAAAAP8AAAAA/wAA/wAA//8AAAAAAP8AAAAAAAAAAAD/AAAAAAAAAAAA/wAAAAAAAAAAAAAAAAAA/wAAAAAAAAAA/wD//wD/AAAAAAAAAAAAAP8AAAAAAAAAAAAAAAAA/wAAAP8AAAAAAAAAAAAAAAAAAAAA//8A/wAAAAD/AAAA////////AAAAAAAA/wAAAAAAAAAAAAAAAAAAAAD//wAAAP//AAD/AAAA/wAAAABkAAAAAAAAAAAAAAAA/wD/AAAAAAAA/wAA//8A/wBkZGT/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABkZGRkZAAAAAAAAAAAAAAAAAD//wAAAP8AAAAAAABkZGRkZGRkAAAAAAAAAAAAAP8A/wAA/wAAAAAAAABkZGRkZGRkZGT/AAAAAP8AAP8A/wAA/wAAAAAA/wBkZGRkZGRkZGRkZAAA/wAAAAAAAAAAAAAAAAAAAABkZGRkZGRkZGRkZGT/AP8AAAAAAAAAAAAAAAAAAAAAAGRkZGRkZGRkZGRkAAAAAAAAAAAA////AAAAAP8AAAAAZGRkZGRkZGRk/wAAAAAAAAAAAAAAAAAAAP8AAAAAAABkZGRkZGRkAAAAAAAAAAAA/wD/AAAAAAAAAAAAAAAAAGRkZGRk/wD/AP8AAAAAAAD/AAAAAAD/AAAAAAAAAAAAZGRkAAAAAAAAAAAA/wAAAAAA//8AAAAAAAAAAAAAAP9kAAAAAAAAAAAA/wD/////AP//AAAAAAD//wAAAAAA/wAAAP8AAAAAAAAA//8AAP//AAAA/wAA/wAAAP8AAAAAAAAAAP8AAAD/AAAAAP//AAAAAAAAAP8AAP8AAAAAAAD/AAAAAP8AAP8AAP8AAAAAAAAAAAAAAAAAAAAAAAAAAAAA/wAAAAD///8AAAAA/wAA/wAA/wAAAAAAAP8AAAAA/wAAAAD/AAD/AAAAAAD/AAAA/wAAAAAAAAAA/wAAAAAAAAD/////AAAAAAD//wAA/wAAAAAAAAD/AAAAAP8AAP8A//8AAAAAAAD//wAAAAAAAAAAAP8AAAAAAAD/AAD/AP8AAAAAAAAA/wAAAP8AAAD/AP8AAP8AAAAAAAD/AAD/AAAAAAD/////AAAA/wAAAAAAAAAA/wAA/wAA/wD/AAD/AP8AAP8AAP8AAAAAAAAA/wAAAAAAAP8A//8AAAD/AAD/AAAAAAAA/wAAAAAA/wAAAAD/AAD/AP8AAAD/AAAAAAAA"
+  }
+}

@@ -1,0 +1,50 @@
+{
+ "h1.2_m1": {
+  "free": 10882,
+  "occ": 4712,
+  "free_infl": 5804,
+  "comp_n": 236,
+  "traj_in": 29,
+  "reach": {
+   "g12": false,
+   "gx16": false,
+   "gmid": false
+  }
+ },
+ "h1.2_m2": {
+  "free": 11976,
+  "occ": 3618,
+  "free_infl": 6429,
+  "comp_n": 262,
+  "traj_in": 31,
+  "reach": {
+   "g12": false,
+   "gx16": false,
+   "gmid": false
+  }
+ },
+ "h1.5_m1": {
+  "free": 10768,
+  "occ": 4826,
+  "free_infl": 5761,
+  "comp_n": 236,
+  "traj_in": 29,
+  "reach": {
+   "g12": false,
+   "gx16": false,
+   "gmid": false
+  }
+ },
+ "h1.5_m2": {
+  "free": 11854,
+  "occ": 3740,
+  "free_infl": 6362,
+  "comp_n": 262,
+  "traj_in": 31,
+  "reach": {
+   "g12": false,
+   "gx16": false,
+   "gmid": false
+  }
+ }
+}

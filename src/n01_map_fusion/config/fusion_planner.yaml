@@ -1,0 +1,34 @@
+# n01_map_fusion + n01_path_planner 参数
+# 来源: scripts/select_roi.py 自动选择(全图 0.10m 分类 → 0.35m 膨胀 →
+#       最大 FREE 连通分量 → 分量内 1.5~2.8m 起终点对)。
+# 证据见 src/n01_map_fusion/output/roi.json。
+#
+# 本轮 Phase 5 最小闭环:不用全图,只用真实 PCD 的一小块有效区域。
+#   ROI(真实 map 坐标): x[9.5,12.6] y[5.4,9.0] (31x36 格 @0.10m, 3.1m x 3.6m)
+#   start=(11.05,7.95) goal=(11.05,6.45)  |SG|=1.50m  路径 n=16 cost=15.83
+#   实测路径到融合OCC最小距离=2.90m >= 名义安全距离=0.40m
+# 注意: 0.35m 安全半径与 robot_h=1.5 均为乙方假设(无甲方实测数据),
+#       仅离线实验用,不代表真机安全验收结论。
+
+# 注意: yaml 顶层 key 必须与节点实际名一致才会被 --params-file 装载。
+#   fusion_node 节点实际名 = n01_map_fusion;planner 节点实际名 = n01_path_planner。
+n01_map_fusion:
+  ros__parameters:
+    resolution: 0.10
+    origin_x: 9.5     # ROI 左下(map 系)
+    origin_y: 5.4
+    size_x: 3.1       # 3.1m x 3.6m 局部区域(不以 (0,0) 为中心)
+    size_y: 3.6
+    robot_h: 1.5        # 乙方无据,开放项:真机验收须按甲方实测车高覆盖
+    floor_max: 0.5      # 列最低点 <= 该值视为有地面证据
+    obs_bottom: 0.15    # 列最低点之上高度,视为障碍带下沿
+    safety_radius: 0.35 # 乙方无据假设;须按甲方车体外廓实测覆盖
+    min_band_points: 1  # 带内点噪声门(1=严格,2=滤孤立单点)
+
+n01_path_planner:
+  ros__parameters:
+    start_x: 11.05
+    start_y: 7.95
+    goal_x: 11.05
+    goal_y: 6.45
+    snap_radius: 1.5

@@ -1,0 +1,1 @@
+[INFO] [1793196447.771494567] [n01_map_fusion]: 融合节点就绪: grid=31x36 res=0.1 robot_h=1.5 floor_max=0.5 safety=0.35m min_band=1 订阅 /grid_map/static_occupancy /grid_map/occupancy

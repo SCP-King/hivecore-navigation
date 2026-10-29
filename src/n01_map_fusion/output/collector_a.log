@@ -1,0 +1,70 @@
+[INFO] [1793196449.867075066] [n01_loop_collector]: sim_status: S0-init
+[INFO] [1793196449.877448753] [n01_loop_collector]: plan_result: ok start_snap=0.00m goal_snap=0.00m n=17 cost=16.41 expanded=29 partition=grid_refresh
+[INFO] [1793196450.215303615] [n01_loop_collector]: sim_status: S1-tracking
+[INFO] [1793196450.375025726] [n01_loop_collector]: plan_result: ok start_snap=0.00m goal_snap=0.00m n=17 cost=16.41 expanded=29 partition=grid_refresh
+[INFO] [1793196450.377029633] [n01_loop_collector]: sim_status: S1-tracking
+[INFO] [1793196450.877041629] [n01_loop_collector]: plan_result: ok start_snap=0.00m goal_snap=0.00m n=17 cost=16.41 expanded=29 partition=grid_refresh
+[INFO] [1793196450.877781377] [n01_loop_collector]: sim_status: S1-tracking
+[INFO] [1793196451.375433068] [n01_loop_collector]: plan_result: ok start_snap=0.00m goal_snap=0.00m n=17 cost=16.41 expanded=29 partition=grid_refresh
+[INFO] [1793196451.377169629] [n01_loop_collector]: sim_status: S1-tracking
+[INFO] [1793196451.876640672] [n01_loop_collector]: plan_result: ok start_snap=0.00m goal_snap=0.00m n=17 cost=16.41 expanded=29 partition=grid_refresh
+[INFO] [1793196451.877413608] [n01_loop_collector]: sim_status: S1-tracking
+[INFO] [1793196452.378173774] [n01_loop_collector]: plan_result: ok start_snap=0.00m goal_snap=0.00m n=17 cost=16.41 expanded=29 partition=grid_refresh
+[INFO] [1793196452.378981965] [n01_loop_collector]: sim_status: S1-tracking
+[INFO] [1793196452.876840685] [n01_loop_collector]: plan_result: ok start_snap=0.00m goal_snap=0.00m n=17 cost=16.41 expanded=29 partition=grid_refresh
+[INFO] [1793196452.877546657] [n01_loop_collector]: sim_status: S1-tracking
+[INFO] [1793196453.376720479] [n01_loop_collector]: plan_result: ok start_snap=0.00m goal_snap=0.00m n=17 cost=16.41 expanded=29 partition=grid_refresh
+[INFO] [1793196453.377391961] [n01_loop_collector]: sim_status: S1-tracking
+[INFO] [1793196453.548385446] [n01_loop_collector]: sim_status: S2-arrived
+[INFO] [1793196453.876108318] [n01_loop_collector]: plan_result: ok start_snap=0.00m goal_snap=0.00m n=17 cost=16.41 expanded=29 partition=grid_refresh
+[INFO] [1793196453.876797832] [n01_loop_collector]: sim_status: S1-tracking
+[INFO] [1793196453.898382933] [n01_loop_collector]: sim_status: S2-arrived
+[INFO] [1793196454.375656307] [n01_loop_collector]: plan_result: ok start_snap=0.00m goal_snap=0.00m n=17 cost=16.41 expanded=29 partition=grid_refresh
+[INFO] [1793196454.376374260] [n01_loop_collector]: sim_status: S1-tracking
+[INFO] [1793196454.398403328] [n01_loop_collector]: sim_status: S2-arrived
+[INFO] [1793196454.877041151] [n01_loop_collector]: plan_result: ok start_snap=0.00m goal_snap=0.00m n=17 cost=16.41 expanded=29 partition=grid_refresh
+[INFO] [1793196454.877783556] [n01_loop_collector]: sim_status: S1-tracking
+[INFO] [1793196454.898252146] [n01_loop_collector]: sim_status: S2-arrived
+[INFO] [1793196455.377998029] [n01_loop_collector]: plan_result: ok start_snap=0.00m goal_snap=0.00m n=17 cost=16.41 expanded=29 partition=grid_refresh
+[INFO] [1793196455.378688920] [n01_loop_collector]: sim_status: S1-tracking
+[INFO] [1793196455.398311233] [n01_loop_collector]: sim_status: S2-arrived
+[INFO] [1793196455.876035641] [n01_loop_collector]: plan_result: ok start_snap=0.00m goal_snap=0.00m n=17 cost=16.41 expanded=29 partition=grid_refresh
+[INFO] [1793196455.876725651] [n01_loop_collector]: sim_status: S1-tracking
+[INFO] [1793196455.898402383] [n01_loop_collector]: sim_status: S2-arrived
+[INFO] [1793196456.378533486] [n01_loop_collector]: plan_result: ok start_snap=0.00m goal_snap=0.00m n=17 cost=16.41 expanded=29 partition=grid_refresh
+[INFO] [1793196456.381880489] [n01_loop_collector]: sim_status: S1-tracking
+[INFO] [1793196456.398256777] [n01_loop_collector]: sim_status: S2-arrived
+[INFO] [1793196456.878896459] [n01_loop_collector]: plan_result: ok start_snap=0.00m goal_snap=0.00m n=17 cost=16.41 expanded=29 partition=grid_refresh
+[INFO] [1793196456.879566471] [n01_loop_collector]: sim_status: S1-tracking
+[INFO] [1793196456.898219051] [n01_loop_collector]: sim_status: S2-arrived
+[INFO] [1793196457.378446586] [n01_loop_collector]: plan_result: ok start_snap=0.00m goal_snap=0.00m n=17 cost=16.41 expanded=29 partition=grid_refresh
+[INFO] [1793196457.379224425] [n01_loop_collector]: sim_status: S1-tracking
+[INFO] [1793196457.398335050] [n01_loop_collector]: sim_status: S2-arrived
+[INFO] [1793196457.878770791] [n01_loop_collector]: plan_result: ok start_snap=0.00m goal_snap=0.00m n=17 cost=16.41 expanded=29 partition=grid_refresh
+[INFO] [1793196457.879283638] [n01_loop_collector]: sim_status: S1-tracking
+[INFO] [1793196457.898249865] [n01_loop_collector]: sim_status: S2-arrived
+[INFO] [1793196458.376454806] [n01_loop_collector]: plan_result: ok start_snap=0.00m goal_snap=0.00m n=17 cost=16.41 expanded=29 partition=grid_refresh
+[INFO] [1793196458.377155785] [n01_loop_collector]: sim_status: S1-tracking
+[INFO] [1793196458.398266156] [n01_loop_collector]: sim_status: S2-arrived
+[INFO] [1793196458.875168169] [n01_loop_collector]: plan_result: ok start_snap=0.00m goal_snap=0.00m n=17 cost=16.41 expanded=29 partition=grid_refresh
+[INFO] [1793196458.876922550] [n01_loop_collector]: sim_status: S1-tracking
+[INFO] [1793196458.898240735] [n01_loop_collector]: sim_status: S2-arrived
+[INFO] [1793196459.376211243] [n01_loop_collector]: plan_result: ok start_snap=0.00m goal_snap=0.00m n=17 cost=16.41 expanded=29 partition=grid_refresh
+[INFO] [1793196459.376901433] [n01_loop_collector]: sim_status: S1-tracking
+[INFO] [1793196459.398357603] [n01_loop_collector]: sim_status: S2-arrived
+[INFO] [1793196459.876716561] [n01_loop_collector]: plan_result: ok start_snap=0.00m goal_snap=0.00m n=17 cost=16.41 expanded=29 partition=grid_refresh
+[INFO] [1793196459.877384397] [n01_loop_collector]: sim_status: S1-tracking
+[INFO] [1793196459.898398863] [n01_loop_collector]: sim_status: S2-arrived
+[INFO] [1793196460.377195370] [n01_loop_collector]: plan_result: ok start_snap=0.00m goal_snap=0.00m n=17 cost=16.41 expanded=29 partition=grid_refresh
+[INFO] [1793196460.377950187] [n01_loop_collector]: sim_status: S1-tracking
+[INFO] [1793196460.398318715] [n01_loop_collector]: sim_status: S2-arrived
+[INFO] [1793196460.875683821] [n01_loop_collector]: plan_result: ok start_snap=0.00m goal_snap=0.00m n=17 cost=16.41 expanded=29 partition=grid_refresh
+[INFO] [1793196460.877387818] [n01_loop_collector]: sim_status: S1-tracking
+[INFO] [1793196460.898451453] [n01_loop_collector]: sim_status: S2-arrived
+[INFO] [1793196461.876205742] [n01_loop_collector]: plan_result: ok start_snap=0.00m goal_snap=0.00m n=17 cost=16.41 expanded=29 partition=grid_refresh
+[INFO] [1793196461.876925154] [n01_loop_collector]: sim_status: S1-tracking
+[INFO] [1793196461.898304256] [n01_loop_collector]: sim_status: S2-arrived
+[INFO] [1793196462.376446828] [n01_loop_collector]: plan_result: ok start_snap=0.00m goal_snap=0.00m n=17 cost=16.41 expanded=29 partition=grid_refresh
+[INFO] [1793196462.377190098] [n01_loop_collector]: sim_status: S1-tracking
+[INFO] [1793196462.398414870] [n01_loop_collector]: sim_status: S2-arrived
+[INFO] [1793196462.508034075] [n01_loop_collector]: collector report -> /home/demo/lyy/hivecore-navigation/src/n01_map_fusion/output/loop_report_a.json (walls=24 events=119)

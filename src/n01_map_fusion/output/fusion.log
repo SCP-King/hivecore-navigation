@@ -1,0 +1,17 @@
+[INFO] [1793196447.771494567] [n01_map_fusion]: 融合节点就绪: grid=31x36 res=0.1 robot_h=1.5 floor_max=0.5 safety=0.35m min_band=1 订阅 /grid_map/static_occupancy /grid_map/occupancy
+Traceback (most recent call last):
+  File "/home/demo/lyy/hivecore-navigation/install/n01_map_fusion/lib/n01_map_fusion/fusion_node", line 33, in <module>
+    sys.exit(load_entry_point('n01-map-fusion', 'console_scripts', 'fusion_node')())
+  File "/home/demo/lyy/hivecore-navigation/build/n01_map_fusion/n01_map_fusion/fusion_node.py", line 143, in main
+    rclpy.spin(node)
+  File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/__init__.py", line 229, in spin
+    executor.spin_once()
+  File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/executors.py", line 808, in spin_once
+    self._spin_once_impl(timeout_sec)
+  File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/executors.py", line 797, in _spin_once_impl
+    handler, entity, node = self.wait_for_ready_callbacks(timeout_sec=timeout_sec)
+  File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/executors.py", line 780, in wait_for_ready_callbacks
+    return next(self._cb_iter)
+  File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/executors.py", line 681, in _wait_for_ready_callbacks
+    raise ExternalShutdownException()
+rclpy.executors.ExternalShutdownException
