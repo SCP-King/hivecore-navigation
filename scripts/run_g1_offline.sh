@@ -13,54 +13,102 @@ mkdir -p "$OUT/logs" "$OUT/ros_home/log" "$OUT/tmp" || exit 2
 export ROS_DOMAIN_ID=88 ROS_LOCALHOST_ONLY=1
 export ROS_HOME="$OUT/ros_home" ROS_LOG_DIR="$OUT/ros_home/log" TMPDIR="$OUT/tmp"
 export PYTHONUNBUFFERED=1
+# Owned subprocesses inherit this unique token, including detached ROS children.
+export N01_G1_RUN_TOKEN="g1_scan_$STAMP"
+GUARD="$ROOT/scripts/g1_process_guard.py"
+GRAPH="$ROOT/scripts/g1_graph_probe.py"
+GRAPH_READY=0
 PIDS=()
 RESULT="INCOMPLETE"
 REASON="unexpected_exit"
 
 say() { printf '[G1] %s\n' "$*" | tee -a "$OUT/runner.log"; }
 snapshot() {
-  local name="$1" topic safe
+  local name="$1"
   mkdir -p "$OUT/logs/$name"
-  timeout 12s ros2 node list > "$OUT/logs/$name/nodes.txt" 2>&1 || true
-  timeout 12s ros2 topic list -t > "$OUT/logs/$name/topics.txt" 2>&1 || true
-  for topic in /planning/bspline /grid_map/occupancy_inflate /cmd_vel /nav/test/cmd_vel; do
-    safe="${topic//\//_}"
-    timeout 12s ros2 topic info "$topic" -v > "$OUT/logs/$name/$safe.txt" 2>&1 || true
-  done
+  if (( GRAPH_READY == 0 )); then return 2; fi
+  # Pure rclpy probe: no persistent ros2cli daemon.
+  timeout 12s python3 "$GRAPH" \
+    > "$OUT/logs/$name/graph.json" 2> "$OUT/logs/$name/graph_error.log"
 }
 stop_children() {
-  local pid
+  local pid phase attempt state clean=1
+  python3 "$GUARD" list > "$OUT/logs/processes_before_cleanup.json" 2>&1 || true
+  for phase in INT TERM KILL; do
+    # Only kill processes carrying THIS test's marker; never pkill by name.
+    python3 "$GUARD" signal --signal "$phase" \
+      > "$OUT/logs/cleanup_signal_${phase}.json" 2>&1 || true
+    for attempt in 1 2 3; do
+      sleep 1
+      if python3 "$GUARD" verify \
+        > "$OUT/logs/cleanup_check_${phase}_${attempt}.json" 2>&1; then
+        clean=0
+        break 2
+      fi
+    done
+  done
+  # Reap our direct child processes; do not hang on uninterruptible children.
   for pid in "${PIDS[@]}"; do
-    if kill -0 "$pid" 2>/dev/null; then
-      kill -INT -- "-$pid" 2>/dev/null || kill -INT "$pid" 2>/dev/null || true
+    if ! kill -0 "$pid" 2>/dev/null; then
+      wait "$pid" 2>/dev/null || true
+    else
+      state="$(ps -o stat= -p "$pid" 2>/dev/null || true)"
+      if [[ "$state" == Z* ]]; then wait "$pid" 2>/dev/null || true; fi
     fi
   done
-  sleep 2
-  for pid in "${PIDS[@]}"; do
-    if kill -0 "$pid" 2>/dev/null; then
-      kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
-    fi
-  done
-  sleep 1
-  for pid in "${PIDS[@]}"; do
-    if kill -0 "$pid" 2>/dev/null; then
-      kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
-    fi
-    wait "$pid" 2>/dev/null || true
-  done
+  if ! python3 "$GUARD" verify > "$OUT/logs/processes_after_cleanup.json" 2>&1; then
+    return 1
+  fi
+  return "$clean"
 }
 finish() {
-  local rc="$?" archived=0
-  trap - EXIT INT TERM
+  local rc="$?" archived=0 cleanup_ok=1 graph_ok=0 attempt
+  trap - EXIT ERR INT TERM HUP
   set +e
-  stop_children
+  if stop_children; then cleanup_ok=0; fi
+  if (( GRAPH_READY == 1 )); then
+    # DDS may need a few seconds to forget stopped participants.
+    for attempt in 1 2 3; do
+      if snapshot "post_cleanup_$attempt" && python3 - "$OUT/logs/post_cleanup_$attempt/graph.json" <<'PY'
+import json
+import sys
+with open(sys.argv[1], encoding="utf-8") as file:
+    g = json.load(file)
+nodes = g.get("nodes", [])
+print("remaining_ros_nodes:", nodes)
+sys.exit(0 if not nodes else 1)
+PY
+      then
+        graph_ok=1
+        break
+      fi
+      sleep 2
+    done
+  else
+    graph_ok=1
+    echo 'ROS graph not initialized; no test nodes started.' > "$OUT/logs/post_cleanup_skipped.txt"
+  fi
+  # Also check for children of the graph probe just launched.
+  if ! python3 "$GUARD" verify > "$OUT/logs/processes_final_verification.json" 2>&1; then
+    cleanup_ok=1
+  fi
+  if (( cleanup_ok != 0 || graph_ok != 1 )); then
+    RESULT="CLEANUP_FAILED"
+    REASON="owned_processes_or_ros_nodes_remaining"
+    rc=12
+  fi
   if [[ -f "$ROS_HOME/g1_smoke_report.json" ]]; then
     cp "$ROS_HOME/g1_smoke_report.json" "$OUT/g1_smoke_report.json"
   fi
-  printf 'result=%s\nreason=%s\nexit_code=%s\n' "$RESULT" "$REASON" "$rc" > "$OUT/summary.txt"
+  printf 'result=%s\nreason=%s\nexit_code=%s\nowned_process_cleanup=%s\npost_cleanup_ros_graph=%s\n' \
+    "$RESULT" "$REASON" "$rc" \
+    "$([[ $cleanup_ok == 0 ]] && echo CLEAN || echo RESIDUAL)" \
+    "$([[ $graph_ok == 1 ]] && echo CLEAN || echo RESIDUAL)" > "$OUT/summary.txt"
   tar -czf "$ARCHIVE" -C "$(dirname "$OUT")" "$(basename "$OUT")" || archived=1
   echo "=============================================="
   echo "G1 result: $RESULT | $REASON"
+  echo "Owned processes: $([[ $cleanup_ok == 0 ]] && echo CLEAN || echo RESIDUAL)"
+  echo "ROS graph after test: $([[ $graph_ok == 1 ]] && echo CLEAN || echo RESIDUAL)"
   echo "Logs directory: $OUT"
   if (( archived == 0 )); then
     echo "UPLOAD THIS LOG ARCHIVE: $ARCHIVE"
@@ -86,6 +134,7 @@ trap finish EXIT
 trap 'on_error "$?" "$LINENO" "$BASH_COMMAND"' ERR
 trap 'RESULT="INTERRUPTED"; REASON="keyboard_interrupt"; exit 130' INT
 trap 'RESULT="INTERRUPTED"; REASON="terminated"; exit 143' TERM
+trap 'RESULT="INTERRUPTED"; REASON="hangup"; exit 129' HUP
 
 say "START; output: $OUT"
 {
@@ -131,6 +180,11 @@ if [[ ! -f src/scan_planner/plan_manage/package.xml ]]; then
 fi
 
 say "1/5 Running unit tests"
+if ! python3 -m unittest discover -s scripts -p 'test_g1_process_guard.py' -v > "$OUT/logs/process_guard_unit_tests.log" 2>&1; then
+  RESULT="FAIL"; REASON="process_guard_unit_test_failed"
+  tail -n 40 "$OUT/logs/process_guard_unit_tests.log"
+  exit 3
+fi
 if ! python3 -m unittest discover -s src/n01_scan_dynacbf_bridge/test -p 'test_*.py' -v \
      > "$OUT/logs/unit_tests.log" 2>&1; then
   RESULT="FAIL"; REASON="unit_tests_failed"
@@ -159,17 +213,28 @@ else
   exit 4
 fi
 set -u
+GRAPH_READY=1
 
-say "3/5 Checking isolated ROS graph"
-if ! timeout 15s ros2 node list > "$OUT/logs/preflight_nodes.txt" 2>&1; then
-  RESULT="FAIL"; REASON="ros_graph_unavailable"; exit 5
+say "3/5 Checking isolated ROS graph (without persistent daemon)"
+if ! snapshot preflight; then
+  RESULT="FAIL"; REASON="ros_graph_preflight_failed"; exit 5
 fi
-if grep -q '[^[:space:]]' "$OUT/logs/preflight_nodes.txt"; then
-  RESULT="ABORT"; REASON="existing_nodes_in_domain_88"
-  cat "$OUT/logs/preflight_nodes.txt"
+if ! python3 - "$OUT/logs/preflight/graph.json" > "$OUT/logs/preflight_check.txt" 2>&1 <<'PY'
+import json
+import sys
+with open(sys.argv[1], encoding="utf-8") as file:
+    graph = json.load(file)
+nodes = graph.get("nodes", [])
+cmd_publishers = graph.get("publishers", {}).get("/cmd_vel", [])
+print("visible_nodes:", nodes)
+print("real_cmd_vel_publishers:", cmd_publishers)
+sys.exit(0 if not nodes and not cmd_publishers else 1)
+PY
+then
+  RESULT="ABORT"; REASON="existing_ros_nodes_or_cmd_vel_publishers"
+  cat "$OUT/logs/preflight_check.txt"
   exit 5
 fi
-snapshot preflight
 
 say "4/5 Starting planner, monitor and offline feed"
 setsid ros2 launch scan_planner n01_isolated.launch.py > "$OUT/logs/scan_planner.log" 2>&1 &
@@ -189,8 +254,19 @@ sleep 2
 if ! kill -0 "$B" 2>/dev/null; then RESULT="FAIL"; REASON="feed_start_failed"; exit 6; fi
 
 sleep 8
-snapshot running_10s
-if grep -Eq 'Publisher count:[[:space:]]*[1-9][0-9]*' "$OUT/logs/running_10s/_cmd_vel.txt"; then
+if ! snapshot running_10s; then
+  RESULT="FAIL"; REASON="running_ros_graph_probe_failed"; exit 7
+fi
+if ! python3 - "$OUT/logs/running_10s/graph.json" > "$OUT/logs/running_graph_check.txt" 2>&1 <<'PY'
+import json
+import sys
+with open(sys.argv[1], encoding="utf-8") as file:
+    graph = json.load(file)
+pubs = graph.get("publishers", {}).get("/cmd_vel", [])
+print("real_cmd_vel_publishers:", pubs)
+sys.exit(0 if not pubs else 1)
+PY
+then
   RESULT="ABORT"; REASON="real_cmd_vel_publisher_detected"
   exit 7
 fi
