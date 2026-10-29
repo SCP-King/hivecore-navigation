@@ -71,3 +71,28 @@ cd /home/demo/lyy/hivecore-navigation && git -c http.version=HTTP/1.1 pull --ff-
 **修复：** 将速度历史重置放入“目标未关联成功”条件内部；不降低运动速度、方向一致性、轨迹有效性等判据。额外新增 `test_matched_history_persists_then_clears_after_miss` 精确验证“连续匹配历史保留、丢失匹配时清空”，并继续执行原先两项失败用例。
 
 **待验证：** 修复提交未在用户 Ubuntu 上重新执行，此处不得标记 G2.2 通过。后续沿用 `bash scripts/run_n01_bag_functional.sh` 做一次统一真实数据验收；只有结果日志明确通过，才能宣布该阶段功能测试完成。
+
+## 2026-10-29 21:05：G2.2 修复版通过真实 Bag 功能验收
+
+**原始用户日志：** `n01_bag_functional_20261029_210503_995837.tar.gz`；测试代码版本 `ef851fe`。本节为**用户 ROS 2 Humble 开环功能实测**，不是现场安全认证。
+
+| 观测项 | 结果 |
+| --- | --- |
+| 一键摘要 | `BAG_FUNCTIONAL_PATH_SMOKE_PASS`、退出码 0、报告 `issues=[]` |
+| 单元测试 | 集成包 44/44 PASS；桥接 9/9 PASS；清理守护 1/1 PASS |
+| ROS 2 build | 8 packages finished |
+| Bag 点云 | 180 条读取、99 条成功转换到 `map`、81 条因无法在扫描时间获取历史 map TF 而拒绝，错误 frame/畸形云均为 0 |
+| 动态跟踪 | 100 条诊断、99 帧实际处理；`moving_hypothesis_frames=16`；最大候选 3 个/帧 |
+| 对照上版 G2.1 | 同一历史 Bag 99 帧中有 87 帧产生运动候选；本次减为 16 帧。**仅表明新过滤逻辑改变了输出，不构成误报率/准确率定量证据** |
+| 聚类过滤 | 过滤器累计 `oversized_clusters_rejected_total=140`、`static_background_rejected_total=163`；最后一帧统计原始聚类 8、输出候选聚类 3、过大剔除 3、稳定背景剔除 2；背景重置 4 次 |
+| 路径风险预览 | 95 条诊断，`path_risk_evaluable=1`，`path_risk_conflict_previews_seen=0`；最后状态 `NO_FRESH_REFERENCE_PATH` |
+| SCAN | 11 条膨胀地图、最大点数 198187；2/2 有效 B 样条、1 条参考 Path、2 个离线目标、两次 `final_plan_success=1` |
+| 只读与收尾 | `/cmd_vel` 发布者 0、`actuator_output=DISABLED`、进程和 ROS 图 CLEAN |
+
+**已经通过：** 改正的跨帧运动历史逻辑没有再次触发单测失败；真实药厂历史点云已进入 G2.2 静态背景过滤、方向一致性运动候选链；诊断性路径风险接口与 SCAN 并行工作，无控制输出。
+
+**不能据此宣称：** 静态误报率达到某指标；真实移动人员/车辆已被正确识别；无候选时安全；完成 CBF/MPC 约束求解；动态碰撞验收、实机定位就绪或可下发运动控制。当前末态 `NO_FRESH_REFERENCE_PATH` 和全程只有一次可计算的路径-目标配对，说明下一步应优先开发**路径参考与障碍轨迹时间对齐、持续可计算的离线轨迹风险评估**，并对可能的背景误删补充运动真值对照，而不是立刻调性能。
+
+**仍未解决的数据风险：** 81/180 条原始点云缺扫描时刻 map TF；旧 Bag 的 `base_footprint→base_link` 高度同时含 0.30 / 0.90 m；`/localization_status` 缺失。历史离线回放的 PASS 不是 P0 严格定位验收。
+
+**操作：** 本轮只需将上述验收记录归档，无须重复运行已通过的 G2.2 测试。随后开发新功能时，再执行统一离线回归。

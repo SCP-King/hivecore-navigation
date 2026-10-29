@@ -80,3 +80,5 @@ Run `bash scripts/run_n01_bag_functional.sh` after pulling main. See [真实 Bag
 ## G2.2 离线静态背景过滤和轨迹风险预览（待验收）
 
 在已运行的真实 Bag→SCAN→动态候选链上增加多帧静态栅格过滤、过大聚类排除、运动方向一致性，以及**只读路径近距离风险预览** `/n01/offline/path_risk`。该模块不求解 MPC-CBF，不对真机发任何控制命令，不将“无风险候选”视为安全。沿用 `bash scripts/run_n01_bag_functional.sh` 验证，见 [G2.2 开发与验收范围](docs/n01_g22_functional.md)。
+
+**G2.2 修复版实测（2026-10-29 21:05，提交 `ef851fe`）：** 用户 ROS 2 Humble 一键真实 Bag 测试 PASS（44/44 新集成包单测，99 条 map 点云，运动候选帧 16/99，SCAN 有效 B 样条 2/2，路径风险诊断 95 条，其中 1 次可评估，零 /cmd_vel，清理 CLEAN）。对照旧版 87/99 只能说明过滤输出变化，不证明真实误报率；新阶段优先改善路径/目标时序和有标注动态障碍验证。参见 [G2.2 验收记录](docs/n01_g22_functional.md)。
