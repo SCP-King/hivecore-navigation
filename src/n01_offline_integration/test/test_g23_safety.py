@@ -24,8 +24,8 @@ class ReadOnlyTemporalRisk(unittest.TestCase):
 
     def test_exact_recorded_stamp_required(self):
         source=(PKG/"replay_path_sync.py").read_text(encoding="utf-8")
-        self.assertIn("stamp_ns not in self.poses",source)
-        self.assertIn("stamp_ns not in self.reports",source)
+        self.assertIn("stamp not in self.poses",source)
+        self.assertIn("stamp not in self.reports",source)
         self.assertIn('"path_header_is_historical_stamp":False',source)
         self.assertIn('"RETAINED_SCAN_PATH_GEOMETRY_UNVERIFIED"',source)
         self.assertNotIn("safety_authorization=True",source)
@@ -44,7 +44,7 @@ class ReadOnlyTemporalRisk(unittest.TestCase):
         code=(PKG/"observer_node.py").read_text(encoding="utf-8")
         self.assertIn("no_usable_path_projection_live_or_posthoc",code)
         runner=PKG.parents[2]/"scripts"/"run_n01_bag_functional.sh"
-        self.assertIn("No matched retained Path evidence",
+        self.assertIn("Path received but not usable for ANY projected recorded pose",
                       runner.read_text(encoding="utf-8"))
 
 
