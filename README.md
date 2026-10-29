@@ -68,3 +68,5 @@ If the planner prints `final_plan_success=1` but the observer reports `bspline_m
 **Next stage:** read-only whitelist of recorded Livox cloud + TF, reconstruct `lidar_link→map` using recorded map poses and selected Hive2 mounts, then run actual SCAN + reference-Path pipeline. Historical `0.30/0.90 m` conflicting TF edges are not broadcast. No actuator or raw bag playback, no false Localization Tracking claim.
 
 Run `bash scripts/run_n01_bag_functional.sh` after pulling main. See [真实 Bag 功能回放说明](docs/n01_real_bag_functional.md) for one-command test and precise limitations. Synthetic fixture smoke baseline remains unchanged.
+
+**2026-10-29 实际 Bag 开环功能冒烟：PASS**（提交 `91eb96c`，读取过滤点云 180 条、map 转换 99 条、有效 SCAN B 样条 2/2、Path 1 条，零 /cmd_vel，清理 CLEAN）。其余 **81 条因扫描时刻 map TF 不可用被拒绝**；历史 0.30/0.90 m 冲突仍记录为风险。本结果不代表完整碰撞验收或真机定位/动态 MPC-CBF 已实现。
