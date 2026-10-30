@@ -72,6 +72,8 @@ def generate_launch_description():
                      LaunchConfiguration("report_path"),value_type=str),
                  "duration_s":ParameterValue(
                      LaunchConfiguration("duration_s"),value_type=float),
+                 "require_static_overlay":ParameterValue(
+                     LaunchConfiguration("scan_static_pcd_enable"),value_type=bool),
                  "use_sim_time":False,
              }],output="screen"),
         Node(package="n01_offline_integration",
