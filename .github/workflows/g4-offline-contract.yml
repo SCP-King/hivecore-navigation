@@ -6,6 +6,7 @@ on:
       - 'scripts/run_n01_g4_full_chain.sh'
       - 'src/n01_offline_integration/**'
       - 'config/reference/hive2_wheel_only_tf_contract_20261030.json'
+      - 'config/reference/hive2_robot_motion_audit_20261030.json'
       - 'src/n01_bringup/config/n01_sensor.yaml'
       - 'src/n01_bringup/launch/sensor_only.launch.py'
       - '.github/workflows/g4-offline-contract.yml'
@@ -24,6 +25,8 @@ jobs:
           bash -n scripts/run_n01_bag_functional.sh
       - name: Hive2 29-frame four-wheel steer and fixed-pitch source contract
         run: python3 -m unittest discover -s src/n01_offline_integration/test -p 'test_wheel_only_tf_contract.py' -v
+      - name: Hive2 authoritative wheel motion YAML audit and G3 mismatch contracts
+        run: python3 -m unittest discover -s src/n01_offline_integration/test -p 'test_hive2_robot_motion_audit.py' -v
       - name: G4.8 real Bag start and fail-closed goal selection unit tests
         run: python3 -m unittest discover -s src/n01_offline_integration/test -p 'test_bag_anchored_goal.py' -v
       - name: G4.9 surface-height evidence only (never assume ground)
