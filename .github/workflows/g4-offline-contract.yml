@@ -34,6 +34,8 @@ jobs:
           python3 -m unittest discover -s src/n01_offline_integration/test -p 'test_g3_frame_evidence.py' -v
       - name: G3.4 acceleration-bounded candidate generation and fail-closed screening
         run: python3 -m unittest discover -s src/n01_offline_integration/test -p 'test_g34_bounded_generation.py' -v
+      - name: G3.5 CBF hypothesis-vs-intervention attribution contracts
+        run: python3 -m unittest discover -s src/n01_offline_integration/test -p 'test_g35_cbf_attribution.py' -v
       - name: G4.8 real Bag start and fail-closed goal selection unit tests
         run: python3 -m unittest discover -s src/n01_offline_integration/test -p 'test_bag_anchored_goal.py' -v
       - name: G4.9 surface-height evidence only (never assume ground)
