@@ -64,9 +64,12 @@ class WheelOnlyTfContractTest(unittest.TestCase):
         self.assertEqual(len(mode["verified_ankle_yaw_joint_names"]), 4)
         self.assertEqual(mode["nominal_wheel_radius_m"], .095)
         self.assertFalse(mode["controller_kinematics_verified"])
-        self.assertEqual(
-            self.doc["primary_source_audit"]["missing_critical_authoritative_file"],
-            "hive2_driver/config/robot_motion.yaml")
+        self.assertIsNone(
+            self.doc["primary_source_audit"]["missing_critical_authoritative_file"])
+        self.assertTrue(
+            self.doc["primary_source_audit"]["robot_motion_yaml_now_available"])
+        self.assertFalse(mode["controller_kinematics_verified"])
+        self.assertEqual(mode["configured_chassis_max_linear_acceleration_mps2"], 1.0)
 
     def test_scan_timestamp_map_and_no_odom_guess(self):
         cloud = self.doc["cloud_contract"]
