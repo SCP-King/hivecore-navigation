@@ -113,6 +113,14 @@ Run `bash scripts/run_n01_bag_functional.sh` after pulling main. See [真实 Bag
 新增 `bash scripts/run_n01_demo_replay.sh`，将现有 G1/G2/G3 离线结果显示为 RViz 历史点云、SCAN 参考、动态目标、名义/优化轨迹，并录制**RViz 单个窗口**的 MP4、GIF 与 PNG。保持零底盘指令；晚到 Path 的事后计算被显著标记 POST-HOC。详见 [演示使用说明](docs/n01_g123_demo_recording.md)。
 
 
+## G3.3 — 基于已审计 Hive2 四轮运动参数的候选轨迹筛查（2026-10-30）
+
+用户上传的两份 `robot_motion.yaml` 均已读取且 SHA-256 一致，确认底盘线速度配置上限 2m/s、最大线加速度 1.0m/s²（常规 0.6m/s²）、四轮驱动和四个 ankle_yaw 转向关节。现有 G3 求解器采用全向点质点、研究最大加速度 **3.2m/s²**，不能据此认为 Hive2 能执行。
+
+已新增 `g3_hive2_wheel_screen.py`，集成到 `g3_pipeline_core.py` 并在 `g3_frame_evidence.jsonl` 逐帧重算持久化，按 Hive2、SCAN 和 N-01 项目速度要求分别记录候选 XY 的离散平移速度/加速度是否超过配置值；报告聚合超限计数。即使未超限，**四轮转向角度/角速度、实际起始速度、轮速、地面、碰撞与制动均未验证**，`robot_model_execution_feasible=false`、`physical_safety_authorization=NEVER`；未接入任何底盘控制。GitHub 纯 Python CI 已覆盖新筛查及原 G3 单测，**Ubuntu ROS 真实历史 Bag 的该版本仍待单次复验**。
+
+使用说明、技术边界和后续优先顺序：[G3.3 Hive2 约束与 G4 集成路线](docs/n01_g33_hive2_wheel_motion_screen.md)。
+
 ## G3.1 逐帧证据审计（已开发，待 Ubuntu ROS 2 回放验收）
 
 真实 Bag 功能脚本与 RViz 演示脚本现在会从 G3 节点独立记录每次 **实际数值求解** 的 `g3_frame_evidence.jsonl`，包含原始历史扫描时间、POST-HOC/回放顺序参考标记、名义与候选 XY、最小 h 代理值、离散 CBF 检查/拒绝次数、研究性质的状态标识。心跳不会作为求解帧。退出时独立核验 journal 并生成 `g3_evidence_summary.json`，若文件缺失、不完整或少于 observer 观察的求解次数则本轮不标记 PASS。此证据仍不是动态障碍真值或 Hive2 碰撞安全验收。
