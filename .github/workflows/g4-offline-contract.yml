@@ -21,6 +21,8 @@ jobs:
           bash -n scripts/run_n01_bag_functional.sh
       - name: G4.8 real Bag start and fail-closed goal selection unit tests
         run: python3 -m unittest discover -s src/n01_offline_integration/test -p 'test_bag_anchored_goal.py' -v
+      - name: G4.9 surface-height evidence only (never assume ground)
+        run: python3 -m unittest discover -s src/n01_offline_integration/test -p 'test_pcd_route_height_profile.py' -v
       - name: G4.3 PCD/Bag conflict and A* contracts
         run: python3 -m unittest discover -s src/n01_offline_integration/test -p 'test_pcd_bag_evidence_audit.py' -v
       - name: G4.4-7 reference/chain contracts
