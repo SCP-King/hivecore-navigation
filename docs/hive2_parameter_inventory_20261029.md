@@ -120,3 +120,29 @@ map
 **下一次联调的详细只读 preflight 规格：** [`hive2_slam_p0_readiness_preflight.md`](hive2_slam_p0_readiness_preflight.md)。以下状态均为“预检条件已定义，尚未运行/验证”。
 
 **维护规则：** 这是一份独立于可执行配置的**参数台账**。后续每一个参数的确认需补充来源文件、测量条件、责任人和日期；从“用户确认配置选择 / 用户审计报告 / 未确认”变更为“运行态或真机验证完成”须有对应证据。G1 离线场景与实际 Hive2 参数分别保存；在 P0 运行态校验完成前，不改动 `planner.yaml`、SLAM RSP、运动栈 TF 或底盘实际控制值。
+
+
+## 8. 2026-10-30 补充：用户从实际 Bag 提取的传感器静态 TF（尚未独立复读原始 Bag）
+
+**数据来源与证据等级**：用户提供的 `/tf_static` 提取结果，属于 **USER_REPORTED_RECORDED_BAG_TF**；仓库自身未在这次更新中重新打开原始 rosbag2 或直接读取外部 URDF。这里的“0.90m 已确认”仅指该录制会话采用的 Hive2 名义安装链，**不表示**在线唯一 TF 权威、传感器到真实地面距离或全路线平面已验证。
+
+| 边 | 录制静态平移 (x,y,z) m | 备注 |
+| --- | --- | --- |
+| `base_footprint → base_link` | (0,0,+0.900) | 本次 Hive2 运动 TF 选定链；录制中也观察到竞争的 0.300m 值 |
+| `base_link → lidar_link` | (+0.295,0,0) | 雷达前向偏移 |
+| `base_link → lpms_imu_link` | (0,0,0) | 与 base_link 同中心 |
+| `lidar_link → imu_link` | (0,0,0) | 据提取有约 10.8° 俯仰旋转，零平移 |
+| `imu_link → livox_frame` | (0,0,0) | 零平移 |
+
+据此，`lidar_link`、`imu_link`、`livox_frame`、`lpms_imu_link` 的中心相对于 **base_footprint 名义坐标轴** Z 均为 +0.900m；传感器在地图 Z 方向的实际高度还要经过 `map→base_footprint` 旋转，不能在存在显著 roll/pitch 时无条件做标量加法。10.8° 是零平移的 IMU 姿态差，不会单凭旋转改变传感器坐标原点。
+
+```text
+p_map_sensor = p_map_footprint + R_map_footprint * p_footprint_sensor
+H_sensor_over_surface =
+    p_map_sensor.z - ground_surface_z_at_sensor_xy
+```
+
+本次首帧有效扫描用户报告 `map→base_footprint` 的 z = 0.003491m。因此，**仅在 footprint 坐标轴与地图竖直方向对齐**并且已知对应 XY 点的实际地面高程时，才可写成 `H_sensor = 0.903491 - ground_z_map`（单位 m）。`ground_z_map` 未确定；此前 PCD 约 -0.5m 的低层点簇**不得**自动认作地面，也不得给出确定的 1.4m 实际雷达高度。
+
+**场景层面**：路线不一定为水平地面，后续应确定局部地面高度函数 `ground_z_map(x,y)`、法线、支撑连续性与整机净空，不能用一个起点的 Z 常数代替药厂通道的三维通行检测。录制内同时存在 0.30/0.90m 边定义冲突，必须保留审计证据，不可因选定 0.90m 而将双 RSP 冲突标为已修复。离线历史重建可以使用明确选定的 0.90m 覆盖，但**不得宣称真实 SLAM 在线发布者唯一**。
+
