@@ -159,4 +159,4 @@ H_sensor_over_surface =
 
 代码配套变更：将 `src/n01_bringup/config/n01_sensor.yaml` 的地图定位目标帧从录制中不存在的 `odom` 改为 `map`；`sensor_only.launch.py` 仍默认 `lidar_link` 无地图定位显示，去除必须有 `/odom` 的错误提示。**这些不等于 SLAM/TF 实时验收通过，也未修改 ROS 控制节点或转动任何车轮。**
 
-此前所有未确认的地面 `z_{​ground}(x,y)`、整机外廓、轮式运动学、角速度/制动能力、固定腿关节角与锁定反馈仍保持未验证；0.30/0.90m RSP 双发布风险继续是 P0 问题。
+此前所有未确认的地面 `ground_z_map(x,y)`、整机外廓、轮式运动学、角速度/制动能力、固定腿关节角与锁定反馈仍保持未验证；0.30/0.90m RSP 双发布风险继续是 P0 问题。
