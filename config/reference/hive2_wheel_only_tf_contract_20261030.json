@@ -1,5 +1,5 @@
 {
-  "schema": "n01.hive2.wheel_only_tf_contract.v2",
+  "schema": "n01.hive2.wheel_only_tf_contract.v3",
   "snapshot_date": "2026-10-30",
   "artifact_type": "READ_ONLY_REFERENCE_NOT_EXECUTABLE_ROS_PARAMETERS",
   "evidence": {
@@ -7,13 +7,14 @@
       "USER_REPORTED_BAG_TF_AND_TF_STATIC_EXTRACTION",
       "USER_REPORTED_HIVE2_URDF_STRUCTURE",
       "USER_REPORTED_SLAM_PREPROCESSING_FRAME_SEMANTICS",
-      "SOURCE_VERIFIED_19_EXPORTED_XACRO_YAML_MSG_LAUNCH_FILES"
+      "SOURCE_VERIFIED_19_EXPORTED_XACRO_YAML_MSG_LAUNCH_FILES",
+      "USER_REPORTED_20261030_TF_TOPIC_TIMELINE_AND_3_FRAME_CLOUD_MAP_PROJECTION"
     ],
     "independently_reextracted_from_original_bag_in_this_change": false,
     "stated_map_base_footprint_dynamic_transforms": 11,
     "stated_imu_filter_relative_transforms": 296,
     "map_alignment_same_pcd_bag": "OPERATOR_CONFIRMED_SAME_MAPPING_SESSION",
-    "note": "Source-inspected nominal URDF topology; still not live /tf and joint-state proof.",
+    "note": "Motion stack URDF is authoritative for future hardware; original mapping Bag appears aligned to SLAM +0.30m and must be treated as a different historical TF convention.",
     "frame_counts": {
       "navigational_related": 7,
       "leg_kinematic_and_wheel": 20,
@@ -21,7 +22,42 @@
       "named_total": 29,
       "all_runtime_transforms_observed": false
     },
-    "correction_of_previous_25_frame_report": "four wheel links omitted and KDL foot parent mistaken; verified with quad_leg_kinematics.xacro, total 29"
+    "correction_of_previous_25_frame_report": "four wheel links omitted and KDL foot parent mistaken; verified with quad_leg_kinematics.xacro, total 29",
+    "historical_tf_origin_audit_20261030": {
+      "status": "OPERATOR_REPORTED_MEASURED_HISTORICAL_BAG_NOT_INDEPENDENTLY_REREAD_IN_THIS_CHANGE",
+      "tf_static_base_footprint_to_base_link": {
+        "z_m": 0.9,
+        "occurrences": 1,
+        "first_stamp_s": 1793112591.7,
+        "source": "/tf_static"
+      },
+      "tf_dynamic_base_footprint_to_base_link": {
+        "z_m": 0.3,
+        "occurrences": 866,
+        "first_stamp_s": 1793112661.1,
+        "last_stamp_s": 1793112938,
+        "source": "/tf"
+      },
+      "user_reported_lidar_map_z_under_dynamic_0p30_m": 0.3,
+      "user_reported_lowest_3_percent_map_surface_median_under_dynamic_0p30_m": -0.61,
+      "user_reported_lidar_map_z_under_static_0p90_m": 0.9,
+      "user_reported_lowest_3_percent_map_surface_median_under_static_0p90_m": -0.01,
+      "pcd_start_neighborhood_low_layer_z_map_m": [
+        -0.53,
+        -0.5
+      ],
+      "derived_candidate_local_map_floor_z_band_m": [
+        -0.6,
+        -0.5
+      ],
+      "source_cloud_frames_sampled_per_chain": 3,
+      "caveats": [
+        "/tf_static publishing once is normal static TF persistence, not proof it vanished",
+        "866 dynamic transforms prove continuous publication not which transform SLAM actually queried",
+        "lowest 3 percent cluster and neighborhood PCD height are plausible local floor candidates, not validated ground or global floor"
+      ],
+      "statement": "Original SLAM mapping PCD appears compatible with the dynamic 0.30m mount convention; the 0.90m motion URDF must not be blindly substituted without map-to-base pose alignment."
+    }
   },
   "current_development": {
     "drive_mode": "FOUR_INDEPENDENT_DRIVE_WHEELS_WITH_FOUR_ANKLE_YAW_STEERING_JOINTS",
@@ -738,5 +774,25 @@
     "robot_motion_yaml_verified_source": "config/reference/hive2_robot_motion_audit_20261030.json",
     "robot_motion_yaml_sha256": "3f19abe0a65e02b331a0d51c18ec0503278a4d9a6b942332b47c4f7d434584f0",
     "controller_allocation_code_still_missing": true
+  },
+  "tf_mapping_motion_reconciliation": {
+    "original_mapping_candidate_bf_to_bl_z_m": 0.3,
+    "future_motion_bf_to_bl_z_m": 0.9,
+    "difference_m": 0.6,
+    "original_pcd_map_frame_reference": "PRESERVE_UNMODIFIED",
+    "legacy_replay_selected_mount_z_m": 0.9,
+    "legacy_replay_pcd_alignment": "NOT_VERIFIED_AND_PROBABLY_VERTICALLY_OFFSET_FROM_ORIGINAL_PCD",
+    "exact_compensation_formula": "T_map_bf_new = T_map_bf_original * Trans(0,0,-0.60) with unchanged original rotation; purely coordinate equivalence, NOT operational TF command",
+    "source_code": "src/n01_offline_integration/n01_offline_integration/g412_historical_mount_alignment.py",
+    "prohibit_automatic_correction": true,
+    "map_floor_z_local_candidate_m": [
+      -0.6,
+      -0.5
+    ],
+    "map_floor_verified": false,
+    "tf_authority_for_physical_integration": "HIVE2_0P90",
+    "tf_authority_for_historical_mapping_reproduction": "SLAM_DYNAMIC_0P30_CANDIDATE",
+    "live_tracking_translation_calibrated": false,
+    "scanner_mode3_z_requires_consistent_body_pose": true
   }
 }
