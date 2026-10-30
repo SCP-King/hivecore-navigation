@@ -1,3 +1,5 @@
+**2026-10-30 TF 时间轴重核对**：原 Bag 的动态 base_footprint→base_link=+0.30m 有 866 条，静态 +0.90m 一条；原始 PCD 地面候选约 map Z=-0.60～-0.50m，与动态链点云低簇吻合。**旧地图研究使用 0.30m 历史链，未来实机使用甲方 0.90m 运动 URDF；两者之间必须先完成地图/定位对齐，不能只改一个高度数值。** 已新增 G4.12 只读 TF 分布、全三维坐标差异审计，并支持显式研究回放 0.30m，保留旧回放默认。见 [历史地图 TF 冲突修正](docs/n01_g412_historical_mapping_030_vs_motion_090.md)。此前 G3 约束通过仍属数学和软件流程证据，不代表旧 PCD 几何配准。
+
 # hivecore-navigation
 
 ROS 2 Humble source-only N-01 navigation research. Apache-2.0.
