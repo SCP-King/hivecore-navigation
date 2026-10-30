@@ -117,7 +117,7 @@ data["safe_for_real_robot"]=False
 data["physical_execution_forbidden"]=True
 data["safety_authorization"]="NEVER"
 data["actuator_output"]="DISABLED"
-path.write_text(json.dumps(data,indent=2,ensure_ascii=False)+"\\n",encoding="utf-8")
+path.write_text(json.dumps(data,indent=2,ensure_ascii=False)+"\n",encoding="utf-8")
 PY
 fi
 echo "Do not connect this offline test to an actual Hive2 motion controller."
