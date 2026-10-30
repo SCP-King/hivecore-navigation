@@ -148,11 +148,11 @@ H_sensor_over_surface =
 
 
 
-## 9. 2026-10-30：25 帧真实录制关系和固定腿姿态轮式开发工况
+## 9. 2026-10-30：补正为 29-frame Xacro 拓扑和固定 pitch 四轮转向开发工况
 
-用户已补充：录制 Bag 的 `/tf` 与 `/tf_static`、甲方 URDF、SLAM/点云预处理可交叉说明一个 **25-frame TF 森林**：直接 `map→base_footprint`；`base_footprint→base_link` 选用 Hive2 0.90m；`base_link→lidar_link` 为 (0.295,0,0)m；`lidar_link→imu_link→livox_frame` 与独立 `base_link→lpms_imu_link`；四条腿各 4 个关节/末端帧，另有独立 `fixed_frame→imu_filtered`。**录制会话没有 odom 边**；本次不做 `odom=map` 的隐性转换。约 11 条 map 动态边、296 条 IMU 过滤 TF、抽样 100/100 帧的 `geo_filtered` 均为 `lidar_link` 的数字来自用户报告，尚未在本次提交中重新分析 Bag。
+用户已补充：录制 Bag 的 `/tf` 与 `/tf_static`、甲方 URDF、SLAM/点云预处理可交叉说明最初报告的 **25-frame TF 森林**：直接 `map→base_footprint`；`base_footprint→base_link` 选用 Hive2 0.90m；`base_link→lidar_link` 为 (0.295,0,0)m；`lidar_link→imu_link→livox_frame` 与独立 `base_link→lpms_imu_link`；四条腿各 5 个关节/末端帧（含独立 wheel_link），另有独立 `fixed_frame→imu_filtered`。**录制会话没有 odom 边**；本次不做 `odom=map` 的隐性转换。约 11 条 map 动态边、296 条 IMU 过滤 TF、抽样 100/100 帧的 `geo_filtered` 均为 `lidar_link` 的数字来自用户报告，尚未在本次提交中重新分析 Bag。
 
-**开发工况已定：四条腿固定工作姿态，仅靠轮式移动；不设计抬腿、迈步、步态切换。** 这只是研发约束：不能误写为当前已实现/已验证的腿关节保持控制，也不自动证明轮式底盘是差速、阿克曼或全向。**固定腿仍必须计入机器人碰撞包络**，现有 G3 二维全向点质点仅是离线数值研究模型。
+**开发工况已定：四条腿 pitch1/pitch2 保持工作姿态，四轮独立驱动、四个 ankle_yaw 转向；不设计抬腿、迈步、步态切换。** 这只是研发约束：不能误写为当前已实现/已验证的腿关节保持控制，也不自动证明轮式底盘是差速、阿克曼或全向。**固定腿仍必须计入机器人碰撞包络**，现有 G3 二维全向点质点仅是离线数值研究模型。
 
 - [完整 25-frame TF 与固定腿轮式导航接口契约](hive2_wheel_only_tf_frame_contract_20261030.md)
 - [机器可读契约 JSON](../config/reference/hive2_wheel_only_tf_contract_20261030.json)
@@ -160,3 +160,10 @@ H_sensor_over_surface =
 代码配套变更：将 `src/n01_bringup/config/n01_sensor.yaml` 的地图定位目标帧从录制中不存在的 `odom` 改为 `map`；`sensor_only.launch.py` 仍默认 `lidar_link` 无地图定位显示，去除必须有 `/odom` 的错误提示。**这些不等于 SLAM/TF 实时验收通过，也未修改 ROS 控制节点或转动任何车轮。**
 
 此前所有未确认的地面 `ground_z_map(x,y)`、整机外廓、轮式运动学、角速度/制动能力、固定腿关节角与锁定反馈仍保持未验证；0.30/0.90m RSP 双发布风险继续是 P0 问题。
+
+
+### 9.1 直接读取甲方原始文件的核对修正（2026-10-30）
+
+已检查用户上传的 `hive2_slam_sources_20261030_155649.tar.gz` 中 19 个 Xacro/YAML/Launch/msg 文件。四腿各有 hip、thigh、shank、foot（KDL 虚拟足端）和 wheel_link 共 **5 个 link**；加上 7 个核心导航 frame、独立 IMU 滤波两帧，**29 个命名 frame**（不保证都被实时发布）。`foot_link` 的父帧实际是 `thigh_link`，并非 `shank_link`；四个 ankle_yaw 关节绕 Z 轴转向，四个 wheel 关节分别独立旋转。
+
+底盘 `hive2_chassis_params.yaml` 声明 `hive2_driver/config/robot_motion.yaml` 才是轮式控制律/运动学/OTG 参数唯一真源，当前压缩包没有此文件。 `hive2_leg_parameters.yaml` 的 Home 角 +45° / -75° 为**目标值，不代表当前实际固定姿态**；且 `sensor_balance.enabled=true`，须核对平衡模块在轮式模式下的控制权。SLAM `LocalizationStatus.msg` 的实际字段已在 [TF 契约](hive2_wheel_only_tf_frame_contract_20261030.md) 中列出。
