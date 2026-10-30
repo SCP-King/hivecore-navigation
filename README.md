@@ -1,3 +1,9 @@
+## G4.15：静态 PCD 现在真正进入 SCAN 原生碰撞栅格（2026-10-30）
+
+按“少测试、多开发核心功能”的需求，已在原生 SCAN C++ `GridMap` 增加**可选**的历史 PCD 静态占用层，接入 `/grid_map/static_occupancy`，与实时激光更新分离，滚动地图窗口后可恢复；原生碰撞查询与膨胀层同步考虑静态障碍。仅隔离历史 G4 研究模式自动启动 `n01_static_map`，SCAN 的 `/grid_map/static_overlay_ready` 为真后 G4 才发布 `/initial_path`，G4 观察器也追踪此时序。**这是一项实际规划器功能开发**，不是仅改参数或只发布未消费的话题。
+
+GitHub 的纯 Python / 源码 CI 回归通过，但真实 Ubuntu ROS 2 Humble **C++ 编译与新的完整 Bag+PCD 联调尚未进行**；现阶段不能声称实机静态障碍避障、3D 地面或车轮执行已经成功。后续优先开发 G4 利用完整 PCD 进行障碍绕行（此前 29 路点中 9 点触及 PCD 表面冲突），避免只要求重复 Bag。说明：[G4.15 原生 SCAN 静态 PCD 地图融合](docs/n01_g415_native_scan_static_pcd_integration.md)。
+
 ## 2026-10-30 19:41：历史 Bag 全导航话题链已通，实机在线 SLAM 尚未观察到 tracking
 
 **新验收阶段分离**：用户历史 Bag `n01_bag_functional_20261030_194103_1618696.tar.gz` 已通过 G4 +0.30m 原地图、研究 Z=-0.55m 与原生 SCAN mode3 `ground_height=-0.55/body_height=.85` 的端到端**话题顺序**检查。G4 发布 29 点、8.036m 研究路线后，产生 1 条新 SCAN B 样条、1 条 bridge Path，下游 G2/G3 消息有证据，108 次 G3 求解中 104 条被配置限幅接受，0 底盘运动发布者，CLEAN；**但全静态 PCD 尚未融入 SCAN，G3 几何上跟随新 G4 路线未验证，29 个路点中 9 个 PCD 表面冲突，不能视作可行驶路线**。
