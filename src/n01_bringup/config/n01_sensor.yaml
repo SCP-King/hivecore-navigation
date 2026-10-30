@@ -5,6 +5,10 @@
     raw_topic: /livox/lidar
     publish_raw_fallback: false
     min_rate_hz: 2.0
-    target_frame: odom
+    # This recorded Hive2 SLAM chain has map -> base_footprint directly;
+    # it contains no odom TF. This is the map-localized interface target,
+    # not sensor-only mode (which uses lidar_link as its independent frame).
+    # Parameter change alone is NOT a physical TF transform or localization validation.
+    target_frame: map
     tf_timeout_sec: 0.05
     use_sim_time: false
