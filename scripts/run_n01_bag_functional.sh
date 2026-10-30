@@ -348,10 +348,35 @@ then
   exit 5
 fi
 
-say "5/5 Launching real Bag -> reconstructed map cloud -> real SCAN"
-setsid ros2 launch n01_offline_integration bag_pipeline.launch.py \
-    bag_path:="$BAG" duration_s:=165.0 max_clouds:=2000 scan_rate_hz:=8.0 \
-    > "$OUT/logs/integration_launch.log" 2>&1 &
+# G4 opt-in; unchanged G3 default. Provenance is checked before launching ROS.
+if [[ -n "${N01_G4_REFERENCE_FILE:-}" ]]; then
+  say "G4: validating research-only reference provenance, no motion authority"
+  if ! PYTHONPATH="$ROOT/src/n01_offline_integration${PYTHONPATH:+:$PYTHONPATH}" \
+      python3 - "$N01_G4_REFERENCE_FILE" > "$OUT/logs/g4_preflight.txt" 2>&1 <<'PY'
+import json,sys
+from pathlib import Path
+from n01_offline_integration.g4_chain_evidence import ChainEvidence
+source=Path(sys.argv[1]).expanduser().resolve(strict=True)
+ChainEvidence(json.loads(source.read_text(encoding="utf-8")))
+print("G4 reference: RESEARCH_ONLY",source)
+PY
+  then
+    RESULT="FAIL"; REASON="g4_reference_preflight_failed"; exit 5
+  fi
+  export N01_G4_RESEARCH_ENABLE=1
+  export N01_G4_CHAIN_REPORT_PATH="$OUT/g4_chain_evidence.json"
+  say "5/5 Launching isolated Bag + SCAN mode3 + G4 reference + G4 chain observer"
+  setsid ros2 launch n01_offline_integration g4_offline_scan_reference.launch.py \
+      bag_path:="$BAG" reference_file:="$N01_G4_REFERENCE_FILE" \
+      report_path:="$N01_G4_CHAIN_REPORT_PATH" \
+      duration_s:=165.0 max_clouds:=2000 scan_rate_hz:=8.0 \
+      > "$OUT/logs/integration_launch.log" 2>&1 &
+else
+  say "5/5 Launching real Bag -> reconstructed map cloud -> real SCAN"
+  setsid ros2 launch n01_offline_integration bag_pipeline.launch.py \
+      bag_path:="$BAG" duration_s:=165.0 max_clouds:=2000 scan_rate_hz:=8.0 \
+      > "$OUT/logs/integration_launch.log" 2>&1 &
+fi
 A=$!
 PIDS+=("$A")
 sleep 8
@@ -360,7 +385,7 @@ if ! kill -0 "$A" 2>/dev/null; then
 fi
 
 critical_child_died() {
-  grep -Eq '^\[ERROR\] \[(n01_historical_bag|n01_offline_observer|scan_planner_node|scan_bspline_bridge|n01_dynamic_tracker|n01_dynamic_port|n01_path_risk|n01_g3_optimizer)-[0-9]+\]: process has died' \
+  grep -Eq '^\[ERROR\] \[(n01_historical_bag|n01_offline_observer|scan_planner_node|scan_bspline_bridge|n01_dynamic_tracker|n01_dynamic_port|n01_path_risk|n01_g3_optimizer|n01_g4_reference|n01_g4_chain_observer)-[0-9]+\]: process has died' \
     "$OUT/logs/integration_launch.log"
 }
 if critical_child_died; then
@@ -472,4 +497,39 @@ else
   REASON="check_bag_health_and_SCAN_trajectory_in_logs"
   cat "$OUT/logs/evaluation.txt"
   exit 10
+fi
+
+# G4 passes only if a matching reference arrived and a NEW SCAN spline plus
+# downstream G2/G3 topic messages followed. It is not motion certification.
+if [[ -n "${N01_G4_REFERENCE_FILE:-}" ]]; then
+  say "G4: collecting independent ordered SCAN/G2/G3 evidence"
+  for attempt in $(seq 1 20); do
+    [[ -s "$N01_G4_CHAIN_REPORT_PATH" ]] && break
+    sleep 1
+  done
+  if [[ ! -s "$N01_G4_CHAIN_REPORT_PATH" ]]; then
+    RESULT="G4_CHAIN_INCOMPLETE"; REASON="g4_chain_report_missing_or_observer_crashed"
+    exit 10
+  fi
+  if ! python3 - "$N01_G4_CHAIN_REPORT_PATH" > "$OUT/logs/g4_evaluation.txt" 2>&1 <<'PY'
+import json,sys
+d=json.load(open(sys.argv[1],encoding="utf-8"))
+print("G4 ordered evidence:",d.get("result"))
+print("Observed stages:",d.get("counts"))
+print("G4 unresolved issues:",d.get("issues"))
+assert d.get("schema")=="n01.offline.g4_chain_evidence.v1"
+assert d.get("actuator_output")=="DISABLED"
+assert d.get("safety_authorization")=="NEVER"
+assert d.get("result")=="G4_TO_G3_TOPIC_FLOW_OBSERVED_NOT_SAFETY_CERTIFIED"
+assert not d.get("issues")
+assert d.get("terrain_and_collision_verified") is False
+assert d.get("g3_output_proven_to_follow_the_new_g4_route") is False
+PY
+  then
+    RESULT="G4_CHAIN_INCOMPLETE"; REASON="g4_path_scan_g2_g3_chain_not_observed"
+    cat "$OUT/logs/g4_evaluation.txt"
+    exit 10
+  fi
+  REASON="g4_initial_path_native_scan_g2_g3_ordered_topics_seen_NOT_safety"
+  say "G4 function topic flow observed; NOT trajectory-following, clearance or real navigation"
 fi
