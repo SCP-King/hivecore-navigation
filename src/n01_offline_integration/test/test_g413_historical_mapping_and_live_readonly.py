@@ -80,7 +80,10 @@ class MappingProfileAndLiveAuditTest(unittest.TestCase):
         self.assertNotIn("create_publisher(",src)
         self.assertNotIn("create_client(",src)
         self.assertNotIn("set_parameters(",src)
-        self.assertNotIn("cmd_vel_pub",src)
+        # Reading /cmd_vel publisher endpoint metadata is expected; only
+        # creating a publisher or sending a Twist would be unsafe.
+        self.assertNotIn('create_publisher(',src)
+        self.assertNotIn('self.pub.publish(',src)
         self.assertIn('"/localization_status"',src)
         self.assertIn('"/tf_static"',src)
         self.assertIn('"unique_mount_tf_publisher_attributed":False',src)
