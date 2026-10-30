@@ -58,7 +58,8 @@ class WheelOnlyTfContractTest(unittest.TestCase):
         self.assertEqual(cloud["target_map_frame"], "map")
         self.assertTrue(cloud["no_odom_frame_in_recorded_bag_tf"])
         self.assertFalse(cloud["odom_fallback_permitted"])
-        self.assertIn("timestamp", cloud["required_transform_at_scan_timestamp"])
+        self.assertEqual(cloud["required_transform_at_scan_timestamp"],
+                         "map <- base_footprint <- base_link <- lidar_link")
         yaml = (REPO / "src/n01_bringup/config/n01_sensor.yaml").read_text()
         self.assertIn("    target_frame: map", yaml)
         self.assertNotIn("    target_frame: odom", yaml)
