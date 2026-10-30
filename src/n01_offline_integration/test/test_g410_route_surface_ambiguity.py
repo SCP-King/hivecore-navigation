@@ -88,7 +88,7 @@ class G410SurfaceAmbiguityTests(unittest.TestCase):
         ast.parse(source)
         self.assertIn("g410_route_surface_ambiguity.json",source)
         self.assertIn('manifest["g410_route_to_scan_allowed"] = False',source)
-        self.assertIn('manifest["route_to_scan_executed"]',source)
+        self.assertIn('"route_to_scan_executed": False',source)
         self.assertNotIn("cmd_vel",source)
 
 
