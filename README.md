@@ -55,14 +55,16 @@ If the planner prints `final_plan_success=1` but the observer reports `bspline_m
 
 **P0 接口与只读预检规格：** [Hive2 SLAM / SCAN P0 Readiness Preflight](docs/hive2_slam_p0_readiness_preflight.md)，涵盖显式禁用 SLAM mount RSP、`/localization_status` tracking/配准判据和 `lidar_link→map` 点云采集时刻转换。**尚未执行、不作为真机运行许可。**
 
-## Hive2 固定腿姿态轮式导航与 25-frame TF 契约（2026-10-30）
+## Hive2 固定 pitch 姿态、四轮独立驱动/转向与 29-frame 源码核对契约（2026-10-30）
 
-**用户确定的当前开发范围：四条腿保持固定工作姿态，仅以车轮移动。** 不开发足式步态、抬腿跨障或腿式路径控制；固定姿态的四条腿、轮胎、外壳**依然计入机器人碰撞外廓**，不能当作单个点质量。轮式转向/轮驱具体运动学、真实固定关节角与保持反馈仍未验证，因此 G3 数值模型不得当作 Hive2 实机运动控制模型。
+**当前开发范围：四条腿的 pitch1/pitch2 保持固定工作姿态，四轮独立驱动、踝部 ankle_yaw 转向（已从甲方 Xacro 核对）。** 不开发足式步态、抬腿跨障或腿式路径控制；固定姿态的四条腿、轮胎、外壳**依然计入机器人碰撞外廓**，不能当作单个点质量。轮速/转向控制分配由尚未收集的 hive2_driver/config/robot_motion.yaml 管理，真实固定关节角与保持反馈仍未验证，因此 G3 数值模型不得当作 Hive2 实机运动控制模型。
 
-- [25 个 frame、静态/动态 TF、Livox/LPMS IMU、wheel-only 开发边界（中文）](docs/hive2_wheel_only_tf_frame_contract_20261030.md)
+- [29 个 link、四个 wheel_link、转向 ankle_yaw、Livox/LPMS IMU 与开发边界（中文）](docs/hive2_wheel_only_tf_frame_contract_20261030.md)
 - [机器可读只读 JSON](config/reference/hive2_wheel_only_tf_contract_20261030.json)
 
 **用户所报告的录制 Bag** 使用 `map → base_footprint → base_link → lidar_link` 直接链（无 `odom` 帧），过滤云 `/livox/lidar/geo_filtered` 的帧为 `lidar_link`；在原始采集时刻变换到 `map`。本仓库 `n01_sensor.yaml` 的目标帧现改为 `map`，sensor-only 仍允许 `lidar_link`。历史 0.30/0.90m 竞争 TF、实际地面 Z、整机净空仍须验证。**这只是接口基线，不会启用实机控制或放宽安全门控。**
+
+**原始源码复核新增结论（2026-10-30）**：用户上传的 19 个运动/SLAM 配置文件已经核对。旧版本“25 个 frame”少了 4 个物理 wheel_link，真正 `*_foot_link` 从 `*_thigh_link` 直接固定连接，仅供 KDL IK。 `LocalizationStatus.msg` 的 outer 字段实际为 `control_signal_outer_role: localization`（小写），inner 为 `control_signal_session_mode: tracking`；隔离 bridge 配置已采用准确字段，仍不会在 TF 未核实时放行。SLAM 默认 `launch_robot_state_publisher=true` 与 Hive2 +0.90m 会冲突，须由集成启动层显式禁用；运动脚本的 `HIVE2_SLAM_MAPPING=1` **不是**这个 SLAM RSP 开关。详见 [接口复核文档](docs/hive2_wheel_only_tf_frame_contract_20261030.md)。
 
 ## N-01 离线整体框架（最新）
 
