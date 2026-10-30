@@ -28,11 +28,6 @@ def main(argv=None):
     p.add_argument("--output-dir",type=Path,required=True)
     p.add_argument("--ground-z-assumption",type=float,required=True,
                    help="NOT verified ground, e.g. -1.0 only if manually inspected")
-    p.add_argument("--reference-z-basis",choices=(
-        "MANUAL_INSPECTED_GROUND_Z_UNVERIFIED",
-        "EXPLICIT_FLAT_MAP_Z0_OFFLINE_SMOKE_NOT_GROUND"),
-        default="MANUAL_INSPECTED_GROUND_Z_UNVERIFIED",
-        help="Must not imply that reference Z is verified ground")
     p.add_argument("--research-route",action="store_true",
                    help="Use farthest cells in G4.3 connected ray-visible research patch")
     p.add_argument("--start",type=float,nargs=2,metavar=("X","Y"))
@@ -53,12 +48,7 @@ def main(argv=None):
         print("G4.3 route cannot be formed:",evidence.get("route_error","no reference"))
         print("Saved conflict map:",args.output_dir/"g43_evidence.svg")
         return 3
-    if (args.reference_z_basis=="EXPLICIT_FLAT_MAP_Z0_OFFLINE_SMOKE_NOT_GROUND" and
-        args.ground_z_assumption != 0.0):
-        p.error("flat map Z0 smoke requires exactly --ground-z-assumption 0")
     ref=prepare_reference(evidence,ground_z=args.ground_z_assumption)
-    ref["reference_z_basis"]=args.reference_z_basis
-    ref["reference_z_is_measured_floor"]=False
     save_reference(args.output_dir/"g45_scan_reference.json",ref)
     points,meta=sample_pcd(args.pcd)
     geometry=audit_pcd_path(points,ref)
@@ -77,8 +67,6 @@ def main(argv=None):
         "reference_waypoints":ref["waypoint_count"],
         "research_length_m":ref["path_geometry_length_m"],
         "floor_z_assumption_m":ref["ground_z_assumption_map_m"],
-        "reference_z_basis":ref["reference_z_basis"],
-        "reference_z_is_measured_floor":False,
         "pcd_surface_conflict_waypoints":geometry["pcd_surface_conflict_waypoints"],
         "unknown_ground_support_waypoints":geometry["unknown_ground_support_waypoints"],
         "floor_verified":False,
