@@ -7,6 +7,8 @@ import json
 import math
 from pathlib import Path
 
+from .g3_hive2_wheel_screen import screen_g3_result
+
 SCHEMA = "n01.offline.g3_frame_evidence.v1"
 
 
@@ -93,6 +95,9 @@ def frame_row(result):
         "actuator_output": "DISABLED",
         "safety_authorization": "NEVER",
         "collision_safety_verified": False,
+        # Deterministically recalculate, never trust a caller-supplied flag
+        # of wheel feasibility. The original G3 XY points are unexecutable.
+        "hive2_motion_limit_screen": screen_g3_result(result),
     }
 
 
@@ -112,7 +117,11 @@ def summarize(path):
     counters = {"attempts": 0, "post_hoc_attempts": 0,
                 "replay_order_attempts": 0, "feasible_nominal_only": 0,
                 "feasible_dynamic_candidate_unverified": 0,
-                "infeasible_attempts": 0, "cbf_constraints_checked": 0,
+                "infeasible_attempts": 0, "hive2_screened_attempts": 0,
+                "hive2_chassis_limit_exceeded_attempts": 0,
+                "hive2_scan_limit_exceeded_attempts": 0,
+                "hive2_translational_within_limits_unverified_attempts": 0,
+                "cbf_constraints_checked": 0,
                 "cbf_constraints_rejected": 0, "changed_trajectories": 0}
     with path.open(encoding="utf-8") as handle:
         for line in handle:
@@ -129,6 +138,23 @@ def summarize(path):
             if item.get("safety_authorization") != "NEVER" or (
                     item.get("actuator_output") != "DISABLED"):
                 raise ValueError("unsafe G3 journal record")
+            screen = item.get("hive2_motion_limit_screen")
+            if screen is not None:
+                if (not isinstance(screen, dict) or
+                    screen.get("physical_safety_authorization") != "NEVER" or
+                    screen.get("actuator_output") != "DISABLED" or
+                    screen.get("wheel_steering_feasibility_verified") is not False or
+                    screen.get("robot_model_execution_feasible") is not False):
+                    raise ValueError("unsafe Hive2 4WS screen provenance")
+                if screen.get("samples", 0) > 0:
+                    counters["hive2_screened_attempts"] += 1
+                    counters["hive2_chassis_limit_exceeded_attempts"] += bool(
+                        screen["chassis_config_limits_exceeded"])
+                    counters["hive2_scan_limit_exceeded_attempts"] += bool(
+                        screen["scan_planning_limits_exceeded"])
+                    counters["hive2_translational_within_limits_unverified_attempts"] += (
+                        not screen["chassis_config_limits_exceeded"] and
+                        not screen["scan_planning_limits_exceeded"])
             counters["attempts"] += 1
             counters["post_hoc_attempts" if item["post_hoc_reference_comparison"]
                      else "replay_order_attempts"] += 1
