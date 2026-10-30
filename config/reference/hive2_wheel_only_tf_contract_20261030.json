@@ -31,8 +31,8 @@
     "wheel_steering_and_drive_kinematic_model": "STEERABLE_FOUR_WHEEL_TOPOLOGY_CONFIRMED_BUT_CONTROLLER_ALLOCATION_UNVERIFIED",
     "leg_joint_hold_feedback_verified": false,
     "leg_joint_angles_locked_pose_rad": null,
-    "wheel_tread_m": 0.27,
-    "wheel_base_effective_m": 0.56,
+    "wheel_tread_m": null,
+    "wheel_base_effective_m": null,
     "minimum_turn_radius_m": null,
     "measured_braking_distance_m": null,
     "maximum_vehicle_collision_envelope_m": null,
@@ -69,7 +69,7 @@
       "rl_leg_pitch2",
       "rr_leg_pitch2"
     ],
-    "geometry_basis": "pivot nominal span, not effective loaded tire-contact wheelbase/tread",
+    "geometry_basis": "0.56m/0.27m from hip pivot centers in source Xacro, not measured tire-contact wheelbase or track width.",
     "nominal_wheel_radius_m": 0.095,
     "nominal_ankle_yaw_joint_limit_rad": [
       -1.5708,
@@ -81,7 +81,9 @@
     "home_values_are_recorded_targets_not_measured_contact_configuration": true,
     "motion_controller_source_needed": "hive2_driver/config/robot_motion.yaml",
     "controller_kinematics_verified": false,
-    "legs_actuation_during_navigation_note": "Pitch1/pitch2 commanded fixed, but ankle_yaw steering actuates; raw statement 'no leg actuation' would be misleading. Wheel-only research output remains command-free."
+    "legs_actuation_during_navigation_note": "Pitch1/pitch2 commanded fixed, but ankle_yaw steering actuates; raw statement 'no leg actuation' would be misleading. Wheel-only research output remains command-free.",
+    "nominal_hip_pivot_lateral_span_m": 0.27,
+    "nominal_hip_pivot_longitudinal_span_m": 0.56
   },
   "frames": [
     {
