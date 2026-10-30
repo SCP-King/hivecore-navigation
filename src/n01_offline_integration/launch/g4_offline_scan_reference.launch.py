@@ -31,6 +31,8 @@ def generate_launch_description():
         DeclareLaunchArgument("report_path",default_value=""),
         DeclareLaunchArgument("duration_s",default_value="165.0"),
         DeclareLaunchArgument("max_clouds",default_value="2000"),
+        DeclareLaunchArgument("historical_mount_profile",
+                              default_value="LEGACY_HIVE2_0P90"),
         DeclareLaunchArgument("scan_rate_hz",default_value="8.0"),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(original),
@@ -40,6 +42,7 @@ def generate_launch_description():
                 "max_clouds":LaunchConfiguration("max_clouds"),
                 "scan_rate_hz":LaunchConfiguration("scan_rate_hz"),
                 "scan_navi_mode":"3",
+                "historical_mount_profile":LaunchConfiguration("historical_mount_profile"),
             }.items()),
         Node(package="n01_offline_integration",
              executable="n01_g4_chain_observer",
