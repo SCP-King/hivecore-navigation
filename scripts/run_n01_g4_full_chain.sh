@@ -57,6 +57,9 @@ if [[ "${N01_G4_MAPPING_SMOKE:-0}" == "1" ]]; then
   export N01_G4_HISTORICAL_MOUNT_PROFILE="MAPPING_SLAM_DYNAMIC_0P30"
   export N01_G4_SCAN_GROUND_HEIGHT_M="-0.55"
   export N01_G4_SCAN_BODY_HEIGHT_M="0.85"
+  # Core navigation: load full historical PCD into native SCAN collision
+  # layer BEFORE publishing G4 path; only in isolated research mode.
+  export N01_G4_STATIC_PCD_ENABLE="true"
   echo "G4.13: historical original-map frame profile, Bag only; hypothesized Z=-0.55 / SCAN body offset=.85"
 fi
 # Default unknown ground still blocks any SCAN reference.
