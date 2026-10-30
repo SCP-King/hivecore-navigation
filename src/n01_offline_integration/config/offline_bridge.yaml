@@ -1,17 +1,17 @@
 n01_offline_sensor_bridge:
   ros__parameters:
-    # Strict mode by default; no assumed LocalizationStatus field layout.
+    # Verified against installed hivecore_slam3d/msg/LocalizationStatus.msg (2026-10-30).\n    # Still FAIL-CLOSED unless an operator independently verifies single motion RSP.\n    # This config is NOT a live robot authorization.
     fixture_mode: false
     input_cloud_topic: /livox/lidar/geo_filtered
     input_frame: lidar_link
     target_frame: map
     body_frame: base_link
     status_topic: /localization_status
-    status_type: ""
-    outer_path: ""
-    inner_path: ""
+    status_type: hivecore_slam3d/msg/LocalizationStatus
+    outer_path: control_signal_outer_role
+    inner_path: control_signal_session_mode
     tf_flag_path: registration_output_tf_published
-    outer_value: Localization
+    outer_value: localization
     inner_value: tracking
     status_timeout_s: 1.0
     tf_timeout_s: 0.05
