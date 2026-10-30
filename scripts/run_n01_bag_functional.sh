@@ -378,6 +378,9 @@ PY
   setsid ros2 launch n01_offline_integration g4_offline_scan_reference.launch.py \
       bag_path:="$BAG" reference_file:="$N01_G4_REFERENCE_FILE" \
       report_path:="$N01_G4_CHAIN_REPORT_PATH" \
+      historical_mount_profile:="${N01_G4_HISTORICAL_MOUNT_PROFILE:-LEGACY_HIVE2_0P90}" \
+      scan_ground_height_m:="${N01_G4_SCAN_GROUND_HEIGHT_M:-0.0}" \
+      scan_body_height_m:="${N01_G4_SCAN_BODY_HEIGHT_M:-0.4}" \
       duration_s:=165.0 max_clouds:=2000 scan_rate_hz:=8.0 \
       > "$OUT/logs/integration_launch.log" 2>&1 &
 else
