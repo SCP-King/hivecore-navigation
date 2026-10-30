@@ -204,8 +204,15 @@ def audit(ray_prefix, pcd_prefix, *, research_route=False,
                 b = farthest_cell(a, groups[0], m["width"], m["height"])
                 report["selection"] = "AUTO_RESEARCH_ENDPTS_NOT_USER_GOALS"
             else:
-                a = map_cell(m, start_xy)
-                b = map_cell(m, goal_xy)
+                # User coordinates can be outside the limited recorded map.
+                # Return a traceable research failure instead of an uncaught
+                # exception which would discard the generated conflict report.
+                try:
+                    a = map_cell(m, start_xy)
+                    b = map_cell(m, goal_xy)
+                except ValueError as exc:
+                    report["route_error"] = str(exc)
+                    return report, m, path, conflicts
                 report["selection"] = "USER_SELECTED_RESEARCH_ENDPTS"
             try:
                 path, distance = astar(m, a, b)
