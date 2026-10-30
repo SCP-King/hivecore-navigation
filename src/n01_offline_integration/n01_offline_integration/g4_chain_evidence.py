@@ -39,6 +39,7 @@ class ChainEvidence:
             "g3_candidate_paths_after_reference": 0,
         }
         self.statuses = []
+        self.last_start_pose_mismatch = None
         self.started = False
         self.cmd_vel_seen = False
         self.graph_query_failed = False
@@ -54,6 +55,15 @@ class ChainEvidence:
             self.statuses = self.statuses[-30:]
             if status == "UNVERIFIED_REFERENCE_SENT_TO_OFFLINE_SCAN":
                 self.counts["reference_publish_status"] += 1
+            elif status == "WAITING_MATCHING_BAG_START_POSE":
+                # Keep the actual recorded XY/Z differences from G4 publisher,
+                # not an inferred origin or invented first Bag coordinate.
+                fields = ("horizontal_error_m", "vertical_error_m",
+                          "horizontal_limit_m", "vertical_limit_m")
+                values = {k: data.get(k) for k in fields}
+                if all(type(v) in (int, float) and math.isfinite(v) and v >= 0
+                       for v in values.values()):
+                    self.last_start_pose_mismatch = values
 
     def initial_path(self, frame, xyz):
         if (frame != "map" or len(xyz) != len(self.points) or
@@ -100,6 +110,8 @@ class ChainEvidence:
             blockers.append("ROS_GRAPH_GUARD_QUERY_FAILED")
         if c["matching_initial_paths"] != 1:
             blockers.append("G4_REFERENCE_NOT_OBSERVED_EXACTLY_ONCE")
+            if "WAITING_MATCHING_BAG_START_POSE" in self.statuses:
+                blockers.append("G4_REFERENCE_WAITING_FOR_RECORDED_START_POSE")
         if c["reference_publish_status"] != 1:
             blockers.append("G4_PUBLISHER_STATUS_NOT_OBSERVED_EXACTLY_ONCE")
         if c["native_valid_bspline_after_reference"] == 0:
@@ -119,6 +131,7 @@ class ChainEvidence:
             "issues": blockers,
             "counts": dict(c),
             "reference_status_history": list(self.statuses),
+            "last_recorded_start_pose_mismatch_m": self.last_start_pose_mismatch,
             "strict_callback_observation_order": True,
             "static_full_pcd_integrated_into_scan_grid": False,
             "g3_output_proven_to_follow_the_new_g4_route": False,
