@@ -26,7 +26,7 @@
   "current_development": {
     "drive_mode": "FOUR_INDEPENDENT_DRIVE_WHEELS_WITH_FOUR_ANKLE_YAW_STEERING_JOINTS",
     "leg_posture": "FIXED_PITCH1_AND_PITCH2_FOR_WHEEL_DRIVING_ANKLE_YAW_AVAILABLE_FOR_STEERING",
-    "legs_actuation_during_navigation": false,
+    "legs_actuation_during_navigation": null,
     "wheel_driven_motion": true,
     "wheel_steering_and_drive_kinematic_model": "STEERABLE_FOUR_WHEEL_TOPOLOGY_CONFIRMED_BUT_CONTROLLER_ALLOCATION_UNVERIFIED",
     "leg_joint_hold_feedback_verified": false,
@@ -81,7 +81,7 @@
     "home_values_are_recorded_targets_not_measured_contact_configuration": true,
     "motion_controller_source_needed": "hive2_driver/config/robot_motion.yaml",
     "controller_kinematics_verified": false,
-    "legs_actuation_during_navigation_note": "No active pitch lift/gait; ankle yaw steering and wheel rotation remain actuated when driving in the future. Offline pipeline always publishes zero motion commands."
+    "legs_actuation_during_navigation_note": "Pitch1/pitch2 commanded fixed, but ankle_yaw steering actuates; raw statement 'no leg actuation' would be misleading. Wheel-only research output remains command-free."
   },
   "frames": [
     {
