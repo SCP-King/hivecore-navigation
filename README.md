@@ -121,6 +121,10 @@ Run `bash scripts/run_n01_bag_functional.sh` after pulling main. See [真实 Bag
 
 使用说明、技术边界和后续优先顺序：[G3.3 Hive2 约束与 G4 集成路线](docs/n01_g33_hive2_wheel_motion_screen.md)。
 
+## G3.4 — Hive2/SCAN 配置限幅内生成 G3 候选（2026-10-30）
+
+G3.3 发现旧的真实 Bag G3 候选经配置筛查可能显著超出底盘/SCAN 的加速度参数，因此 **G3.4 已修改候选生成器，而不只是后验告警**。`g3_mpc_cbf_core.solve_discrete_mpc_cbf` 新增保留速度、减速和各向半/全加速度增量的 `acceleration_increment` 控制格；真实历史 Bag 的 `G3HistoricalCoordinator` 现在显式使用 `max_speed=.75m/s`、`max_accel=.5m/s²`（SCAN 限值比 Hive2 底盘最大 1.0m/s² 更保守），并对输出 XY 进行独立 G3.3 限幅复检，任何超限候选在发布研究 Path 前被清空。旧 `legacy_fixed_speed` 保留为独立对照，不再作为默认真实历史 Bag 协调器输入。新增 G3.4 合成正向进展、CBF、超限注入拒绝及历史精确时间戳回归；GitHub CI PASS，**尚需一次用户 Ubuntu ROS 2 历史 Bag 运行验证，不代表四轮转向模型已完成**。资料见 [G3.4 配置限幅求解与验收说明](docs/n01_g34_hive2_bounded_candidate_generation.md)。物理控制始终禁用。
+
 ## G3.1 逐帧证据审计（已开发，待 Ubuntu ROS 2 回放验收）
 
 真实 Bag 功能脚本与 RViz 演示脚本现在会从 G3 节点独立记录每次 **实际数值求解** 的 `g3_frame_evidence.jsonl`，包含原始历史扫描时间、POST-HOC/回放顺序参考标记、名义与候选 XY、最小 h 代理值、离散 CBF 检查/拒绝次数、研究性质的状态标识。心跳不会作为求解帧。退出时独立核验 journal 并生成 `g3_evidence_summary.json`，若文件缺失、不完整或少于 observer 观察的求解次数则本轮不标记 PASS。此证据仍不是动态障碍真值或 Hive2 碰撞安全验收。
