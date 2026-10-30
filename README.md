@@ -1,3 +1,9 @@
+## 2026-10-30 19:41：历史 Bag 全导航话题链已通，实机在线 SLAM 尚未观察到 tracking
+
+**新验收阶段分离**：用户历史 Bag `n01_bag_functional_20261030_194103_1618696.tar.gz` 已通过 G4 +0.30m 原地图、研究 Z=-0.55m 与原生 SCAN mode3 `ground_height=-0.55/body_height=.85` 的端到端**话题顺序**检查。G4 发布 29 点、8.036m 研究路线后，产生 1 条新 SCAN B 样条、1 条 bridge Path，下游 G2/G3 消息有证据，108 次 G3 求解中 104 条被配置限幅接受，0 底盘运动发布者，CLEAN；**但全静态 PCD 尚未融入 SCAN，G3 几何上跟随新 G4 路线未验证，29 个路点中 9 个 PCD 表面冲突，不能视作可行驶路线**。
+
+用户随后真实在线只读 JSON 仅观察到 Hive2 +0.90m `/tf_static`，未收到 `map→base_footprint`、`/localization_status` 或过滤 Livox；另有 2 个 `/cmd_vel` 发布端。**在线 SLAM localization/tracking 尚未证明，禁止注入导航指令。** 仓库已在 live 只读检查增加所有独立阻断原因报告；另修复了 G4 研究 `manifest.json` 末尾字面 `\\n` 使其不再出现 JSON `Extra data`。已通过 CI 单元测试；报告见 [19:41 历史 Bag 与在线定位双证据审计](docs/n01_g413_194103_bag_and_live_localization_acceptance.md)。近期工作先由甲方静止启动 SLAM localization / geo_filtered、核对唯一 0.90 TF 及旧 PCD 配准；不再要求重跑相同历史 Bag。
+
 ## G4.13 — 原始地图 +0.30m / 局部候选 -0.55m，开始定位导航联调（2026-10-30）
 
 **当前仓库已新增隔离的历史地图实测坐标约定 smoke**（不改变旧 0.90m 回放的默认行为）：启用 `N01_G4_MAPPING_SMOKE=1`，G4/SCAN 研究路径使用局部 map Z=-0.55m、SCAN `grid_map.ground_height=-0.55m` 与 `grid_map.body_height=0.85m`，历史 Bag 的 body/lidar 按 SLAM 动态 +0.30m 重建，原生 SCAN mode3 将路径 Z 加体高得到约 map Z=+0.30m。**这是一项不验证接地/碰撞/行驶的离线计算链实验，必须用物理隔离开发机；不能标记 `N01_G4_FLOOR_Z_VERIFIED=1`。** G4 全局路由进入 SCAN/G2/G3 的真实 ROS 数据流仍需这次新实验的日志，不可声称已经通过。
