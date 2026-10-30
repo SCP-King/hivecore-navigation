@@ -90,6 +90,10 @@ def frame_row(result):
         "cbf_constraints_checked": checks,
         "cbf_constraints_rejected": rejected,
         "moving_constraint_tracks": moving,
+        "cbf_candidate_pruning_observed": rejected > 0,
+        "nominal_cbf_proxy_overlap_observed": (
+            result.get("minimum_nominal_h_m2") is not None
+            and _finite_or_none(result.get("minimum_nominal_h_m2")) < 0),
         "source": "REAL_BAG_UNVERIFIED_MOVING_HYPOTHESES",
         "robot_model": "PLANAR_HOLONOMIC_POINT_MASS_UNVERIFIED_FOR_HIVE2",
         "actuator_output": "DISABLED",
@@ -117,6 +121,9 @@ def summarize(path):
     counters = {"attempts": 0, "post_hoc_attempts": 0,
                 "replay_order_attempts": 0, "feasible_nominal_only": 0,
                 "feasible_dynamic_candidate_unverified": 0,
+                "cbf_hypothesis_present_attempts": 0,
+                "cbf_candidate_pruning_observed_attempts": 0,
+                "nominal_cbf_proxy_overlap_observed_attempts": 0,
                 "infeasible_attempts": 0, "hive2_screened_attempts": 0,
                 "hive2_chassis_limit_exceeded_attempts": 0,
                 "hive2_scan_limit_exceeded_attempts": 0,
@@ -158,6 +165,22 @@ def summarize(path):
             counters["attempts"] += 1
             counters["post_hoc_attempts" if item["post_hoc_reference_comparison"]
                      else "replay_order_attempts"] += 1
+            if item.get("moving_constraint_tracks", 0) > 0:
+                counters["cbf_hypothesis_present_attempts"] += 1
+            pruning = item.get("cbf_candidate_pruning_observed")
+            nominal_overlap = item.get("nominal_cbf_proxy_overlap_observed")
+            if pruning is not None:
+                if type(pruning) is not bool or (
+                    pruning != (item["cbf_constraints_rejected"] > 0)):
+                    raise ValueError("CBF pruning flag contradicts rejected count")
+                counters["cbf_candidate_pruning_observed_attempts"] += int(pruning)
+            if nominal_overlap is not None:
+                if type(nominal_overlap) is not bool or (
+                    nominal_overlap != (
+                        item.get("minimum_nominal_h_m2") is not None and
+                        item["minimum_nominal_h_m2"] < 0)):
+                    raise ValueError("nominal CBF overlap flag contradicts h")
+                counters["nominal_cbf_proxy_overlap_observed_attempts"] += int(nominal_overlap)
             status = item["status"]
             if status == "FEASIBLE_NOMINAL_ONLY_NO_DYNAMIC_CONSTRAINTS":
                 counters["feasible_nominal_only"] += 1
