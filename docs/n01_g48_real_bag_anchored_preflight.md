@@ -83,3 +83,26 @@ bash -n scripts/run_n01_g4_full_chain.sh
 ```
 
 测试结果要以操作端实际输出为准，不能凭 GitHub 提交记录宣告通过。
+
+
+## G4.10 更新：沿真实 Bag 锚定路线标记局部高度证据缺口（只读）
+
+2026-10-30 16:51 实际历史 Bag G3.4 轨迹平移限幅已通过（104 次求解，103 次 POST-HOC）；现进入 **第二离线阶段：地面/路线几何核对**。但 G3 的动态移动假设 16 帧、64,288 次 CBF 检查中 0 次候选被 CBF 拒绝，不代表避障已被证明。
+
+新增 `n01_offline_integration/g410_route_surface_ambiguity.py`，由同一次 G4.9 每个研究路点的 PCD 采样计数与 Z 分位数生成 **`g410_route_surface_ambiguity.json`**，可区分：
+
+- `UNKNOWN_NO_LOCAL_PCD_SAMPLES`：该 XY 路点周围没有 PCD 采样；绝对不能算自由；
+- `MULTI_LEVEL_OR_HIGH_VARIATION_SURFACE_EVIDENCE`：局部 PCD Z 分布四分位差达到**纯诊断阈值** 0.5m，说明可能是地面与设备、墙、顶棚等多层混杂；**不能自动选最低点为地面**；
+- `LOCAL_SURFACE_BAND_NOT_VALIDATED_AS_GROUND`：分布较集中或未见大跨度，依然**没有证明接地面**。
+
+输出包含每个路点分类、无 PCD 样本数量、垂直多层变化数量和三维地形未证实声明。**0.5m 只用于信息分流，不是楼梯/障碍/净空阈值。** 所有结果明确 `ground_z_map_m=null`、`wheel_ground_contact_verified=false`、`route_to_scan_allowed=false`、`actuator_output=DISABLED`。这一步分析的是 PCD 表面不确定性，**不是**地面法向、坡度、轮胎接触或全身净空的自动证明。
+
+与先前 G4.8 相同的只读入口（无地面 Z，**停止于 SCAN 之前**）：
+```bash
+cd /home/demo/lyy/hivecore-navigation
+git -c http.version=HTTP/1.1 pull --ff-only origin main
+env -u N01_G4_GROUND_Z_MAP_M -u N01_G4_FLOOR_Z_VERIFIED \
+  bash scripts/run_n01_g4_full_chain.sh
+```
+
+从该轮 `run_*/bag_start_preflight/` 取 `g48_preflight.json`、`g49_surface_height_profile.json`、`g410_route_surface_ambiguity.json` 即可确定下一步是否需要真正的三维地面提取/局部注册审计。**运行该程序仍不会开动 Hive2 或启动 SCAN ROS 节点**。源码回归仅验证纯 Python 诊断语义，用户 Ubuntu 上的真实 PCD 路段数量尚未在这一版产生。
