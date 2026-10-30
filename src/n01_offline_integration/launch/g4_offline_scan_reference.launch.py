@@ -47,6 +47,8 @@ def generate_launch_description():
                  "reference_file":ParameterValue(
                      LaunchConfiguration("reference_file"),value_type=str),
                  "max_start_offset_m":.75,
+                 "scan_body_height_m":.4,
+                 "max_start_vertical_offset_m":.5,
                  "use_sim_time":False,
              }],output="screen"),
     ])
