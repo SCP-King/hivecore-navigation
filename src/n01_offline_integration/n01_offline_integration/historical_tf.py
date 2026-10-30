@@ -139,9 +139,19 @@ class HistoricalMapTf:
         return nearest.translation,nearest.quaternion,age/1e9
 
 
-def mapped_mounts(footprint_pose):
-    """map->body and map->lidar based on selected replay-only geometry."""
+def mapped_mounts(footprint_pose, *, mount_height_m=SELECTED_MOUNT_HEIGHT_M):
+    """Offline map->body/map->lidar with an EXPLICIT mount-height hypothesis.
+
+    Historical Bag TF includes both 0.30m dynamic and 0.90m static samples.
+    Preserve legacy 0.90m replay default for comparative reproducibility.
+    Callers may explicitly select 0.30m to audit original SLAM map convention.
+    Never use this function to drive a robot or relabel a sensor frame.
+    """
+    if (type(mount_height_m) not in (int, float) or
+            not math.isfinite(mount_height_m) or
+            float(mount_height_m) not in (0.30, 0.90)):
+        raise ValueError("only source-observed 0.30/0.90m mount profiles supported")
     position,quaternion=footprint_pose[:2]
-    body=combine(position,quaternion,(0.,0.,SELECTED_MOUNT_HEIGHT_M))
+    body=combine(position,quaternion,(0.,0.,float(mount_height_m)))
     lidar=combine(body[0],body[1],(SELECTED_LIDAR_X_M,0.,0.))
     return body,lidar
