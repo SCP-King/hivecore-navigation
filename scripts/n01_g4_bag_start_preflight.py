@@ -23,6 +23,7 @@ from n01_offline_integration.historical_tf import (
 )
 from n01_offline_integration.pcd_bag_evidence_audit import audit, write_outputs
 from n01_offline_integration.pcd_static_preview import sample_pcd
+from n01_offline_integration.pcd_route_height_profile import profile_route_surfaces
 
 
 def make_reader(bag_dir, topics):
@@ -203,6 +204,20 @@ def main(argv=None):
         if not path:
             raise ValueError("anchored G4.3 A*: " +
                              evidence.get("route_error", "no path"))
+        # PCD Z along EVERY real-Bag-anchored XY waypoint. Height bands are
+        # measured surfaces only; never infer "floor" from a low percentile.
+        manifest["stage"] = "pcd_route_surface_height_profile"
+        xyz, _ = sample_pcd(args.pcd)
+        surface_profile = profile_route_surfaces(
+            xyz, evidence["research_path_xy_m"])
+        with (args.output_dir / "g49_surface_height_profile.json").open(
+                "x", encoding="utf-8") as profile_file:
+            json.dump(surface_profile, profile_file, ensure_ascii=False,
+                      indent=2, allow_nan=False)
+            profile_file.write("\n")
+        manifest["g49_surface_height_profile"] = "g49_surface_height_profile.json"
+        manifest["g49_waypoints_without_nearby_pcd_samples"] = (
+            surface_profile["waypoints_without_nearby_pcd_samples"])
         manifest["g43_evidence"] = "g43_evidence.json"
         manifest["g43_preview"] = "g43_evidence.svg"
         manifest["result"] = "BAG_ANCHORED_XY_RESEARCH_ROUTE_READY_Z_UNKNOWN"
