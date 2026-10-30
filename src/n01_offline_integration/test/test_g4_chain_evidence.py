@@ -1,6 +1,7 @@
 """Pure-Python G4.7 fail-closed order and provenance regression tests."""
 import ast
 import json
+import subprocess
 from pathlib import Path
 import sys
 import unittest
@@ -103,6 +104,13 @@ class G4ChainEvidenceTest(unittest.TestCase):
         launch = (ROOT / "launch" / "g4_offline_scan_reference.launch.py").read_text(encoding="utf-8")
         self.assertIn("n01_g4_chain_observer", launch)
         self.assertIn("report_path", launch)
+        script = ROOT.parents[1] / "scripts" / "run_n01_g4_full_chain.sh"
+        runner = ROOT.parents[1] / "scripts" / "run_n01_bag_functional.sh"
+        for target in (script, runner):
+            with self.subTest(target=target):
+                subprocess.run(["bash", "-n", str(target)], check=True)
+        self.assertIn("n01_prepare_g4_research.py", script.read_text())
+        self.assertIn("G4_CHAIN_INCOMPLETE", runner.read_text())
 
 
 if __name__ == "__main__":
