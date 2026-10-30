@@ -12,7 +12,9 @@ n01_static_map:
     # 输出 frame = 甲方 map frame(数据源铁律:只声明,不做 TF 假设)。
     frame_id: "map"
     # 参与静态占用点的 z 窗口(世界系,与 slide grid 语义对应)。
-    min_z: -1.5
-    max_z: 3.0
+    # The 2026-10-27 map spans approximately [-1.500, +3.078] m.
+    # Keep 0.2m+ margin for read-only map visualization; NOT a safety clearance.
+    min_z: -1.75
+    max_z: 3.35
     # 每体素列代表点 z 的随机取样种子(确定性可复现)。
     seed: 0
