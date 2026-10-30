@@ -1,102 +1,117 @@
-# Hive2 N-01：25 帧 TF 关系与固定腿姿态轮式导航开发契约（2026-10-30）
+# Hive2 固定腿 pitch、四轮独立驱动与踝部转向：TF/机体参考模型（2026-10-30）
 
-> **性质：项目已确认的接口资料及开发工况，不是实机启用许可，也不是新的可执行 ROS 配置。**
->
-> 证据来源：用户对录制 Bag 的 `/tf`、`/tf_static` 提取结果，甲方 URDF 构型以及当前 SLAM/预处理帧语义。**本次提交没有再次读取原始录制 Bag 和甲方安装目录**。其中的发布者归属、关节拓扑以及“腿姿态已经被锁定”的实际运行状态，仍须分别用当前 URDF/关节反馈核对。
->
-> 对应机器可读版：[config/reference/hive2_wheel_only_tf_contract_20261030.json](../config/reference/hive2_wheel_only_tf_contract_20261030.json)。
+**资料性质**：只读研究参考（不是 ROS 运行参数、实机启用或 TF 在线验收）。本版已直接检查用户上传的 `hive2_slam_sources_20261030_155649.tar.gz`（19 个文件）；以实际 Xacro/YAML/消息定义修正了上一版仅依据 Bag frame 名称推断的若干错误。用户提供的历史 Bag TF 数量及运行情况未在这次重新播放验证。
 
-## 1. 当前研究工况：四轮驱动、腿关节姿态保持不变
+机器可读主档案：[hive2_wheel_only_tf_contract_20261030.json](../config/reference/hive2_wheel_only_tf_contract_20261030.json)。
 
-用户明确指定：**现阶段只做轮式行驶导航**，四条腿保持固定工作姿态，**不规划、不执行抬腿、迈步、足式步态或主动调高/跨越**。不应因为硬件叫“轮足机器人”而默认开发足式规划和步态控制。后续 G1–G4 算法讨论、指标和测试以轮式工况为目标；当前历史 Bag/SCAN/G2/G3 仍为**离线只读，不接任何轮驱或腿驱运动指令**。
+## 1. 现阶段工作模式：固定 pitch 姿态，车轮行驶，但 ankle_yaw 可以转向
 
-- `base_footprint` 是当前历史地图定位/平面路径锚点。地图目标和占据地图统一使用 `map`；`base_link` 是机体几何参考，`lidar_link` 是过滤点云坐标系。
-- 腿部关节 TF **不参与导航定位主链和滤波点云 `lidar_link → map` 变换**；但**固定姿态的腿、轮、外壳仍然属于机器人外形碰撞占据范围**。必须以真实固定关节角、运动姿态和外廓实测构建完整足轮机体包络，不能只使用 `base_link` 的 0.55×0.26×0.12m 盒子。
-- `腿姿态固定` 是用户确定的**研发工况要求**，不是当前代码已验证的关节抱闸/位置保持；尚缺腿关节目标与反馈、实际轮式底盘转向类型和 wheel kinematics。不得将“轮式”自动写成差速、阿克曼或全向模型。
-- 当前 G3 `PLANAR_HOLONOMIC_POINT_MASS_UNVERIFIED_FOR_HIVE2` 为研究数值近似；固定腿模式**并不自动使它成为真实轮式动力学模型**。
+**固定的是四条腿的 pitch1、pitch2 工作姿态，不是锁死一切腿部关节。** 源码 `quad_leg_kinematics.xacro` 已核实：每腿有 pitch1 / pitch2 / ankle_yaw 三个旋转关节，末端还有一个连续 wheel 旋转关节。四个 `wheel_fl, wheel_fr, wheel_rl, wheel_rr` 独立驱动；四个 `fl/fr/rl/rr_ankle_yaw` 可绕局部 Z 轴转向，硬限位约 ±1.5708 rad。
 
-## 2. 甲方所报告的 TF 树（共 25 个 frame）
+本阶段不做迈步、跨台阶、主动抬腿或姿态升降；但不能因此禁用轮式转向所必需的 ankle_yaw。真实轮速/转向分配算法仍待 `hive2_driver/config/robot_motion.yaml` 和控制器实现核实；不能自动假定阿克曼/差速/麦克纳姆/任意全向控制。
+
+`hive2_leg_parameters.yaml` 记录 MoveHome 的 pitch1=+0.785398rad、pitch2=-1.308997rad（每腿重复），这只是**配置的 Home 目标值**，不是目前车辆真实保持的角度或已接地姿态；`sensor_balance.enabled: true` 和 `body_lift.trajectory_execution_enabled: true` 也意味着仅说“腿不动”**不会自动关闭平衡/升降模块**。开发阶段的禁用/保持策略要依据真实控制权和反馈设计，不能直接替甲方发指令。
+
+## 2. 源码明确的 link 树（29 个名称；不保证 29 个运行时 TF 全部发出）
 
 ```text
-map
-└─ base_footprint                       动态定位；SLAM/建图
-   └─ base_link                          Hive2 选定静态安装 Z=+0.900m
-      ├─ lidar_link                      静态平移 (+0.295, 0, 0)m
-      │  └─ imu_link                     0 平移，用户报告约 10.8° 俯仰旋转
-      │     └─ livox_frame               静态 0 平移，单位旋转
-      ├─ lpms_imu_link                   0 平移，LPMS 硬件 IMU
-      ├─ fl_hip_link → fl_thigh_link → fl_shank_link → fl_foot_link
-      ├─ fr_hip_link → fr_thigh_link → fr_shank_link → fr_foot_link
-      ├─ rl_hip_link → rl_thigh_link → rl_shank_link → rl_foot_link
-      └─ rr_hip_link → rr_thigh_link → rr_shank_link → rr_foot_link
+map                                            由 SLAM 实际定位时发布的动态根
+└─ base_footprint                              直接定位 tracking frame
+   └─ base_link                                选定 Hive2 URDF 固定 +0.900m
+      ├─ lidar_link                            +0.295, 0, 0
+      │  └─ imu_link                           用户报告的静态 TF，约 10.8° 俯仰
+      │     └─ livox_frame                     用户报告的静态 TF
+      ├─ lpms_imu_link                         hive2.config.xacro 中条件启用的固定 IMU
+      ├─ fl_hip_link                           fl_leg_pitch1: revolute Y
+      │  └─ fl_thigh_link                      fl_leg_pitch2: revolute Y
+      │     ├─ fl_foot_link                    kdl_foot_fixed，固定代理足端（IK）
+      │     └─ fl_shank_link                   fl_ankle_yaw: revolute Z（转向）
+      │        └─ fl_wheel_link                wheel_fl: continuous Y（驱动）
+      ├─ fr_hip_link → fr_thigh_link → {fr_foot_link, fr_shank_link → fr_wheel_link}
+      ├─ rl_hip_link → rl_thigh_link → {rl_foot_link, rl_shank_link → rl_wheel_link}
+      └─ rr_hip_link → rr_thigh_link → {rr_foot_link, rr_shank_link → rr_wheel_link}
 
-fixed_frame                              独立、未接入 map 的根
-└─ imu_filtered                          互补滤波后的 IMU 输出
+fixed_frame                                    独立 IMU 滤波树（来自用户历史 Bag 审计）
+└─ imu_filtered
 ```
 
-其中 7 个导航关键帧为 `map`、`base_footprint`、`base_link`、`lidar_link`、`imu_link`、`livox_frame`、`lpms_imu_link`。四条腿各有 hip/thigh/shank/foot 共 16 帧，另有 `fixed_frame` 与 `imu_filtered` 两帧，共 **25 帧**。
+核心命名：地图/机身/雷达/双 IMU 7 个；四条腿每腿 **5 个**（hip、thigh、shank、foot、wheel）共 20 个；滤波链 2 个，总共 **29 个**。此前 `25 个` 的清单少了 4 个 wheel_link；此前将 `foot_link` 画在 shank 下也不正确。机器可读契约已按 Xacro 修正。
 
-**腿链精确 joint 类型有待 URDF 原始定义复核**：用户提供的框图一处描述了 `base_link → hip_link` 固定安装，而表格将 hip 列为动态；末端 `foot_link` 的文字又存在“相对 thigh”与“经 shank”两种描述。本契约只确认用户提供的命名链和**暂报**的 `shank_link → foot_link` (0,0,-0.48)m，不将这些潜在矛盾直接写入真实 TF 广播实现。
+**特别注意**：`*_foot_link` 是从 `*_thigh_link` 以 `(0,0,-0.48)m` 固定连接的**KDL 足端代理**，而**真正轮子**是从 `*_shank_link` 经过 `wheel_*` continuous joint 到 `*_wheel_link`。碰撞检查须使用轮子实际碰撞模型，不能把虚拟 foot 当成接地轮。
 
-## 3. 逐帧角色与导航使用范围
+## 3. 已在原始 Xacro 中核对的固定安装、轮腿尺寸
 
-| 范围 | Frame | 主职责 | 当前导航用法 |
-|---|---|---|---|
-| 地图与定位 | `map → base_footprint` | SLAM 动态定位（用户报告 Bag 内该边约 11 条） | **必需**，严格用点云采集时刻 |
-| 机体安装 | `base_footprint → base_link` | Hive2 URDF 选定 Z=+0.90m | **必需**；冲突见下 |
-| 雷达安装 | `base_link → lidar_link` | (+0.295,0,0)m | **必需** |
-| Livox IMU | `lidar_link → imu_link → livox_frame` | 原始激光与定位 IMU 静态对齐 | 原始数据链必需，预处理后的过滤云不重复变换 |
-| LPMS | `base_link → lpms_imu_link` | 独立 LPMS IMU，同机体原点 | 按定位消息设计使用，不能与 `imu_link` 混称 |
-| 四条腿 | `{fl,fr,rl,rr}_{hip,thigh,shank,foot}_link` | 关节链和固定姿态的碰撞形状 | **不作为地图定位/点云 TF 主链**，仍参与机体包络审计 |
-| 独立滤波链 | `fixed_frame → imu_filtered` | 互补滤波 IMU，用户报告 Bag 内约 296 条 | **不能凭空连接到 map** |
-
-当前记录的关键固定安装（单位 m）：
-
-| TF 边 | 平移 (x,y,z) | 旋转 |
+| 名称 | 源码中定义 | 含义 |
 |---|---|---|
-| `base_footprint → base_link` | (0,0,+0.900) | 用户所选定 Hive2 名义安装 |
-| `base_link → lidar_link` | (+0.295,0,0) | 名义零旋转 |
-| `base_link → lpms_imu_link` | (0,0,0) | 待原始 URDF/Bag 逐项对齐 |
-| `lidar_link → imu_link` | (0,0,0) | 用户报告约 10.8° 俯仰，**符号和精确四元数待核对** |
-| `imu_link → livox_frame` | (0,0,0) | 单位旋转 |
-| `{leg}_shank_link → {leg}_foot_link` | (0,0,-0.48) | 用户提供的名义关节几何，待 URDF 核实 |
+| `base_footprint → base_link` | (0,0,+0.900)m | Hive2 运动描述的选定安装；实际地面高度仍未知 |
+| `base_link → lidar_link` | (+0.295,0,0)m | Livox 过滤云 frame |
+| `base_link → lpms_imu_link` | (0,0,0)m | `hive2.config.xacro` 受 `imu_enabled` 影响，默认启用 |
+| 机体 collision box | 0.55×0.26×0.12m | 仅 `base_link`，不是含腿/轮/外壳的总包络 |
+| 四条腿髋关节中心 | x=±0.28m，y=±0.135m | 名义 pivot 纵距 0.56m，横距 0.27m |
+| pitch1 轴到 pitch2 轴 | 0.38m | 大腿段 |
+| pitch2 轴到 ankle yaw 轴 | 0.38m | 小腿段 |
+| ankle yaw 到轮心 | 0.10m | 踝下段 |
+| 轮半径 / 轮宽 | 0.095m / 0.04m | Xacro 定义为长方体碰撞代理，并非精确胎形 |
+| ankle_yaw 横向偏移 | 左 -0.085m，右 +0.085m | 轮子外偏量抵消对应偏移 |
+| ankle_yaw 转角范围 | [-1.5708,+1.5708]rad | 转向限位，不代表已验证实时运动能力 |
 
-**不能忘记冲突**：用户发现同一录制 Bag 曾包含 `base_footprint → base_link` 的 0.30m 和 0.90m 两种定义；本次 Hive2 研究选择使用 0.90m，但没有因此消除在线可能同时运行的两个 `robot_state_publisher`。实机前必须核对 SLAM 的 `launch_robot_state_publisher:=false` 生效，以及运动栈该 TF 边唯一权威。
+`lidar_link → imu_link → livox_frame` 的静态关系、`map→base_footprint`、`fixed_frame→imu_filtered` 不是以上 Hive2 机体 Xacro 全部生成的；依赖用户提供的实际 Bag 与 SLAM 预处理配置报告，尚未在本包独立读到静态 TF 发布器的参数文件。
 
-## 4. 点云→地图路径：只用采样时刻的真实 TF
+## 4. SLAM 与底盘必须如何划分 TF
 
-```text
-/ livox/lidar                 header.frame_id = livox_frame   原始 Livox
-      ↓ 甲方预处理与外参（不能只修改 frame_id）
-/ livox/lidar/geo_filtered    header.frame_id = lidar_link   用户报告抽取的 100 帧均一致
-      ↓ T_map_lidar_link(header.stamp)：
-      map ← base_footprint ← base_link ← lidar_link
-/ cloud                        header.frame_id = map          进入地图和 SCAN（仅受控输入）
-```
+**运动栈是机体 TF 的权威；SLAM 是地图定位的权威。**
 
-- 用户提供的 Bag TF 审计结论：录制链里**没有 `odom` 帧/边**，定位是 `map → base_footprint` 直接发布。不要假定 `map→odom→base_link`，也不要把 `odom` 和 `map` 当作别名。未来其他录制环境仍应独立校验。
-- 当前 `src/n01_bringup/config/n01_sensor.yaml` 原先写 `target_frame: odom`，与这份会话的 TF 证据不符。当前已将这份**只读接口 YAML 的期望目标帧**更正为 `map`；独立 `sensor_only.launch.py` 仍使用 `lidar_link` 作为无全局 TF 的默认查看帧。两种模式不能混用。
-- 原生 SCAN `planner.yaml` 和 G1 合成桥中的 `world` 是离线合成场景默认值，真实 Bag/G4 离线 launcher 有明确 `map` 覆盖。**不**因此直接全局批量替换 G1 的 `world`。
-- 过滤云的 header 已经是 `lidar_link`，不要再从 `livox_frame` 额外执行一遍转换；原始云需要按其自己的 TF 与预处理条件检查。
-- 路径上的 `imu_filtered` 是独立的 `fixed_frame` 坐标树，未经标定不能当 `map` 参考。
+- 运动栈：`base_footprint→base_link` 固定 +0.90m、`base_link→lidar_link`、`base_link→lpms_imu_link`、随关节反馈更新腿轮 TF。
+- SLAM：定位有效时 `map→base_footprint`。此接口不经 `odom`，这是**当前用户所报告的这份录制 Bag**，不等于运动栈没有 `/odom` 功能。
+- 预处理：输出 `/livox/lidar/geo_filtered` 的 `header.frame_id=lidar_link`；从扫描的 `header.stamp` 求 `T_map_lidar_link`，不得仅改 frame_id。
+- 运动控制的 `/odom` **确实存在单独的接口配置**：`hive2_chassis_params.yaml` 的 `chassis_controller` 配置委托、Web 配置的 `odom_topic: /odom`；`start_hive2_motion.sh` 的 `HIVE2_SLAM_MAPPING=1` 会向 `hive2_controller.launch.py` 传 `odom_publish_tf:=false`。这**不是**关闭 SLAM 的 0.30m 重复 RSP。
 
-## 5. 轮式固定腿模式的实现边界与剩余参数
+冲突的源码证据：
+`hivecore_sensor_frames.xacro` 显式写 `hive2_footprint_xyz="0 0 0.90"`；
+SLAM `hivecore_robot.urdf.xacro` 默认 `footprint_xyz="0 0 0.3"`；
+SLAM `console_slam3d_bringup.py` 的 `launch_robot_state_publisher` 默认 `true`。
+用户的历史 Bag 同时曾看到 0.30 / 0.90 两种定义；当前不能宣称运行态冲突已解除。
 
-| 研发项 | 已确定 | 仍未确认 |
-|---|---|---|
-| locomotion mode | **轮式驱动，腿姿态固定** | 如何可靠保持、腿角目标/关节反馈与上电恢复 |
-| 地图定位 | `map → base_footprint` | 最新 LocalizationStatus 类型、在线 TF 唯一权威 |
-| 过滤云 | `lidar_link` → `map`（扫描时间戳） | 实时雷达→map 采样延迟与一致性 |
-| IMU | 两套 IMU 有独立帧 | 精确旋转和融合/优先级决策 |
-| 动态模型 | 研究中 G3 为二维质点模型 | **轮式转向运动学、轮距/轴距、角速度/加速度/制动能力** |
-| 碰撞模型 | 四腿轮子虽然不动也有外廓 | **固定姿态真实关节角、最大宽度/长度/高度、离地间隙** |
-| 地面 | PCD 与 Bag 同 map（用户确认） | `ground_z_map(x,y)`、地面支撑、可通行性 |
-| 安全 | N-01 速度上限 1m/s（需求） | 安全距离、动态停车、机械避障约束 |
+推荐由**甲方的启动集成配置**显式设定 `launch_robot_state_publisher:=false`，让 Hive2 运动 RSP 独占机体链接；是否生效仍要核对最终实际启动与 ROS 图，不能擅改 SLAM 简化 URDF 来掩盖双发布。
 
-**不在本次变更中**：启动底盘/SLAM、修改关节控制、发送 Twist、把 G3 轨迹变成轮式控制指令、更改 SCAN 几何安全距离、认定地面高度或者宣称在线 TF 双发布已解决。
+## 5. 定位状态字段：`LocalizationStatus.msg` 已获得源码
 
-## 6. 记录与更新原则
+安装路径 `slam_release/install/hivecore_slam3d/share/hivecore_slam3d/msg/LocalizationStatus.msg`。用于在线严格状态检查的真实**wire 字段**为：
 
-机器可读契约是 **reference-only**，不是 ROS 参数文件，也不会被 launch 自动装入。后续拿到真实轮式工作姿态关节角、URDF/底盘运动类型与现场测量证据后，再把未确认字段逐项升级为实测，且保留证据来源和适用日期。
+| 字段 | 期望或含义 |
+|---|---|
+| `control_signal_outer_role` | 字符串 `"localization"`（**小写**） |
+| `control_signal_session_mode` | 字符串 `"tracking"` |
+| `registration_output_tf_published` | bool `true` |
+| `registration_output_pose_published` | bool；可用于进一步证据 |
+| `registration_output_tracking_compose_ok` | bool；可用于进一步证据 |
+| `registration_output_localization_mode` | uint8，`MODE_TRACKING=0` |
+| `registration_output_pose_source` | uint8，`POSE_SOURCE_MEASURED=2` 等枚举 |
+| `pipeline_scan_frame_match` | bool，表示预处理扫描帧匹配 |
+| `header` | 原始消息时间戳，应与 ROS 时间基准和消息新鲜度区分 |
 
-这次提交只做**正确的坐标语义和轮式开发范围约束**，不需要额外运行 Bag 才能记录已提供的 frame 结构；ROS 图/全身碰撞/地面数据仍保留为不同的待验收问题。
+此前仓库 `offline_bridge.yaml` 的 `outer_path` / `inner_path` 留空，是因为未拿到源码。现在已能根据真实消息名填写，且**仍需保持** `slam_rsp_disabled_confirmed=false`、无动作输出、扫描时刻 TF / 严格状态的新鲜度和失败即阻断。
+
+## 6. 底盘轮式控制：哪些已找到，哪些仍缺一个核心文件
+
+源 `hive2_chassis_params.yaml` 注释明确：轮式运动学、OTG、各类转向模式、`chassis_controller` 参数以 **`hive2_driver/config/robot_motion.yaml` 为唯一真源**；这份文件**没有被本次按文件名搜索的压缩包收集**。
+
+已核对的外围接口：
+
+- 监督器 `steer_drive_node`：`/cmd_vel`（仅记录，当前**严禁发送**），50Hz，超时 0.2s；内部下发 `/chassis_controller/rt_command`，`/chassis_state` 和 `/chassis_dec_stop/state` 为诊断状态。
+- 转向关节：`fl/fr/rl/rr_ankle_yaw`。车轮：`wheel_fl/fr/rl/rr`。反馈含 `/joint_states`、`/wheels_can/joint_state`、`/chassis_controller/rt_status`。
+- `hive2_leg_parameters.yaml`：MoveHome pitch1=+45°、pitch2=-75°；反馈 `/joint_states`；`sensor_balance.enabled=true`。这不等于固定姿态已经保持不变。
+- `wheels_can_controllers.yaml`：控制器类型 `forward_command_controller/ForwardCommandController` 的 velocity interface；文件注释写 250Hz，而实际 `controller_manager.ros__parameters.update_rate` 写 500Hz。必须以最终启用配置为准，不能凭注释推断实际控制周期。
+- `hive2.config.xacro` 默认 EtherCAT `ec_freq=1000`，轮组 USB2CAN 配置和四轮转向链已具备，但无需将它们导入导航层。
+
+**仍缺**控制器的最终轮式运动学配置 `robot_motion.yaml`，必要时再读取 `ChassisController` 核心实现以确认速度输入、转向分配和实际限幅；这比继续猜所谓“车一样”是否差速更有效。
+
+## 7. 后续开发方案（不运行实机）
+
+1. 已知 Xacro 和消息定义可落库为可审计**只读模型**；旧 25-frame 契约和 TF 结构修正为 29。
+2. 按源码修正仅离线使用的严格 LocalizationStatus 参数，不自动解除 `slam_rsp_disabled_confirmed=false` 门控。
+3. 获得 `robot_motion.yaml` 后确认转向、速度分配、轮驱模式和固定 pitch 工作姿态；才能有依据地适配 G3 离散轮式约束。
+4. 使用固定姿态**真实关节反馈**构建完整车体轮/腿碰撞包络，之后评估地图 `ground_z_map(x,y)`，不从 PCD 低分位数直接认定地面。
+5. 后续只在物理隔离历史 Bag 中开展 SCAN/G2/G3 验收；未获安全批准以前禁止连接任何轮/腿运动命令。
+
+**总括：源码已经足够支持“以 Hive2 运动模型为权威进行接口设计”，但不足以认定轮式控制律、实际接地姿态和实时闭环已经验证。**
