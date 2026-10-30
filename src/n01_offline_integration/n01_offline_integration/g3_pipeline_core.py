@@ -9,7 +9,8 @@ from collections import OrderedDict, deque
 import math
 
 from .g3_mpc_cbf_core import solve_discrete_mpc_cbf
-from .g3_hive2_wheel_screen import screen_g3_result
+from .g3_hive2_wheel_screen import (screen_g3_result, SCAN_MAX_ACCEL_MPS2,
+                                     SCAN_MAX_SPEED_MPS, SOURCE_SHA256)
 
 
 class G3HistoricalCoordinator:
@@ -126,20 +127,22 @@ class G3HistoricalCoordinator:
 
     def _solve(self,stamp,body,tracks,posthoc):
         # Path is an unverified reference; controls must NEVER be executed.
-        result=solve_discrete_mpc_cbf(self.path,body,tracks)
-        self.last_result=result
-        self.last_solver_status=result["status"]
-        if result["solver_executed"]:
-            self.solve_attempts+=1
-            if result["status"]=="FEASIBLE_NOMINAL_ONLY_NO_DYNAMIC_CONSTRAINTS":
-                self.nominal_only+=1
-            elif result["status"]=="FEASIBLE_CBF_CONSTRAINED_CANDIDATE_UNVERIFIED":
-                self.dynamic_constraint_solutions+=1
-            elif result["status"].startswith("INFEASIBLE"):
-                self.infeasible+=1
-        # G3.3 post-screen: compare the candidate to actual CONFIGURED Hive2
-        # limits; do not transform G3 point-mass trajectory into wheel commands.
-        # Unknown steering angles, yaw and measured twist remain INCONCLUSIVE.
+        # G3.4: generate within the conservative SCAN translational
+        # planning envelope (0.75m/s, 0.5m/s^2), which is inside Hive2
+        # configured chassis limits (2m/s, 1m/s^2). No actual 4WS
+        # kinematic feasibility or measured initial wheel twist is claimed.
+        result=solve_discrete_mpc_cbf(
+            self.path,body,tracks,
+            max_speed=SCAN_MAX_SPEED_MPS,
+            max_accel=SCAN_MAX_ACCEL_MPS2,
+            control_lattice="acceleration_increment")
+        result["candidate_generation_profile"]="HIVE2_SCAN_CONFIG_BOUNDED_XY_ONLY"
+        result["hive2_config_sha256"]=SOURCE_SHA256
+        result["wheel_steering_feasibility_verified"]=False
+        result["real_robot_ready"]=False
+        # Independent downstream evidence checks the ROUNDED XY candidate.
+        # If its finite-difference translational bounds fail, it is rejected
+        # before any diagnostic path publication. This is NOT 4WS certification.
         wheel_screen=screen_g3_result(result)
         result["hive2_motion_limit_screen"]=wheel_screen
         if wheel_screen["samples"] > 0:
@@ -151,6 +154,24 @@ class G3HistoricalCoordinator:
             if not wheel_screen["chassis_config_limits_exceeded"] and not (
                     wheel_screen["scan_planning_limits_exceeded"]):
                 self.hive2_within_translation_frames+=1
+        if result["candidate_xy_m"] and (
+                wheel_screen["status"] !=
+                "TRANSLATIONAL_BOUNDS_WITHIN_CONFIG_4WS_UNVERIFIED"):
+            result["candidate_xy_m"]=[]
+            result["status"]="INFEASIBLE_CONFIG_BOUNDS_SCREEN_REJECTED"
+            result["candidate_rejected_after_screen"]=True
+        else:
+            result["candidate_rejected_after_screen"]=False
+        self.last_result=result
+        self.last_solver_status=result["status"]
+        if result["solver_executed"]:
+            self.solve_attempts+=1
+            if result["status"]=="FEASIBLE_NOMINAL_ONLY_NO_DYNAMIC_CONSTRAINTS":
+                self.nominal_only+=1
+            elif result["status"]=="FEASIBLE_CBF_CONSTRAINED_CANDIDATE_UNVERIFIED":
+                self.dynamic_constraint_solutions+=1
+            elif result["status"].startswith("INFEASIBLE"):
+                self.infeasible+=1
         if posthoc:
             self.posthoc_attempts+=1
         self.full_reports+=1
