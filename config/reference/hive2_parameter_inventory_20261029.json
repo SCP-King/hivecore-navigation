@@ -402,5 +402,74 @@
       "manually relabel pointcloud frame_id to map"
     ],
     "rationale": "One /tf_static topic publisher may broadcast many edges; edge-specific ownership requires config/graph review and observed TF messages."
+  },
+  "recorded_bag_sensor_mount_tf_20261030": {
+    "evidence_status": "USER_REPORTED_RECORDED_BAG_TF_NOT_INDEPENDENTLY_REEXTRACTED",
+    "evidence_source": "user-reported /tf_static extraction from bag_20261027_225100, 2026-10-30",
+    "selected_mount_z_m": 0.9,
+    "competing_mount_z_in_recording_m": [
+      0.3,
+      0.9
+    ],
+    "conflicting_edge": "base_footprint -> base_link",
+    "edges": [
+      {
+        "parent": "base_footprint",
+        "child": "base_link",
+        "translation_m": [
+          0,
+          0,
+          0.9
+        ]
+      },
+      {
+        "parent": "base_link",
+        "child": "lidar_link",
+        "translation_m": [
+          0.295,
+          0,
+          0
+        ]
+      },
+      {
+        "parent": "base_link",
+        "child": "lpms_imu_link",
+        "translation_m": [
+          0,
+          0,
+          0
+        ]
+      },
+      {
+        "parent": "lidar_link",
+        "child": "imu_link",
+        "translation_m": [
+          0,
+          0,
+          0
+        ],
+        "reported_pitch_deg_approx": 10.8
+      },
+      {
+        "parent": "imu_link",
+        "child": "livox_frame",
+        "translation_m": [
+          0,
+          0,
+          0
+        ]
+      }
+    ],
+    "nominal_lidar_imu_lpms_height_above_footprint_frame_m": 0.9,
+    "reported_first_accepted_scan_map_footprint_z_m": 0.003491,
+    "sensor_ground_height_requires": [
+      "map->base_footprint translation and orientation at the sensor timestamp",
+      "ground_surface_z_map at the sensor XY, not unconfirmed -0.5m PCD cluster",
+      "inspection of terrain along route, not one global floor constant"
+    ],
+    "ground_z_map_m": null,
+    "real_ground_height_verified": false,
+    "live_single_tf_authority_verified": false,
+    "provenance_note": "Do not equate sensor nominal Z with measured floor clearance; 0.90m does not resolve the simultaneous 0.30m / 0.90m RSP conflict."
   }
 }
