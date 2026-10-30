@@ -25,7 +25,8 @@ def generate_launch_description():
         LogInfo(msg=[
             '[N-01 S3 sensor_only] Read-only. ',
             'geo_filtered requires vendor GUI-SLAM/preprocessor with enable_forward=true; ',
-            'motion stack must already provide /odom and vendor TF. ',
+            'Does not assume /odom in the recorded Hive2 map->base_footprint TF tree. '
+            'Sensor-only defaults to lidar_link; map-localized mode needs stamped TF. ',
             'No SLAM service, TF broadcaster, planner, controller, or /cmd_vel is started. ',
             'No fallback to raw /livox/lidar is performed.'
         ]),
