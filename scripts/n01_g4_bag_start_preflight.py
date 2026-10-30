@@ -60,6 +60,12 @@ def first_accepted_scan_pose(bag_dir, *, max_age_s=1.0):
     reader = make_reader(bag_dir, ("/tf", "/tf_static"))
     messages = 0
     heights = set()
+    mount_by_topic = {
+        "/tf": {"counts_by_z_m": {}, "first_tf_stamp_ns": None,
+                "last_tf_stamp_ns": None},
+        "/tf_static": {"counts_by_z_m": {}, "first_tf_stamp_ns": None,
+                       "last_tf_stamp_ns": None},
+    }
     while reader.has_next():
         topic, raw, _ = reader.read_next()
         msg = deserialize_message(raw, TFMessage)
@@ -72,7 +78,16 @@ def first_accepted_scan_pose(bag_dir, *, max_age_s=1.0):
             if parent == "base_footprint" and child == "base_link":
                 z = float(tr.transform.translation.z)
                 if -100 < z < 100:
-                    heights.add(round(z, 5))
+                    rounded=round(z,5)
+                    heights.add(rounded)
+                    channel=mount_by_topic[topic]
+                    key=f"{rounded:.5f}"
+                    channel["counts_by_z_m"][key]=channel["counts_by_z_m"].get(key,0)+1
+                    t_ns=stamp_to_ns(tr.header.stamp)
+                    if channel["first_tf_stamp_ns"] is None or t_ns < channel["first_tf_stamp_ns"]:
+                        channel["first_tf_stamp_ns"]=t_ns
+                    if channel["last_tf_stamp_ns"] is None or t_ns > channel["last_tf_stamp_ns"]:
+                        channel["last_tf_stamp_ns"]=t_ns
             if parent == "map" and child == "base_footprint":
                 p, q = tr.transform.translation, tr.transform.rotation
                 tf.add(stamp_to_ns(tr.header.stamp),
@@ -100,6 +115,7 @@ def first_accepted_scan_pose(bag_dir, *, max_age_s=1.0):
             counters["no_valid_timestamped_map_tf"] += 1
             continue
         body, lidar = mapped_mounts(pose)
+        mapping_body, mapping_lidar = mapped_mounts(pose, mount_height_m=0.30)
         try:
             xyz_transform_bytes(
                 msg.data, msg.width, msg.height, msg.point_step, msg.row_step,
@@ -116,8 +132,16 @@ def first_accepted_scan_pose(bag_dir, *, max_age_s=1.0):
             "source_cloud_frame": "lidar_link",
             "map_to_base_footprint_xyz_m": list(pose[0]),
             "map_to_base_footprint_xy_m": list(pose[0][:2]),
+            # Existing 0.90m replay geometry is RETAINED as a legacy
+            # comparison; it is not the proven mapping-time TF convention.
             "offline_reconstructed_base_link_xyz_m": list(body[0]),
             "offline_reconstructed_lidar_xyz_m": list(lidar[0]),
+            "legacy_selected_mount_height_m": SELECTED_MOUNT_HEIGHT_M,
+            "historical_mapping_candidate_mount_height_m": 0.30,
+            "historical_mapping_candidate_base_link_xyz_m": list(mapping_body[0]),
+            "historical_mapping_candidate_lidar_xyz_m": list(mapping_lidar[0]),
+            "tf_mount_edge_evidence_by_topic": mount_by_topic,
+            "historical_mapping_authority_verified_inside_slam_code": False,
             "timestamped_tf_nearest_sample_age_s": pose[2],
             "historic_tf_samples": len(tf.times),
             "historical_mount_z_values_m": sorted(heights),
