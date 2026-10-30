@@ -79,11 +79,18 @@
     "home_pitch2_rad": -1.3089969389957472,
     "actual_fixed_leg_joint_positions_verified": false,
     "home_values_are_recorded_targets_not_measured_contact_configuration": true,
-    "motion_controller_source_needed": "hive2_driver/config/robot_motion.yaml",
+    "motion_controller_source_needed": null,
     "controller_kinematics_verified": false,
     "legs_actuation_during_navigation_note": "Pitch1/pitch2 commanded fixed, but ankle_yaw steering actuates; raw statement 'no leg actuation' would be misleading. Wheel-only research output remains command-free.",
     "nominal_hip_pivot_lateral_span_m": 0.27,
-    "nominal_hip_pivot_longitudinal_span_m": 0.56
+    "nominal_hip_pivot_longitudinal_span_m": 0.56,
+    "motion_yaml_source_verified": true,
+    "motion_constraints_reference": "config/reference/hive2_robot_motion_audit_20261030.json",
+    "configured_chassis_max_linear_speed_mps": 2,
+    "configured_chassis_max_linear_acceleration_mps2": 1,
+    "configured_chassis_nominal_linear_acceleration_mps2": 0.6,
+    "configured_steering_mode_soft_limit_rad": 3.141592653589793,
+    "yaw_limit_semantics_need_controller_source_review": true
   },
   "frames": [
     {
@@ -724,8 +731,12 @@
     "wheel_controller_config": "hive2_motion/install/share/motion_wheel_hardware/config/wheels_can_controllers.yaml",
     "status_message": "slam_release/install/hivecore_slam3d/share/hivecore_slam3d/msg/LocalizationStatus.msg",
     "slam_rps_launcher": "slam_release/install/hivecore_console_slam3d/share/hivecore_console_slam3d/launch/helpers/console_slam3d_bringup.py",
-    "missing_critical_authoritative_file": "hive2_driver/config/robot_motion.yaml",
+    "missing_critical_authoritative_file": null,
     "source_verified_scope": "Xacro chain, command/feedback topic declarations, four wheel drive joints and four ankle yaw steering joints; runtime control law and hardware status not independently inspected",
-    "note": "Source checked inside user uploaded archive; no claims of live TF publishing, real controller enablement, or physical safety."
+    "note": "Source checked inside user uploaded archive; no claims of live TF publishing, real controller enablement, or physical safety.",
+    "robot_motion_yaml_now_available": true,
+    "robot_motion_yaml_verified_source": "config/reference/hive2_robot_motion_audit_20261030.json",
+    "robot_motion_yaml_sha256": "3f19abe0a65e02b331a0d51c18ec0503278a4d9a6b942332b47c4f7d434584f0",
+    "controller_allocation_code_still_missing": true
   }
 }
