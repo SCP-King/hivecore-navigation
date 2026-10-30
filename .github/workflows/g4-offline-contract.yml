@@ -44,6 +44,8 @@ jobs:
         run: python3 -m unittest discover -s src/n01_offline_integration/test -p 'test_g410_route_surface_ambiguity.py' -v
       - name: G4.11 real SCAN mode3 height semantics vs Bag reconstructed body pose
         run: python3 -m unittest discover -s src/n01_offline_integration/test -p 'test_g411_mode3_z_alignment.py' -v
+      - name: G4.12 mapping-vs-Hive2 TF mount reconciliation read-only contract
+        run: python3 -m unittest discover -s src/n01_offline_integration/test -p 'test_g412_historical_mount_alignment.py' -v
       - name: G4.3 PCD/Bag conflict and A* contracts
         run: python3 -m unittest discover -s src/n01_offline_integration/test -p 'test_pcd_bag_evidence_audit.py' -v
       - name: G4.4-7 reference/chain contracts
