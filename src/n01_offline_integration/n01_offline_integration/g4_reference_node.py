@@ -51,12 +51,20 @@ class G4ResearchReferencePublisher(Node):
         super().__init__("n01_g4_research_reference")
         self.declare_parameter("reference_file","")
         self.declare_parameter("max_start_offset_m",.75)
+        self.declare_parameter("scan_body_height_m",.4)
+        self.declare_parameter("max_start_vertical_offset_m",.5)
         source=self.get_parameter("reference_file").value
         distance=float(self.get_parameter("max_start_offset_m").value)
-        if not source or not .1<=distance<=1.0:
+        body_height=float(self.get_parameter("scan_body_height_m").value)
+        z_limit=float(self.get_parameter("max_start_vertical_offset_m").value)
+        if (not source or not .1<=distance<=1.0 or
+                not .1<=body_height<=1.5 or not .1<=z_limit<=1.0):
             raise ValueError("explicit G4.5 reference_file and bounded start offset required")
         self.ref=load_reference(source)
         self.limit=distance
+        self.body_height=body_height
+        self.z_limit=z_limit
+        self.wait_count=0
         self.released=False
         self.blocked=False
         self.latest_body=None
@@ -73,7 +81,7 @@ class G4ResearchReferencePublisher(Node):
             return
         pos=msg.pose.pose.position
         if all(math.isfinite(x) for x in (pos.x,pos.y,pos.z)):
-            self.latest_body=(pos.x,pos.y)
+            self.latest_body=(pos.x,pos.y,pos.z)
 
     def status(self,name,**kwargs):
         data={
@@ -110,9 +118,16 @@ class G4ResearchReferencePublisher(Node):
         pts=self.ref["path_xyz_m"]
         gap=math.hypot(self.latest_body[0]-pts[0][0],
                        self.latest_body[1]-pts[0][1])
-        if gap>self.limit:
-            # Do not create a shortcut from the historical pose to an unrelated
-            # A-star route start across UNKNOWN factory space.
+        z_gap=abs(self.latest_body[2]-(pts[0][2]+self.body_height))
+        if gap>self.limit or z_gap>self.z_limit:
+            # Never create an unobserved XY shortcut or large vertical jump.
+            self.wait_count+=1
+            if self.wait_count % 8 == 1:
+                self.status("WAITING_MATCHING_BAG_START_POSE",
+                            horizontal_error_m=round(gap,3),
+                            vertical_error_m=round(z_gap,3),
+                            horizontal_limit_m=self.limit,
+                            vertical_limit_m=self.z_limit)
             return
         result=Path()
         result.header.frame_id="map"
@@ -130,6 +145,7 @@ class G4ResearchReferencePublisher(Node):
         self.released=True
         self.status("UNVERIFIED_REFERENCE_SENT_TO_OFFLINE_SCAN",
                     start_offset_m=round(gap,3),
+                    start_vertical_offset_m=round(z_gap,3),
                     published_waypoints=len(result.poses))
         self.get_logger().warning(
             "UNVERIFIED RESEARCH /initial_path sent: %d points, start offset %.3fm"
