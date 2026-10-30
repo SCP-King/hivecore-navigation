@@ -15,9 +15,10 @@ if (os.environ.get("ROS_DOMAIN_ID") != "88" or
     raise RuntimeError("G4 observer restricted to isolated historical research")
 
 import rclpy
+from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
 from rclpy.node import Node
 from rclpy.executors import ExternalShutdownException
-from std_msgs.msg import String
+from std_msgs.msg import String, Bool
 from nav_msgs.msg import Path as RosPath
 from scan_planner_msgs.msg import Bspline
 from n01_scan_dynacbf_bridge.scan_g1_monitor import valid_bspline
@@ -31,16 +32,25 @@ class G4ChainObserver(Node):
         self.declare_parameter("reference_file", "")
         self.declare_parameter("report_path", "")
         self.declare_parameter("duration_s", 165.0)
+        self.declare_parameter("require_static_overlay", False)
         reference = self.get_parameter("reference_file").value
         report = self.get_parameter("report_path").value or os.environ.get("N01_G4_CHAIN_REPORT_PATH", "")
         self.duration = float(self.get_parameter("duration_s").value)
         if not reference or not report or not 10 <= self.duration <= 180:
             raise ValueError("G4 observer requires reference, report_path and bounded duration")
         self.chain = ChainEvidence(load_reference(reference))
+        self.chain.static_pcd_required = bool(
+            self.get_parameter("require_static_overlay").value)
         self.output = FilePath(report)
         self.start = time.monotonic()
         self.saved = False
         self.create_subscription(RosPath, "/initial_path", self.on_reference_path, 10)
+        if self.chain.static_pcd_required:
+            latched = QoSProfile(
+                depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL,
+                reliability=ReliabilityPolicy.RELIABLE)
+            self.create_subscription(
+                Bool, "/grid_map/static_overlay_ready", self.on_static_overlay, latched)
         self.create_subscription(String, "/n01/offline/g4_reference_status", self.on_status, 10)
         self.create_subscription(Bspline, "/planning/bspline", self.on_bspline, 10)
         self.create_subscription(RosPath, "/nav/test/global_path", self.on_bridge_path, 10)
@@ -48,6 +58,9 @@ class G4ChainObserver(Node):
         self.create_subscription(String, "/n01/offline/g3_solver_report", self.on_g3, 10)
         self.create_subscription(RosPath, "/n01/offline/g3_candidate_path", self.on_g3_path, 10)
         self.create_timer(.5, self.tick)
+
+    def on_static_overlay(self, msg):
+        self.chain.native_static_pcd_status(bool(msg.data))
 
     def on_reference_path(self, msg):
         self.chain.initial_path(
