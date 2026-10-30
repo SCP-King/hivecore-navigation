@@ -144,6 +144,17 @@ class StaticMapNode(Node):
             f"PCD 加载成功: {self._pcd_path}  pts={xs.size} "
             f"bounds x[{xs.min():.2f},{xs.max():.2f}] y[{ys.min():.2f},{ys.max():.2f}] "
             f"z[{zs.min():.2f},{zs.max():.2f}]")
+        # Apply the configured Z interval explicitly. Previously iz was
+        # calculated from min_z but no actual Z clipping happened; out-of-
+        # window samples were silently retained and misrepresented as bounded.
+        in_window = (zs >= self._min_z) & (zs <= self._max_z)
+        excluded = int((~in_window).sum())
+        self.get_logger().info(
+            f"PCD z-window [{self._min_z:.3f},{self._max_z:.3f}] "
+            f"accepted={int(in_window.sum())} excluded={excluded}")
+        xs, ys, zs = xs[in_window], ys[in_window], zs[in_window]
+        if xs.size == 0:
+            raise ValueError("PCD_Z_WINDOW_EXCLUDES_ALL_SAMPLES")
         # ---- 体素化:保留全部 3D 体素中心(不抽取代表点,保持完整形状) ----
         # 按 0.05m 立方体格(整数键)分组,每个格输出格中心一点。
         # 这样地面/墙面/顶部各自落在各自 z 层,避免"整列为一点"把墙折叠到地面。
@@ -154,7 +165,7 @@ class StaticMapNode(Node):
         # 遍历分组:对每个体素格任意取一点(用 unique return_index)
         _, first_idx = np.unique(key, return_index=True)
         ix_o = ix[first_idx]; iy_o = iy[first_idx]; iz_o = iz[first_idx]
-        # z 窗口已由 iz 编码保证在 [min_z, max_z);转世界坐标
+        # z window explicitly filtered above; do not infer floor from any point.
         cx = xs.min(); cy = ys.min()
         self._out_x = (cx + (ix_o + 0.5) * self._resolution).astype(np.float32)
         self._out_y = (cy + (iy_o + 0.5) * self._resolution).astype(np.float32)
