@@ -26,6 +26,9 @@ from n01_offline_integration.pcd_static_preview import sample_pcd
 from n01_offline_integration.pcd_route_height_profile import profile_route_surfaces
 from n01_offline_integration.g410_route_surface_ambiguity import audit_surface_ambiguity
 from n01_offline_integration.g411_mode3_z_alignment import check_mode3_z_alignment
+from n01_offline_integration.g412_historical_mount_alignment import (
+    audit_mapping_mount_alignment,
+)
 
 
 def make_reader(bag_dir, topics):
@@ -131,6 +134,7 @@ def first_accepted_scan_pose(bag_dir, *, max_age_s=1.0):
             "original_cloud_stamp_ns": stamp_ns,
             "source_cloud_frame": "lidar_link",
             "map_to_base_footprint_xyz_m": list(pose[0]),
+            "map_to_base_footprint_quaternion_xyzw": list(pose[1]),
             "map_to_base_footprint_xy_m": list(pose[0][:2]),
             # Existing 0.90m replay geometry is RETAINED as a legacy
             # comparison; it is not the proven mapping-time TF convention.
@@ -210,6 +214,19 @@ def main(argv=None):
         manifest["stage"] = "first_accepted_bag_pose"
         pose = first_accepted_scan_pose(args.bag)
         manifest["first_accepted_bag_pose"] = pose
+        # G4.12: compare two source-observed mount heights using exactly
+        # the SAME map pose + orientation. Never silently reinterpret
+        # recorded PCD or publish corrected map->base_footprint TF.
+        height_alignment = audit_mapping_mount_alignment(manifest)
+        with (args.output_dir / "g412_historical_mount_alignment.json").open(
+                "x", encoding="utf-8") as align_file:
+            json.dump(height_alignment, align_file, ensure_ascii=False,
+                      indent=2, allow_nan=False)
+            align_file.write("\n")
+        manifest["g412_historical_mount_alignment"] = (
+            "g412_historical_mount_alignment.json")
+        manifest["g412_legacy_lidar_shift_m"] = (
+            height_alignment["legacy_lidar_position_shift_magnitude_m"])
         # G4.11: read-only numerical "what if map Z=0" check against the
         # REAL SCAN mode3 pathCallback and existing G4 vertical-offset gate.
         # This does not select ground, change SCAN params or unlock launch.
