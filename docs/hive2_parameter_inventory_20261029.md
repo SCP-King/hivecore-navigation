@@ -167,3 +167,18 @@ H_sensor_over_surface =
 已检查用户上传的 `hive2_slam_sources_20261030_155649.tar.gz` 中 19 个 Xacro/YAML/Launch/msg 文件。四腿各有 hip、thigh、shank、foot（KDL 虚拟足端）和 wheel_link 共 **5 个 link**；加上 7 个核心导航 frame、独立 IMU 滤波两帧，**29 个命名 frame**（不保证都被实时发布）。`foot_link` 的父帧实际是 `thigh_link`，并非 `shank_link`；四个 ankle_yaw 关节绕 Z 轴转向，四个 wheel 关节分别独立旋转。
 
 底盘 `hive2_chassis_params.yaml` 声明 `hive2_driver/config/robot_motion.yaml` 才是轮式控制律/运动学/OTG 参数唯一真源，当前压缩包没有此文件。 `hive2_leg_parameters.yaml` 的 Home 角 +45° / -75° 为**目标值，不代表当前实际固定姿态**；且 `sensor_balance.enabled=true`，须核对平衡模块在轮式模式下的控制权。SLAM `LocalizationStatus.msg` 的实际字段已在 [TF 契约](hive2_wheel_only_tf_frame_contract_20261030.md) 中列出。
+
+
+## 10. 2026-10-30：从两个原始 `robot_motion.yaml` 副本核对真实运动配置
+
+用户上传 `hive2_robot_motion_configs.tar.gz`；安装副本和配置源副本各 7,000 字节、218 行，SHA-256 均为 `3f19abe0a65e02b331a0d51c18ec0503278a4d9a6b942332b47c4f7d434584f0`，内容一致。已记录确认的四轮驱动 `wheel_fl/fr/rl/rr`、四个 `*_ankle_yaw` 转向关节以及 8 个腿 pitch 关节的分组与控制器绑定；该文件**不包含控制器的完整速度/转向分配实现**。
+
+核心配置：`chassis.wheel_radius=0.095m`，`wheel_base_x=0.56m`，`wheel_base_y=0.27m`，`delta_y=0.085m`，`chassis.max_linear_speed=2.0m/s`，`chassis.max_linear_acceleration=1.0m/s²`、常规 `chassis.linear_acceleration=0.6m/s²`，最大角加速度 `2.0rad/s²`，`command_timeout_s=0.2`；控制周期名义配置 `1000Hz`、`chassis.odom.publish_tf=false`。**这些是配置值，不是实际运行性能实测。**
+
+- **G3 模型差异**：现有离线全向点质点 G3 的 `max_accel=3.2m/s²` 明确高于底盘配置的 `1.0m/s²`，不得直接认为可执行。SCAN `max_acc=0.5m/s²` 数值较低但仍未覆盖四轮转向动力学。
+- **转向角语义差异**：Xacro `ankle_yaw` 的 joint limit 约 ±π/2，YAML `chassis.steer.yaw_soft_limit_rad=π`；须核对控制器是否采用等效转向角/反转轮速等实现，不能据此宣称可以无保护越过物理限位。
+- **固定 pitch 模式**：`legs_lift_controller` 初始 `inactive`，虽配置 `balance.enabled=true`，不能只凭参数判断平衡模块已经运动；实际是否保持固定姿态仍需反馈。
+- **底盘与 SLAM 分工**：`chassis.odom.publish_tf=false` 仅是底盘的 odom TF 开关，不能替代关闭 SLAM 0.30m RSP。
+- **待验证**：哪个 YAML 最终被 launch 加载/覆盖、`motion_controller/ChassisController` 真正的轮速/转角分配、有效最大角速度、实际制动与整机固定姿态碰撞包络。
+
+详细见 [双副本源码审计报告](hive2_robot_motion_yaml_audit_20261030.md) 和 [结构化只读 YAML 摘要](../config/reference/hive2_robot_motion_audit_20261030.json)。无需再要求提供该 YAML；下一阶段可以在离线环境先对规划器进行轮式约束的必要条件检查，不产生任何底盘命令。
