@@ -28,6 +28,7 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument("bag_path"),
         DeclareLaunchArgument("reference_file"),
+        DeclareLaunchArgument("report_path",default_value=""),
         DeclareLaunchArgument("duration_s",default_value="165.0"),
         DeclareLaunchArgument("max_clouds",default_value="2000"),
         DeclareLaunchArgument("scan_rate_hz",default_value="8.0"),
@@ -40,6 +41,18 @@ def generate_launch_description():
                 "scan_rate_hz":LaunchConfiguration("scan_rate_hz"),
                 "scan_navi_mode":"3",
             }.items()),
+        Node(package="n01_offline_integration",
+             executable="n01_g4_chain_observer",
+             name="n01_g4_chain_observer",
+             parameters=[{
+                 "reference_file":ParameterValue(
+                     LaunchConfiguration("reference_file"),value_type=str),
+                 "report_path":ParameterValue(
+                     LaunchConfiguration("report_path"),value_type=str),
+                 "duration_s":ParameterValue(
+                     LaunchConfiguration("duration_s"),value_type=float),
+                 "use_sim_time":False,
+             }],output="screen"),
         Node(package="n01_offline_integration",
              executable="n01_g4_reference",
              name="n01_g4_research_reference",
