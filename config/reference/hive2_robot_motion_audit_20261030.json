@@ -1,0 +1,191 @@
+{
+  "schema": "n01.hive2.robot_motion_primary_source_audit.v1",
+  "date": "2026-10-30",
+  "provenance": {
+    "uploaded_archive": "hive2_robot_motion_configs.tar.gz",
+    "source_paths": [
+      "/opt/hivecore/hive2-motion/1.0.0/install/share/hive2_driver/config/robot_motion.yaml",
+      "/opt/hivecore/hive2-motion/1.0.0/config/hive2_driver/robot_motion.yaml"
+    ],
+    "sha256_both": "3f19abe0a65e02b331a0d51c18ec0503278a4d9a6b942332b47c4f7d434584f0",
+    "content_identical": true,
+    "source_bytes_each": 7000,
+    "source_lines_each": 218,
+    "parsed_yaml_directly": true,
+    "controller_implementation_inspected": false,
+    "effective_runtime_file_confirmed": false,
+    "rationale": "Two file byte streams match. Launch script in prior uploaded source archives delegates driver launch to hive2_driver.launch.py; without that launch or runtime parameter dump the activated copy is not independently proved."
+  },
+  "robot": {
+    "driving_joints": [
+      "wheel_fl",
+      "wheel_fr",
+      "wheel_rl",
+      "wheel_rr"
+    ],
+    "steering_joints": [
+      "fl_ankle_yaw",
+      "fr_ankle_yaw",
+      "rl_ankle_yaw",
+      "rr_ankle_yaw"
+    ],
+    "pitch_hold_joints": [
+      "fl_leg_pitch1",
+      "fl_leg_pitch2",
+      "fr_leg_pitch1",
+      "fr_leg_pitch2",
+      "rl_leg_pitch1",
+      "rl_leg_pitch2",
+      "rr_leg_pitch1",
+      "rr_leg_pitch2"
+    ],
+    "controller_type": "motion_controller/ChassisController",
+    "command_topic": "/chassis_controller/rt_command",
+    "status_topic": "/chassis_controller/rt_status",
+    "controller_command_timeout_s": 0.2,
+    "chassis_rt_controller_spawned": true,
+    "chassis_rt_controller_deferred_activate": true,
+    "legs_lift_controller_spawned": true,
+    "legs_lift_controller_initially_inactive": true,
+    "wheel_leg_enabled": false,
+    "legs_lift_wheel_leg_enabled": false,
+    "legs_balance_enabled_in_inactive_lift_controller": true,
+    "pitch_hold_feedback_verified": false,
+    "four_wheel_steer_allocation_implementation_verified": false
+  },
+  "geometry_from_yaml": {
+    "wheel_radius_m": 0.095,
+    "wheel_base_x_m": 0.56,
+    "wheel_base_y_m": 0.27,
+    "delta_y_m": 0.085,
+    "wheel_drive_axis": [
+      [
+        0,
+        1,
+        0
+      ],
+      [
+        0,
+        1,
+        0
+      ],
+      [
+        0,
+        1,
+        0
+      ],
+      [
+        0,
+        1,
+        0
+      ]
+    ],
+    "all_four_angles_steerable": true,
+    "steering_joint_urdf_limits_from_previous_xacro_rad": [
+      -1.5708,
+      1.5708
+    ],
+    "chassis_steer_soft_limit_rad": 3.141592653589793,
+    "note": "Compare steering limits in controller implementation: configured soft limit pi differs from URDF ankle yaw joint limit +/-pi/2. Possible equivalent wheel-direction representation, not assumed safe/unsafe without runtime and implementation."
+  },
+  "configured_motion_limits": {
+    "chassis_max_linear_speed_mps": 2,
+    "chassis_omega_per_linear": 1.25,
+    "chassis_max_linear_acceleration_mps2": 1,
+    "chassis_max_angular_acceleration_radps2": 2,
+    "chassis_max_linear_jerk_mps3": 10,
+    "chassis_max_angular_jerk_radps3": 20,
+    "chassis_nominal_linear_acceleration_mps2": 0.6,
+    "chassis_nominal_angular_acceleration_radps2": 0.7,
+    "chassis_nominal_linear_jerk_mps3": 6,
+    "chassis_nominal_angular_jerk_radps3": 7,
+    "chassis_steer_speed_config": 1.2,
+    "chassis_steer_acceleration_config": 2,
+    "chassis_steer_jerk_config": 20,
+    "chassis_steer_max_speed_config": 1.57,
+    "chassis_steer_max_acceleration_config": 4.5,
+    "chassis_steer_max_jerk_config": 45,
+    "chassis_steer_position_tolerance_rad": 0.02,
+    "chassis_steer_mode_switch_psi_rad": 0.3,
+    "chassis_drive_max_speed_config": 20,
+    "chassis_drive_angle_source": "feedback",
+    "chassis_drive_reorient_keep": 0.65,
+    "all_values_are_configured_not_measured": true,
+    "approved_navigation_max_angular_velocity_radps": null
+  },
+  "controller_and_odom": {
+    "controller_manager_update_rate_hz": 1000,
+    "cpu_affinity_config": 7,
+    "imu_fusion_enabled": true,
+    "imu_sensor_name": "lpms_imu",
+    "odom_publish_tf": false,
+    "no_inference_of_odom_topic_absence": true,
+    "odom_tf_enabled_in_actual_run_verified": false,
+    "chassis_hard_mode_enabled": true,
+    "chassis_hard_mode_linear_brake_eps": 0.03,
+    "chassis_hard_mode_omega_brake_eps": 0.02,
+    "steer_drive_command_input_topic_reported_by_prior_source": "/cmd_vel",
+    "steer_drive_supervisor_implementation_inspected": false,
+    "chassis_wheel_adm_enabled": true,
+    "chassis_wheel_adm_overcurrent_global_enabled": true,
+    "chassis_wheel_adm_rolling_current_limit_a": 4,
+    "chassis_wheel_adm_overcurrent_enter_a": 15,
+    "chassis_wheel_adm_overcurrent_exit_a": 12,
+    "note": "Motor protective current and brake parameters are not certified stopping-distance or obstacle safety thresholds."
+  },
+  "integration_issues": [
+    {
+      "id": "G3_PLANAR_MODEL_NOT_HIVE2_4WS",
+      "status": "BLOCKED_FOR_PHYSICAL_INTERPRETATION",
+      "evidence": "G3 solve_discrete_mpc_cbf uses vx/vy planar point-mass beam search; YAML confirms four steerable ankle yaw joints and independent wheel drive",
+      "required": "controller allocation/dynamics and steering-rate/slip constraints; source or bounded verified experimental data"
+    },
+    {
+      "id": "G3_MAX_ACCEL_MISMATCH",
+      "status": "VERIFIED_MISMATCH",
+      "g3_default_mps2": 3.2,
+      "chassis_config_max_mps2": 1,
+      "chassis_nominal_mps2": 0.6,
+      "scan_config_max_mps2": 0.5,
+      "required": "do not export G3 candidate trajectories as Hive2 feasible controls; use chassis bounds in a wheel kinematics aware research model"
+    },
+    {
+      "id": "STEERING_LIMIT_URDF_VS_CONFIG",
+      "status": "NEEDS_CONTROLLER_SEMANTIC_REVIEW",
+      "urdf_reported_rad": 1.5708,
+      "config_soft_limit_rad": 3.141592653589793,
+      "required": "check steering-angle equivalence, wheel-direction reversal and hardware/URDF joint limit enforcement"
+    },
+    {
+      "id": "FIXED_PITCH_VS_LIFT_BALANCE",
+      "status": "NEEDS_MODE_EVIDENCE",
+      "lift_spawned_inactive": true,
+      "balance_enabled_in_lift_config": true,
+      "required": "verify the effective activated controller and unchanged pitch feedback before fixed-posture collision envelope"
+    },
+    {
+      "id": "SOURCE_RUNTIME_LOADING",
+      "status": "NOT_PROVED",
+      "copies_match": true,
+      "required": "the final launch effective parameters or read-only runtime dump, not a request to start hardware"
+    }
+  ],
+  "unresolved_values": {
+    "current_fixed_pitch_joint_feedback_rad": null,
+    "maximum_navigation_yaw_rate_radps": null,
+    "maximum_verified_braking_deceleration_mps2": null,
+    "verified_stop_distance_by_speed_m": null,
+    "active_wheel_steering_mode": null,
+    "wheel_slip_contact_model": null,
+    "robot_3d_collision_envelope_for_locked_pitch": null,
+    "map_ground_z_map_function": null,
+    "true_control_loop_actual_rate_hz": null
+  },
+  "safety": {
+    "mode": "HISTORICAL_BAG_READ_ONLY",
+    "safety_authorization": "NEVER",
+    "actuator_output": "DISABLED",
+    "no_motion_commands_created": true,
+    "no_ros_or_hardware_tests_run_in_this_audit": true
+  }
+}
