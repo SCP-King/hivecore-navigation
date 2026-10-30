@@ -43,6 +43,13 @@ class ChainEvidence:
         self.started = False
         self.cmd_vel_seen = False
         self.graph_query_failed = False
+        self.static_pcd_required = False
+        self.static_pcd_native_ready = False
+        self.static_pcd_ready_before_reference = False
+
+    def native_static_pcd_status(self, ready):
+        if type(ready) is bool and ready:
+            self.static_pcd_native_ready = True
 
     def reference_status(self, data):
         if not isinstance(data, dict) or data.get("schema") != "n01.offline.g4_reference_status.v1":
@@ -74,6 +81,8 @@ class ChainEvidence:
             self.counts["nonmatching_initial_paths"] += 1
             return
         self.counts["matching_initial_paths"] += 1
+        if self.static_pcd_native_ready:
+            self.static_pcd_ready_before_reference = True
         # Only a matching /initial_path can establish the G4 ordering marker.
         self.started = True
 
@@ -108,6 +117,8 @@ class ChainEvidence:
             blockers.append("CMD_VEL_PUBLISHER_OR_UNSAFE_REFERENCE_STATUS")
         if self.graph_query_failed:
             blockers.append("ROS_GRAPH_GUARD_QUERY_FAILED")
+        if self.static_pcd_required and not self.static_pcd_ready_before_reference:
+            blockers.append("NATIVE_SCAN_STATIC_PCD_NOT_READY_BEFORE_G4_REFERENCE")
         if c["matching_initial_paths"] != 1:
             blockers.append("G4_REFERENCE_NOT_OBSERVED_EXACTLY_ONCE")
             if "WAITING_MATCHING_BAG_START_POSE" in self.statuses:
@@ -134,6 +145,10 @@ class ChainEvidence:
             "last_recorded_start_pose_mismatch_m": self.last_start_pose_mismatch,
             "strict_callback_observation_order": True,
             "static_full_pcd_integrated_into_scan_grid": False,
+            "native_scan_static_pcd_required":self.static_pcd_required,
+            "native_scan_static_pcd_occupancy_loaded_before_reference":
+                self.static_pcd_ready_before_reference,
+            "native_static_pcd_has_not_proven_collision_safety":True,
             "g3_output_proven_to_follow_the_new_g4_route": False,
             "terrain_and_collision_verified": False,
             "dynamic_obstacles_ground_truth_verified": False,
