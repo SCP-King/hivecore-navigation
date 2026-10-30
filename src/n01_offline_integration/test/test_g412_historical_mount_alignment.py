@@ -70,6 +70,20 @@ class MappingMountCompatibilityTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             mapped_mounts(pose,mount_height_m=.8)
 
+    def test_historical_mapping_replay_opt_in_has_provenance_and_default_preserved(self):
+        node=(REPO/"src/n01_offline_integration/n01_offline_integration/historical_bag_node.py").read_text()
+        ast.parse(node)
+        self.assertIn('param("historical_mount_profile","LEGACY_HIVE2_0P90")',node)
+        self.assertIn('self.mount_profile=="MAPPING_SLAM_DYNAMIC_0P30"',node)
+        self.assertIn('MAPPING_PROFILE_REQUIRES_ORIGINAL_DYNAMIC_0P30_TF',node)
+        self.assertIn('mapped_mounts(pose,mount_height_m=self.mount_height_m)',node)
+        self.assertNotIn('create_publisher(Twist',node)
+        for launchname in ("bag_pipeline.launch.py", "g4_offline_scan_reference.launch.py"):
+            src=(REPO/"src/n01_offline_integration/launch"/launchname).read_text()
+            ast.parse(src)
+            self.assertIn('historical_mount_profile',src)
+            self.assertIn('default_value="LEGACY_HIVE2_0P90"',src)
+
     def test_g48_preflight_exports_independent_evidence(self):
         path=REPO/"scripts/n01_g4_bag_start_preflight.py"
         source=path.read_text(encoding="utf-8")
