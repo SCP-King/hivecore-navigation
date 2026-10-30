@@ -146,3 +146,17 @@ H_sensor_over_surface =
 
 **场景层面**：路线不一定为水平地面，后续应确定局部地面高度函数 `ground_z_map(x,y)`、法线、支撑连续性与整机净空，不能用一个起点的 Z 常数代替药厂通道的三维通行检测。录制内同时存在 0.30/0.90m 边定义冲突，必须保留审计证据，不可因选定 0.90m 而将双 RSP 冲突标为已修复。离线历史重建可以使用明确选定的 0.90m 覆盖，但**不得宣称真实 SLAM 在线发布者唯一**。
 
+
+
+## 9. 2026-10-30：25 帧真实录制关系和固定腿姿态轮式开发工况
+
+用户已补充：录制 Bag 的 `/tf` 与 `/tf_static`、甲方 URDF、SLAM/点云预处理可交叉说明一个 **25-frame TF 森林**：直接 `map→base_footprint`；`base_footprint→base_link` 选用 Hive2 0.90m；`base_link→lidar_link` 为 (0.295,0,0)m；`lidar_link→imu_link→livox_frame` 与独立 `base_link→lpms_imu_link`；四条腿各 4 个关节/末端帧，另有独立 `fixed_frame→imu_filtered`。**录制会话没有 odom 边**；本次不做 `odom=map` 的隐性转换。约 11 条 map 动态边、296 条 IMU 过滤 TF、抽样 100/100 帧的 `geo_filtered` 均为 `lidar_link` 的数字来自用户报告，尚未在本次提交中重新分析 Bag。
+
+**开发工况已定：四条腿固定工作姿态，仅靠轮式移动；不设计抬腿、迈步、步态切换。** 这只是研发约束：不能误写为当前已实现/已验证的腿关节保持控制，也不自动证明轮式底盘是差速、阿克曼或全向。**固定腿仍必须计入机器人碰撞包络**，现有 G3 二维全向点质点仅是离线数值研究模型。
+
+- [完整 25-frame TF 与固定腿轮式导航接口契约](hive2_wheel_only_tf_frame_contract_20261030.md)
+- [机器可读契约 JSON](../config/reference/hive2_wheel_only_tf_contract_20261030.json)
+
+代码配套变更：将 `src/n01_bringup/config/n01_sensor.yaml` 的地图定位目标帧从录制中不存在的 `odom` 改为 `map`；`sensor_only.launch.py` 仍默认 `lidar_link` 无地图定位显示，去除必须有 `/odom` 的错误提示。**这些不等于 SLAM/TF 实时验收通过，也未修改 ROS 控制节点或转动任何车轮。**
+
+此前所有未确认的地面 `z_{​ground}(x,y)`、整机外廓、轮式运动学、角速度/制动能力、固定腿关节角与锁定反馈仍保持未验证；0.30/0.90m RSP 双发布风险继续是 P0 问题。
