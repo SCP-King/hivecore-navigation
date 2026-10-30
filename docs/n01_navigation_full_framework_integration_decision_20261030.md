@@ -50,3 +50,21 @@
 5. 仅当完整 G4→SCAN→G2→G3 话题证据齐全，才考虑静止在线定位只读联调；控制授权与运动测试由机器人现场负责方独立批准。
 
 **本文件是一份工程决策与研发验收规划，不代表某次 ROS 全链已经运行成功。**
+
+
+## 已完成的 C++ 语义核对与自动工具（2026-10-30 新增）
+
+直接核对仓库 `src/scan_planner/plan_manage/src/scan_replan_fsm.cpp`：
+- mode 3 (`fsm.navi_mode=3`) 通过订阅 `initial_path` 收到路径；
+- `SCANReplanFSM::pathCallback` 对每个 `pose_stamped.pose.position.z` 执行 `+ body_height_`，然后调用 `planGlobalTrajByWaypoints`；
+- `SCANReplanFSM::odometryCallback` 的 `odom_pos_.z` 直接来自 `/body_pose`；
+- 当前离线 G4 发布器拒绝实际 `/body_pose` 与初始路径上 `reference_z + scan_body_height` 差距超过 0.5m；研究配置 SCAN `body_height=0.4m`。
+- `grid_map.ground_height=0` 在 `GridMap::initMap` 参与地图网格原点的 Z 初始化；它不是路面分割得到的高程地图。
+
+**因此**，仅看 Hive2 链 `base_footprint→base_link=+0.9` 无法推出 SCAN 当前 mode3 的 Z 可以直接复用；若只假设 `reference_z=0`，SCAN 研究目标 Z 为 0.4m，而用户提供的首个 Bag 位姿经 0.9m 安装后 `base_link` 大约处于 map Z≈0.9m，差值约 0.5m，正好在参考发布器严限附近。不同扫描姿态可能略有差异，不能提前断言哪一帧一定通过或失败。
+
+已新增 `n01_offline_integration/g411_mode3_z_alignment.py` 并接入 `scripts/n01_g4_bag_start_preflight.py`。读取每次实测的第一帧有效 `map→base_link` 重建结果，输出 `g411_scan_mode3_height_alignment.json`，其中明确列出当研究假设 Z=0、SCAN 使用真实配置 body_height=.4、发布器限制 .5 时的**数值偏差与会否触发参考发布门控**。结果永远不会表示地面已经测得，也不会自动发出三维路径、修改 SCAN 或向底盘控制器发送消息。
+
+已经专门检查过：把 `N01_G4_FLOOR_Z_VERIFIED=1` 设成真值只为启动测试，会混淆功能联调和地面验收，因此**没有把这种强制放开措施提交到最终仓库**。既有默认隔离运行脚本保持 fail-closed。
+
+**下一步研究工作**：复用实际 Bag+PCD 的只读 G4 检查，首先确定 Z=0 假设引起的真正高度偏差，再设计与实机隔离、明确非地面假设的 ROS 算法联通演示；随后执行静止状态下的实时 SLAM 只读 TF/LocalizationStatus 门控。低速轮式实际运动须由甲方独立确认刹车、关节反馈和现场授权。
