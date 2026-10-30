@@ -34,6 +34,8 @@ def generate_launch_description():
         DeclareLaunchArgument("historical_mount_profile",
                               default_value="LEGACY_HIVE2_0P90"),
         DeclareLaunchArgument("scan_rate_hz",default_value="8.0"),
+        DeclareLaunchArgument("scan_ground_height_m",default_value="0.0"),
+        DeclareLaunchArgument("scan_body_height_m",default_value="0.4"),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(original),
             launch_arguments={
@@ -42,6 +44,8 @@ def generate_launch_description():
                 "max_clouds":LaunchConfiguration("max_clouds"),
                 "scan_rate_hz":LaunchConfiguration("scan_rate_hz"),
                 "scan_navi_mode":"3",
+                "scan_ground_height_m":LaunchConfiguration("scan_ground_height_m"),
+                "scan_body_height_m":LaunchConfiguration("scan_body_height_m"),
                 "historical_mount_profile":LaunchConfiguration("historical_mount_profile"),
             }.items()),
         Node(package="n01_offline_integration",
@@ -63,7 +67,8 @@ def generate_launch_description():
                  "reference_file":ParameterValue(
                      LaunchConfiguration("reference_file"),value_type=str),
                  "max_start_offset_m":.75,
-                 "scan_body_height_m":.4,
+                 "scan_body_height_m":ParameterValue(
+                     LaunchConfiguration("scan_body_height_m"),value_type=float),
                  "max_start_vertical_offset_m":.5,
                  "use_sim_time":False,
              }],output="screen"),
