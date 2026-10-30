@@ -8,7 +8,7 @@
 
 **固定的是四条腿的 pitch1、pitch2 工作姿态，不是锁死一切腿部关节。** 源码 `quad_leg_kinematics.xacro` 已核实：每腿有 pitch1 / pitch2 / ankle_yaw 三个旋转关节，末端还有一个连续 wheel 旋转关节。四个 `wheel_fl, wheel_fr, wheel_rl, wheel_rr` 独立驱动；四个 `fl/fr/rl/rr_ankle_yaw` 可绕局部 Z 轴转向，硬限位约 ±1.5708 rad。
 
-本阶段不做迈步、跨台阶、主动抬腿或姿态升降；但不能因此禁用轮式转向所必需的 ankle_yaw。真实轮速/转向分配算法仍待 `hive2_driver/config/robot_motion.yaml` 和控制器实现核实；不能自动假定阿克曼/差速/麦克纳姆/任意全向控制。
+本阶段不做迈步、跨台阶、主动抬腿或姿态升降；但不能因此禁用轮式转向所必需的 ankle_yaw。`hive2_driver/config/robot_motion.yaml` 的两份副本已于 2026-10-30 读取并证实相同；轮径、四轮几何、速度/加速度/jerk 和转向约束配置已确认。真实轮速/转向分配算法仍待 `motion_controller/ChassisController` 实现核实；不能自动假定阿克曼/差速/麦克纳姆/任意全向控制。
 
 `hive2_leg_parameters.yaml` 记录 MoveHome 的 pitch1=+0.785398rad、pitch2=-1.308997rad（每腿重复），这只是**配置的 Home 目标值**，不是目前车辆真实保持的角度或已接地姿态；`sensor_balance.enabled: true` 和 `body_lift.trajectory_execution_enabled: true` 也意味着仅说“腿不动”**不会自动关闭平衡/升降模块**。开发阶段的禁用/保持策略要依据真实控制权和反馈设计，不能直接替甲方发指令。
 
@@ -104,13 +104,13 @@ SLAM `console_slam3d_bringup.py` 的 `launch_robot_state_publisher` 默认 `true
 - `wheels_can_controllers.yaml`：控制器类型 `forward_command_controller/ForwardCommandController` 的 velocity interface；文件注释写 250Hz，而实际 `controller_manager.ros__parameters.update_rate` 写 500Hz。必须以最终启用配置为准，不能凭注释推断实际控制周期。
 - `hive2.config.xacro` 默认 EtherCAT `ec_freq=1000`，轮组 USB2CAN 配置和四轮转向链已具备，但无需将它们导入导航层。
 
-**仍缺**控制器的最终轮式运动学配置 `robot_motion.yaml`，必要时再读取 `ChassisController` 核心实现以确认速度输入、转向分配和实际限幅；这比继续猜所谓“车一样”是否差速更有效。
+**已补齐**：`robot_motion.yaml` 的配置和安装副本均已读取（各 7,000 字节、218 行、SHA-256 完全相同）。详细参数和差异见 [Hive2 robot_motion 双副本审计](hive2_robot_motion_yaml_audit_20261030.md)。**剩余缺口不是这个 YAML，而是 `ChassisController` 轮速/转向分配实现与最终有效启动参数**；不能把 YAML 的 `chassis.steer.yaw_soft_limit_rad=π` 直接当作物理 yaw 关节可越过 Xacro ±π/2 限位的许可。
 
 ## 7. 后续开发方案（不运行实机）
 
 1. 已知 Xacro 和消息定义可落库为可审计**只读模型**；旧 25-frame 契约和 TF 结构修正为 29。
 2. 按源码修正仅离线使用的严格 LocalizationStatus 参数，不自动解除 `slam_rsp_disabled_confirmed=false` 门控。
-3. 获得 `robot_motion.yaml` 后确认转向、速度分配、轮驱模式和固定 pitch 工作姿态；才能有依据地适配 G3 离散轮式约束。
+3. `robot_motion.yaml` 的几何、转向限制及底盘速度/加速度/jerk 数值已明确；下一步可开展离线四轮转向**必要条件筛选**，但要完整实现与硬件一致的轮速/转向分配，仍需核对 `motion_controller/ChassisController` 的实现与实际参数覆盖。G3 当前 3.2 m/s² 加速度上限高于 Hive2 配置的 1.0 m/s²，已有明确模型差异。
 4. 使用固定姿态**真实关节反馈**构建完整车体轮/腿碰撞包络，之后评估地图 `ground_z_map(x,y)`，不从 PCD 低分位数直接认定地面。
 5. 后续只在物理隔离历史 Bag 中开展 SCAN/G2/G3 验收；未获安全批准以前禁止连接任何轮/腿运动命令。
 
