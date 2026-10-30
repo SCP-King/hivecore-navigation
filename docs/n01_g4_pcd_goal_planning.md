@@ -171,3 +171,50 @@ python3 scripts/n01_bag_ray_visibility.py \
 继而建立多高度机器人通行检查；当前绝不能直接送入 SCAN 当成权威局部
 占据地图，也不能自动生成实机导航指令。当前该工具是代码提交阶段，尚未在用户
 Ubuntu 的真实 Bag 跑过，测试结果要由用户输出验证。
+
+## G4.3：真实 PCD+Bag 已上传栅格上的对齐审计 + A* 研究路线（2026-10-30）
+
+用户上传 `pcd_goal1.zip`，其中有真实 `bag_ray_20261030_103843.pgm/.json`、
+`factory_map.pgm/.json` 和 floor sweep。已从上传的两份栅格计算：
+
+- G4.2 Bag 180 帧中，99 帧匹配 TF，81 帧没有有效 TF；38,437 抽样激光点，
+  7,877 有效近水平射线；
+- Bag 射线自由格 336，障碍 1,314，未知 41,360（96.16%）；
+- 旧 PCD z=0 切片自由格 18，膨胀障碍 6,810；
+- 两图以相同 XY origin、0.25m 分辨率、230×187 大小可进行栅格比较，
+  但同格并不等于验证了 3D 刚性配准；
+- Bag 自由、旧 PCD 切片障碍冲突 103 格；Bag 命中、旧 PCD 切片自由冲突 2 格；
+- Bag 自由与旧 PCD 自由仅 3 格一致；
+- **冲突自由格先标为 UNKNOWN**，不会把争议区域当作通行空间，剩余
+  233 个仅雷达高度可见的自由格；最大 4-连通区 230 格；
+- 使用最大候选区两端点，独立 A* 可得到约 8.286m 的**研究路线**，
+  起点约 (0.02938,-0.30187)，终点约 (5.02938,-2.05187)。
+  这是从实际数据自动选的端点，**不是任务目标**。
+
+新增纯 Python 的 `pcd_bag_evidence_audit.py`、
+`scripts/n01_pcd_bag_evidence_audit.py`，只读取已有地图 PGM+JSON，
+不重读 Bag、不启动 ROS，输出冲突统计 JSON 和紫色冲突格 + 青色研究路线 SVG。
+`--research-route` 才生成自动候选 A*；可用数字 `--start X Y --goal X Y`
+代替，但会拒绝不在观测/非冲突候选自由格的端点。不产出
+`/initial_path`、`/planning/bspline` 或任何底盘命令。
+
+在用户 Ubuntu 拉取代码后用现有导出文件即可运行，不需要重算 180 帧 Bag：
+
+```bash
+cd /home/demo/lyy/hivecore-navigation
+git -c http.version=HTTP/1.1 pull --ff-only origin main
+python3 -m unittest discover -s src/n01_offline_integration/test \
+  -p 'test_pcd_bag_evidence_audit.py' -v
+
+python3 scripts/n01_pcd_bag_evidence_audit.py \
+  --ray-prefix /home/demo/lyy/n01_runtime/pcd_goal/bag_ray_20261030_103843 \
+  --pcd-prefix /home/demo/lyy/n01_runtime/pcd_goal/factory_map \
+  --output-prefix /home/demo/lyy/n01_runtime/pcd_goal/g43_audit_$(date +%Y%m%d_%H%M%S) \
+  --research-route
+```
+
+**目前不能称为机器人可通行或 SCAN 已接入：** Bag Ray FREE 代表激光高度附近穿越，
+PCD 高度切片又未验证地面高度；多高度净空、地面、机器人碰撞包络、动态障碍
+及离线重定位尚未验收。下一步 G4.4 应在原始 Bag 中加入多高度 ray 证据和
+地面连续性检查；再做静态局部地图的 SCAN 查询接口与 
+`fsm.navi_mode=3` 的 `/initial_path` 接入。
