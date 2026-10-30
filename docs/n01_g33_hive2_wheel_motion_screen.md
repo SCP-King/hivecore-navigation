@@ -82,3 +82,7 @@ python3 -m unittest discover -s src/n01_offline_integration/test \
 ```
 
 限幅数值由测试与 `config/reference/hive2_robot_motion_audit_20261030.json` 核对，防止仓库参数在以后改动时漂移。测试仍不包含 ROS、实机控制器和完整药厂环境。
+
+## 2026-10-30 后续 G3.4：由后验筛查升级为求解时约束
+
+此前 G3.3 只计算诊断，`solve_discrete_mpc_cbf` 独立默认仍为旧 3.2m/s² 以保留历史回归对照。现在 **`G3HistoricalCoordinator` 的默认真实历史 Bag 研究输入**已切换成 `acceleration_increment` 格、`max_speed=.75m/s`、`max_accel=.5m/s²`，并在最后防线清空所有超限候选。旧 3.2m/s² 不再是新的**实际离线 Bag 协调器**生成配置，但独立旧数值测试依旧存在；不能混称二者。参见 [G3.4 完整算法和单轮验收](n01_g34_hive2_bounded_candidate_generation.md)。
