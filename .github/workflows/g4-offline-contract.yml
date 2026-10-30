@@ -46,6 +46,11 @@ jobs:
         run: python3 -m unittest discover -s src/n01_offline_integration/test -p 'test_g411_mode3_z_alignment.py' -v
       - name: G4.12 mapping-vs-Hive2 TF mount reconciliation read-only contract
         run: python3 -m unittest discover -s src/n01_offline_integration/test -p 'test_g412_historical_mount_alignment.py' -v
+      - name: G4.13 old-map alignment and live read-only localization probes
+        run: |
+          python3 -m unittest discover -s src/n01_offline_integration/test -p 'test_g413_historical_mapping_and_live_readonly.py' -v
+          bash -n scripts/run_n01_g4_full_chain.sh
+          bash -n scripts/run_n01_bag_functional.sh
       - name: G4.3 PCD/Bag conflict and A* contracts
         run: python3 -m unittest discover -s src/n01_offline_integration/test -p 'test_pcd_bag_evidence_audit.py' -v
       - name: G4.4-7 reference/chain contracts
