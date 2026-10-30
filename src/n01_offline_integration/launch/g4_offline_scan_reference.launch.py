@@ -8,6 +8,7 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
@@ -36,6 +37,8 @@ def generate_launch_description():
         DeclareLaunchArgument("scan_rate_hz",default_value="8.0"),
         DeclareLaunchArgument("scan_ground_height_m",default_value="0.0"),
         DeclareLaunchArgument("scan_body_height_m",default_value="0.4"),
+        DeclareLaunchArgument("scan_static_pcd_enable",default_value="false"),
+        DeclareLaunchArgument("static_pcd_path",default_value=""),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(original),
             launch_arguments={
@@ -46,8 +49,19 @@ def generate_launch_description():
                 "scan_navi_mode":"3",
                 "scan_ground_height_m":LaunchConfiguration("scan_ground_height_m"),
                 "scan_body_height_m":LaunchConfiguration("scan_body_height_m"),
+                "scan_static_pcd_enable":LaunchConfiguration("scan_static_pcd_enable"),
                 "historical_mount_profile":LaunchConfiguration("historical_mount_profile"),
             }.items()),
+        # Publish original-map PCD as a separate static 3D occupancy layer.
+        # No TF broadcaster or motor/controller is started by this node.
+        Node(package="n01_static_map",executable="static_map_node",
+             name="n01_g4_static_pcd_supplier",
+             condition=IfCondition(LaunchConfiguration("scan_static_pcd_enable")),
+             parameters=[{"pcd_path":LaunchConfiguration("static_pcd_path"),
+                          "frame_id":"map","resolution":0.05,
+                          "min_z":-1.75,"max_z":3.35,
+                          "publish_rate":2.0}],
+             output="screen"),
         Node(package="n01_offline_integration",
              executable="n01_g4_chain_observer",
              name="n01_g4_chain_observer",
@@ -69,6 +83,8 @@ def generate_launch_description():
                  "max_start_offset_m":.75,
                  "scan_body_height_m":ParameterValue(
                      LaunchConfiguration("scan_body_height_m"),value_type=float),
+                 "require_static_overlay":ParameterValue(
+                     LaunchConfiguration("scan_static_pcd_enable"),value_type=bool),
                  "max_start_vertical_offset_m":.5,
                  "use_sim_time":False,
              }],output="screen"),
