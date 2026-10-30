@@ -25,6 +25,7 @@ from n01_offline_integration.pcd_bag_evidence_audit import audit, write_outputs
 from n01_offline_integration.pcd_static_preview import sample_pcd
 from n01_offline_integration.pcd_route_height_profile import profile_route_surfaces
 from n01_offline_integration.g410_route_surface_ambiguity import audit_surface_ambiguity
+from n01_offline_integration.g411_mode3_z_alignment import check_mode3_z_alignment
 
 
 def make_reader(bag_dir, topics):
@@ -185,6 +186,19 @@ def main(argv=None):
         manifest["stage"] = "first_accepted_bag_pose"
         pose = first_accepted_scan_pose(args.bag)
         manifest["first_accepted_bag_pose"] = pose
+        # G4.11: read-only numerical "what if map Z=0" check against the
+        # REAL SCAN mode3 pathCallback and existing G4 vertical-offset gate.
+        # This does not select ground, change SCAN params or unlock launch.
+        height_check = check_mode3_z_alignment(manifest)
+        with (args.output_dir / "g411_scan_mode3_height_alignment.json").open(
+                "x", encoding="utf-8") as height_file:
+            json.dump(height_check, height_file, ensure_ascii=False,
+                      indent=2, allow_nan=False)
+            height_file.write("\n")
+        manifest["g411_scan_mode3_height_alignment"] = (
+            "g411_scan_mode3_height_alignment.json")
+        manifest["g411_z0_hypothesis_would_meet_reference_gate"] = (
+            height_check["would_pass_reference_publisher_z_gate_on_these_recorded_values"])
         manifest["stage"] = "pcd_surface_evidence"
         manifest["local_pcd_surfaces"] = surface_z_evidence(
             args.pcd, pose["map_to_base_footprint_xy_m"])
