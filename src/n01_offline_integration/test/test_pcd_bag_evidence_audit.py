@@ -74,7 +74,7 @@ class PcdBagEvidenceAuditTest(unittest.TestCase):
             info = json.loads(pcd.with_suffix(".json").read_text())
             info["origin"] = [100., 0.]
             pcd.with_suffix(".json").write_text(json.dumps(info))
-            with self.assertRaisesRegex(ValueError, "same XY lattice"):
+            with self.assertRaisesRegex(ValueError, "identical map XY lattice"):
                 audit(ray, pcd)
 
     def test_bad_raster_rejected(self):
