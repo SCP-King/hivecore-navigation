@@ -18,10 +18,12 @@ if (os.environ.get("ROS_DOMAIN_ID")!="88" or
 import rclpy
 from rclpy.node import Node
 from rclpy.executors import ExternalShutdownException
-from rclpy.qos import qos_profile_sensor_data
+from rclpy.qos import (
+    qos_profile_sensor_data, QoSProfile, DurabilityPolicy, ReliabilityPolicy)
+
 from nav_msgs.msg import Path, Odometry
 from geometry_msgs.msg import PoseStamped
-from std_msgs.msg import String
+from std_msgs.msg import String, Bool
 
 from .scan_reference_artifact import SCHEMA
 
@@ -53,6 +55,7 @@ class G4ResearchReferencePublisher(Node):
         self.declare_parameter("max_start_offset_m",.75)
         self.declare_parameter("scan_body_height_m",.4)
         self.declare_parameter("max_start_vertical_offset_m",.5)
+        self.declare_parameter("require_static_overlay",False)
         source=self.get_parameter("reference_file").value
         distance=float(self.get_parameter("max_start_offset_m").value)
         body_height=float(self.get_parameter("scan_body_height_m").value)
@@ -64,6 +67,9 @@ class G4ResearchReferencePublisher(Node):
         self.limit=distance
         self.body_height=body_height
         self.z_limit=z_limit
+        self.require_static_overlay=bool(
+            self.get_parameter("require_static_overlay").value)
+        self.static_ready=not self.require_static_overlay
         self.wait_count=0
         self.released=False
         self.blocked=False
@@ -71,10 +77,19 @@ class G4ResearchReferencePublisher(Node):
         self.pub=self.create_publisher(Path,"/initial_path",10)
         self.status_pub=self.create_publisher(String,"/n01/offline/g4_reference_status",10)
         self.create_subscription(Odometry,"/body_pose",self.on_body,qos_profile_sensor_data)
+        if self.require_static_overlay:
+            latched=QoSProfile(depth=1,
+                               durability=DurabilityPolicy.TRANSIENT_LOCAL,
+                               reliability=ReliabilityPolicy.RELIABLE)
+            self.create_subscription(
+                Bool,"/grid_map/static_overlay_ready",self.on_static_ready,latched)
         self.create_timer(.5,self.maybe_publish)
         self.get_logger().warning(
             "G4.6 RESEARCH reference only: no static-map SCAN fusion, "
             "no verified floor/clearance, no robot control")
+
+    def on_static_ready(self,msg):
+        self.static_ready=bool(msg.data)
 
     def on_body(self,msg):
         if msg.header.frame_id.lstrip("/")!="map":
@@ -89,7 +104,9 @@ class G4ResearchReferencePublisher(Node):
             "status":name,
             "research_only":True,
             "scan_trajectory_not_yet_verified":True,
-            "static_full_pcd_integrated_into_scan_grid":False,
+            "static_full_pcd_integrated_into_scan_grid":(
+                self.require_static_overlay and self.static_ready),
+            "static_overlay_required":self.require_static_overlay,
             "physical_execution_forbidden":True,
             "actuator_output":"DISABLED",
             "safety_authorization":"NEVER",
@@ -112,6 +129,11 @@ class G4ResearchReferencePublisher(Node):
             self.status("BLOCKED_CMD_VEL_GRAPH_QUERY_FAILED",reason=str(exc))
             return
         if self.latest_body is None:
+            return
+        if not self.static_ready:
+            self.wait_count+=1
+            if self.wait_count % 8 == 1:
+                self.status("WAITING_NATIVE_SCAN_STATIC_PCD_OVERLAY")
             return
         if self.pub.get_subscription_count()==0:
             return
@@ -146,7 +168,8 @@ class G4ResearchReferencePublisher(Node):
         self.status("UNVERIFIED_REFERENCE_SENT_TO_OFFLINE_SCAN",
                     start_offset_m=round(gap,3),
                     start_vertical_offset_m=round(z_gap,3),
-                    published_waypoints=len(result.poses))
+                    published_waypoints=len(result.poses),
+                    native_scan_static_overlay_ready=self.static_ready)
         self.get_logger().warning(
             "UNVERIFIED RESEARCH /initial_path sent: %d points, start offset %.3fm"
             % (len(result.poses),gap))
