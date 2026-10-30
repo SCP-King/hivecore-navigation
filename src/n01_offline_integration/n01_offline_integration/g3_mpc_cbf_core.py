@@ -92,6 +92,9 @@ def solve_discrete_mpc_cbf(path_xy,body_xy,tracks, *,
         "solver_executed":False,
         "cbf_constraints_checked":0,
         "cbf_constraints_rejected":0,
+        # CBF hypothesis presence is not evidence that a constraint intervened.
+        "cbf_candidate_pruning_observed":False,
+        "nominal_cbf_proxy_overlap_observed":False,
         "moving_constraint_tracks":0,
         "status":"INVALID_INPUT",
         "candidate_xy_m":[],
@@ -149,6 +152,9 @@ def solve_discrete_mpc_cbf(path_xy,body_xy,tracks, *,
             for k in range(steps+1) for obs in obstacles),5)
     else:
         base["minimum_nominal_h_m2"]=None
+    base["nominal_cbf_proxy_overlap_observed"]=(
+        base["minimum_nominal_h_m2"] is not None and
+        base["minimum_nominal_h_m2"] < 0)
     for _,xy,_,radius in obstacles:
         if math.dist(body,xy)**2-radius**2<0:
             base["status"]="INFEASIBLE_INITIAL_CBF_PROXY_OVERLAP"
@@ -213,6 +219,7 @@ def solve_discrete_mpc_cbf(path_xy,body_xy,tracks, *,
             base["status"]="INFEASIBLE_DISCRETE_CBF_OR_DYNAMICS"
             base["cbf_constraints_checked"]=checks
             base["cbf_constraints_rejected"]=rejected
+            base["cbf_candidate_pruning_observed"]=rejected>0
             return base
         next_beam.sort(key=lambda state:(state[0],
                                         round(state[1],4),round(state[2],4)))
@@ -228,6 +235,7 @@ def solve_discrete_mpc_cbf(path_xy,body_xy,tracks, *,
         round(best[6],5) if obstacles else None)
     base["cbf_constraints_checked"]=checks
     base["cbf_constraints_rejected"]=rejected
+    base["cbf_candidate_pruning_observed"]=rejected>0
     base["search_truncated"]=True
     base["discretization_dt_s"]=dt
     base["horizon_s"]=dt*steps
