@@ -1,29 +1,38 @@
 {
-  "schema": "n01.hive2.wheel_only_tf_contract.v1",
+  "schema": "n01.hive2.wheel_only_tf_contract.v2",
   "snapshot_date": "2026-10-30",
   "artifact_type": "READ_ONLY_REFERENCE_NOT_EXECUTABLE_ROS_PARAMETERS",
   "evidence": {
     "source": [
       "USER_REPORTED_BAG_TF_AND_TF_STATIC_EXTRACTION",
       "USER_REPORTED_HIVE2_URDF_STRUCTURE",
-      "USER_REPORTED_SLAM_PREPROCESSING_FRAME_SEMANTICS"
+      "USER_REPORTED_SLAM_PREPROCESSING_FRAME_SEMANTICS",
+      "SOURCE_VERIFIED_19_EXPORTED_XACRO_YAML_MSG_LAUNCH_FILES"
     ],
     "independently_reextracted_from_original_bag_in_this_change": false,
     "stated_map_base_footprint_dynamic_transforms": 11,
     "stated_imu_filter_relative_transforms": 296,
     "map_alignment_same_pcd_bag": "OPERATOR_CONFIRMED_SAME_MAPPING_SESSION",
-    "note": "Reported per-session TF frame structure; cannot prove live unique broadcasters or exact moving-joint kinematics without original installed URDF/runtime graph."
+    "note": "Source-inspected nominal URDF topology; still not live /tf and joint-state proof.",
+    "frame_counts": {
+      "navigational_related": 7,
+      "leg_kinematic_and_wheel": 20,
+      "independent_imu_filter": 2,
+      "named_total": 29,
+      "all_runtime_transforms_observed": false
+    },
+    "correction_of_previous_25_frame_report": "four wheel links omitted and KDL foot parent mistaken; verified with quad_leg_kinematics.xacro, total 29"
   },
   "current_development": {
-    "drive_mode": "WHEEL_DRIVE_ONLY",
-    "leg_posture": "COMMANDED_FIXED_NO_ACTIVE_LEG_ARTICULATION_IN_NAVIGATION_DEVELOPMENT",
+    "drive_mode": "FOUR_INDEPENDENT_DRIVE_WHEELS_WITH_FOUR_ANKLE_YAW_STEERING_JOINTS",
+    "leg_posture": "FIXED_PITCH1_AND_PITCH2_FOR_WHEEL_DRIVING_ANKLE_YAW_AVAILABLE_FOR_STEERING",
     "legs_actuation_during_navigation": false,
     "wheel_driven_motion": true,
-    "wheel_steering_and_drive_kinematic_model": "UNVERIFIED_DO_NOT_ASSUME_DIFFERENTIAL_OR_ACKERMANN",
+    "wheel_steering_and_drive_kinematic_model": "STEERABLE_FOUR_WHEEL_TOPOLOGY_CONFIRMED_BUT_CONTROLLER_ALLOCATION_UNVERIFIED",
     "leg_joint_hold_feedback_verified": false,
     "leg_joint_angles_locked_pose_rad": null,
-    "wheel_tread_m": null,
-    "wheel_base_effective_m": null,
+    "wheel_tread_m": 0.27,
+    "wheel_base_effective_m": 0.56,
     "minimum_turn_radius_m": null,
     "measured_braking_distance_m": null,
     "maximum_vehicle_collision_envelope_m": null,
@@ -33,7 +42,46 @@
     "physical_control_authorized": false,
     "allowed_pipeline": "HISTORICAL_READ_ONLY_OFFLINE",
     "actuator_output": "DISABLED",
-    "safety_authorization": "NEVER"
+    "safety_authorization": "NEVER",
+    "ankle_yaw_steering_allowed_in_wheel_only_mode": true,
+    "pitch1_pitch2_joint_command_locked_by_requirements": true,
+    "verified_wheel_joint_names": [
+      "wheel_fl",
+      "wheel_fr",
+      "wheel_rl",
+      "wheel_rr"
+    ],
+    "verified_ankle_yaw_joint_names": [
+      "fl_ankle_yaw",
+      "fr_ankle_yaw",
+      "rl_ankle_yaw",
+      "rr_ankle_yaw"
+    ],
+    "hip_pitch_joint_names": [
+      "fl_leg_pitch1",
+      "fr_leg_pitch1",
+      "rl_leg_pitch1",
+      "rr_leg_pitch1"
+    ],
+    "knee_pitch_joint_names": [
+      "fl_leg_pitch2",
+      "fr_leg_pitch2",
+      "rl_leg_pitch2",
+      "rr_leg_pitch2"
+    ],
+    "geometry_basis": "pivot nominal span, not effective loaded tire-contact wheelbase/tread",
+    "nominal_wheel_radius_m": 0.095,
+    "nominal_ankle_yaw_joint_limit_rad": [
+      -1.5708,
+      1.5708
+    ],
+    "home_pitch1_rad": 0.7853981633974483,
+    "home_pitch2_rad": -1.3089969389957472,
+    "actual_fixed_leg_joint_positions_verified": false,
+    "home_values_are_recorded_targets_not_measured_contact_configuration": true,
+    "motion_controller_source_needed": "hive2_driver/config/robot_motion.yaml",
+    "controller_kinematics_verified": false,
+    "legs_actuation_during_navigation_note": "No active pitch lift/gait; ankle yaw steering and wheel rotation remain actuated when driving in the future. Offline pipeline always publishes zero motion commands."
   },
   "frames": [
     {
@@ -88,114 +136,142 @@
     {
       "name": "fl_hip_link",
       "parent": "base_link",
-      "kind": "URDF_mount_type_requires_source_confirmation",
+      "kind": "revolute_pitch1",
       "usage": "COLLISION_GEOMETRY_ONLY_IN_WHEEL_LOCKED_MODE",
       "role": "fl hip link; geometry remains even if leg joints are stationary"
     },
     {
       "name": "fr_hip_link",
       "parent": "base_link",
-      "kind": "URDF_mount_type_requires_source_confirmation",
+      "kind": "revolute_pitch1",
       "usage": "COLLISION_GEOMETRY_ONLY_IN_WHEEL_LOCKED_MODE",
       "role": "fr hip link; geometry remains even if leg joints are stationary"
     },
     {
       "name": "rl_hip_link",
       "parent": "base_link",
-      "kind": "URDF_mount_type_requires_source_confirmation",
+      "kind": "revolute_pitch1",
       "usage": "COLLISION_GEOMETRY_ONLY_IN_WHEEL_LOCKED_MODE",
       "role": "rl hip link; geometry remains even if leg joints are stationary"
     },
     {
       "name": "rr_hip_link",
       "parent": "base_link",
-      "kind": "URDF_mount_type_requires_source_confirmation",
+      "kind": "revolute_pitch1",
       "usage": "COLLISION_GEOMETRY_ONLY_IN_WHEEL_LOCKED_MODE",
       "role": "rr hip link; geometry remains even if leg joints are stationary"
     },
     {
       "name": "fl_thigh_link",
       "parent": "fl_hip_link",
-      "kind": "articulated_joint",
+      "kind": "revolute_pitch2",
       "usage": "COLLISION_GEOMETRY_ONLY_IN_WHEEL_LOCKED_MODE",
       "role": "fl thigh link; geometry remains even if leg joints are stationary"
     },
     {
       "name": "fr_thigh_link",
       "parent": "fr_hip_link",
-      "kind": "articulated_joint",
+      "kind": "revolute_pitch2",
       "usage": "COLLISION_GEOMETRY_ONLY_IN_WHEEL_LOCKED_MODE",
       "role": "fr thigh link; geometry remains even if leg joints are stationary"
     },
     {
       "name": "rl_thigh_link",
       "parent": "rl_hip_link",
-      "kind": "articulated_joint",
+      "kind": "revolute_pitch2",
       "usage": "COLLISION_GEOMETRY_ONLY_IN_WHEEL_LOCKED_MODE",
       "role": "rl thigh link; geometry remains even if leg joints are stationary"
     },
     {
       "name": "rr_thigh_link",
       "parent": "rr_hip_link",
-      "kind": "articulated_joint",
+      "kind": "revolute_pitch2",
       "usage": "COLLISION_GEOMETRY_ONLY_IN_WHEEL_LOCKED_MODE",
       "role": "rr thigh link; geometry remains even if leg joints are stationary"
     },
     {
       "name": "fl_shank_link",
       "parent": "fl_thigh_link",
-      "kind": "articulated_joint",
+      "kind": "revolute_ankle_yaw",
       "usage": "COLLISION_GEOMETRY_ONLY_IN_WHEEL_LOCKED_MODE",
       "role": "fl shank link; geometry remains even if leg joints are stationary"
     },
     {
       "name": "fr_shank_link",
       "parent": "fr_thigh_link",
-      "kind": "articulated_joint",
+      "kind": "revolute_ankle_yaw",
       "usage": "COLLISION_GEOMETRY_ONLY_IN_WHEEL_LOCKED_MODE",
       "role": "fr shank link; geometry remains even if leg joints are stationary"
     },
     {
       "name": "rl_shank_link",
       "parent": "rl_thigh_link",
-      "kind": "articulated_joint",
+      "kind": "revolute_ankle_yaw",
       "usage": "COLLISION_GEOMETRY_ONLY_IN_WHEEL_LOCKED_MODE",
       "role": "rl shank link; geometry remains even if leg joints are stationary"
     },
     {
       "name": "rr_shank_link",
       "parent": "rr_thigh_link",
-      "kind": "articulated_joint",
+      "kind": "revolute_ankle_yaw",
       "usage": "COLLISION_GEOMETRY_ONLY_IN_WHEEL_LOCKED_MODE",
       "role": "rr shank link; geometry remains even if leg joints are stationary"
     },
     {
       "name": "fl_foot_link",
-      "parent": "fl_shank_link",
-      "kind": "static_fixed_foot_link",
+      "parent": "fl_thigh_link",
+      "kind": "fixed_kdl_proxy_foot_without_collision",
       "usage": "COLLISION_GEOMETRY_ONLY_IN_WHEEL_LOCKED_MODE",
-      "role": "fl foot link; geometry remains even if leg joints are stationary"
+      "role": "fl IK-only virtual KDL foot endpoint, not physical driven wheel"
     },
     {
       "name": "fr_foot_link",
-      "parent": "fr_shank_link",
-      "kind": "static_fixed_foot_link",
+      "parent": "fr_thigh_link",
+      "kind": "fixed_kdl_proxy_foot_without_collision",
       "usage": "COLLISION_GEOMETRY_ONLY_IN_WHEEL_LOCKED_MODE",
-      "role": "fr foot link; geometry remains even if leg joints are stationary"
+      "role": "fr IK-only virtual KDL foot endpoint, not physical driven wheel"
     },
     {
       "name": "rl_foot_link",
-      "parent": "rl_shank_link",
-      "kind": "static_fixed_foot_link",
+      "parent": "rl_thigh_link",
+      "kind": "fixed_kdl_proxy_foot_without_collision",
       "usage": "COLLISION_GEOMETRY_ONLY_IN_WHEEL_LOCKED_MODE",
-      "role": "rl foot link; geometry remains even if leg joints are stationary"
+      "role": "rl IK-only virtual KDL foot endpoint, not physical driven wheel"
     },
     {
       "name": "rr_foot_link",
-      "parent": "rr_shank_link",
-      "kind": "static_fixed_foot_link",
+      "parent": "rr_thigh_link",
+      "kind": "fixed_kdl_proxy_foot_without_collision",
       "usage": "COLLISION_GEOMETRY_ONLY_IN_WHEEL_LOCKED_MODE",
-      "role": "rr foot link; geometry remains even if leg joints are stationary"
+      "role": "rr IK-only virtual KDL foot endpoint, not physical driven wheel"
+    },
+    {
+      "name": "fl_wheel_link",
+      "parent": "fl_shank_link",
+      "kind": "continuous_wheel_rotation",
+      "usage": "COLLISION_GEOMETRY_ONLY_IN_WHEEL_LOCKED_MODE",
+      "role": "fl actual independently driven wheel link with collision box"
+    },
+    {
+      "name": "fr_wheel_link",
+      "parent": "fr_shank_link",
+      "kind": "continuous_wheel_rotation",
+      "usage": "COLLISION_GEOMETRY_ONLY_IN_WHEEL_LOCKED_MODE",
+      "role": "fr actual independently driven wheel link with collision box"
+    },
+    {
+      "name": "rl_wheel_link",
+      "parent": "rl_shank_link",
+      "kind": "continuous_wheel_rotation",
+      "usage": "COLLISION_GEOMETRY_ONLY_IN_WHEEL_LOCKED_MODE",
+      "role": "rl actual independently driven wheel link with collision box"
+    },
+    {
+      "name": "rr_wheel_link",
+      "parent": "rr_shank_link",
+      "kind": "continuous_wheel_rotation",
+      "usage": "COLLISION_GEOMETRY_ONLY_IN_WHEEL_LOCKED_MODE",
+      "role": "rr actual independently driven wheel link with collision box"
     },
     {
       "name": "fixed_frame",
@@ -295,39 +371,302 @@
       "publisher_reported": "SLAM static_tf_publisher"
     },
     {
-      "parent": "base_link",
-      "child": "{fl,fr,rl,rr}_hip_link",
-      "type": "mounted_leg_joint_topology_reported",
-      "exact_joint_static_or_dynamic_requires_urdf_confirmation": true
-    },
-    {
-      "parent": "{leg}_hip_link",
-      "child": "{leg}_thigh_link",
-      "type": "articulated_joint",
-      "use_for_navigation_pose_estimation": false
-    },
-    {
-      "parent": "{leg}_thigh_link",
-      "child": "{leg}_shank_link",
-      "type": "articulated_joint",
-      "use_for_navigation_pose_estimation": false
-    },
-    {
-      "parent": "{leg}_shank_link",
-      "child": "{leg}_foot_link",
-      "type": "reported_fixed_offset",
-      "xyz_m": [
-        0,
-        0,
-        -0.48
-      ],
-      "verify_parent_and_offset_with_installed_urdf": true
-    },
-    {
       "parent": "fixed_frame",
       "child": "imu_filtered",
       "type": "dynamic_imu_complementary_filter",
       "not_connected_to_map_tree": true
+    },
+    {
+      "parent": "base_link",
+      "child": "fl_hip_link",
+      "joint": "fl_leg_pitch1",
+      "type": "revolute_pitch_about_local_y",
+      "urdf_limit_rad": [
+        -0.7854,
+        1.48
+      ],
+      "origin_xyz_m": [
+        0.28,
+        0.135,
+        0
+      ]
+    },
+    {
+      "parent": "fl_hip_link",
+      "child": "fl_thigh_link",
+      "joint": "fl_leg_pitch2",
+      "type": "revolute_pitch_about_local_y",
+      "urdf_limit_rad": [
+        -1.65,
+        1.65
+      ],
+      "origin_xyz_m": [
+        0,
+        0,
+        -0.38
+      ]
+    },
+    {
+      "parent": "fl_thigh_link",
+      "child": "fl_shank_link",
+      "joint": "fl_ankle_yaw",
+      "type": "revolute_steering_about_local_z",
+      "urdf_limit_rad": [
+        -1.5708,
+        1.5708
+      ],
+      "origin_xyz_m": [
+        0,
+        -0.085,
+        -0.38
+      ]
+    },
+    {
+      "parent": "fl_thigh_link",
+      "child": "fl_foot_link",
+      "type": "fixed_kdl_ik_proxy",
+      "origin_xyz_m": [
+        0,
+        0,
+        -0.48
+      ],
+      "note": "Not downstream of shank; no collision box"
+    },
+    {
+      "parent": "fl_shank_link",
+      "child": "fl_wheel_link",
+      "joint": "wheel_fl",
+      "type": "continuous_wheel_rotation_about_local_y",
+      "origin_xyz_m": [
+        0,
+        0.085,
+        -0.1
+      ],
+      "wheel_radius_m": 0.095,
+      "collision_box_m": [
+        0.19,
+        0.04,
+        0.19
+      ]
+    },
+    {
+      "parent": "base_link",
+      "child": "fr_hip_link",
+      "joint": "fr_leg_pitch1",
+      "type": "revolute_pitch_about_local_y",
+      "urdf_limit_rad": [
+        -0.7854,
+        1.48
+      ],
+      "origin_xyz_m": [
+        0.28,
+        -0.135,
+        0
+      ]
+    },
+    {
+      "parent": "fr_hip_link",
+      "child": "fr_thigh_link",
+      "joint": "fr_leg_pitch2",
+      "type": "revolute_pitch_about_local_y",
+      "urdf_limit_rad": [
+        -1.65,
+        1.65
+      ],
+      "origin_xyz_m": [
+        0,
+        0,
+        -0.38
+      ]
+    },
+    {
+      "parent": "fr_thigh_link",
+      "child": "fr_shank_link",
+      "joint": "fr_ankle_yaw",
+      "type": "revolute_steering_about_local_z",
+      "urdf_limit_rad": [
+        -1.5708,
+        1.5708
+      ],
+      "origin_xyz_m": [
+        0,
+        0.085,
+        -0.38
+      ]
+    },
+    {
+      "parent": "fr_thigh_link",
+      "child": "fr_foot_link",
+      "type": "fixed_kdl_ik_proxy",
+      "origin_xyz_m": [
+        0,
+        0,
+        -0.48
+      ],
+      "note": "Not downstream of shank; no collision box"
+    },
+    {
+      "parent": "fr_shank_link",
+      "child": "fr_wheel_link",
+      "joint": "wheel_fr",
+      "type": "continuous_wheel_rotation_about_local_y",
+      "origin_xyz_m": [
+        0,
+        -0.085,
+        -0.1
+      ],
+      "wheel_radius_m": 0.095,
+      "collision_box_m": [
+        0.19,
+        0.04,
+        0.19
+      ]
+    },
+    {
+      "parent": "base_link",
+      "child": "rl_hip_link",
+      "joint": "rl_leg_pitch1",
+      "type": "revolute_pitch_about_local_y",
+      "urdf_limit_rad": [
+        -0.7854,
+        1.48
+      ],
+      "origin_xyz_m": [
+        -0.28,
+        0.135,
+        0
+      ]
+    },
+    {
+      "parent": "rl_hip_link",
+      "child": "rl_thigh_link",
+      "joint": "rl_leg_pitch2",
+      "type": "revolute_pitch_about_local_y",
+      "urdf_limit_rad": [
+        -1.65,
+        1.65
+      ],
+      "origin_xyz_m": [
+        0,
+        0,
+        -0.38
+      ]
+    },
+    {
+      "parent": "rl_thigh_link",
+      "child": "rl_shank_link",
+      "joint": "rl_ankle_yaw",
+      "type": "revolute_steering_about_local_z",
+      "urdf_limit_rad": [
+        -1.5708,
+        1.5708
+      ],
+      "origin_xyz_m": [
+        0,
+        -0.085,
+        -0.38
+      ]
+    },
+    {
+      "parent": "rl_thigh_link",
+      "child": "rl_foot_link",
+      "type": "fixed_kdl_ik_proxy",
+      "origin_xyz_m": [
+        0,
+        0,
+        -0.48
+      ],
+      "note": "Not downstream of shank; no collision box"
+    },
+    {
+      "parent": "rl_shank_link",
+      "child": "rl_wheel_link",
+      "joint": "wheel_rl",
+      "type": "continuous_wheel_rotation_about_local_y",
+      "origin_xyz_m": [
+        0,
+        0.085,
+        -0.1
+      ],
+      "wheel_radius_m": 0.095,
+      "collision_box_m": [
+        0.19,
+        0.04,
+        0.19
+      ]
+    },
+    {
+      "parent": "base_link",
+      "child": "rr_hip_link",
+      "joint": "rr_leg_pitch1",
+      "type": "revolute_pitch_about_local_y",
+      "urdf_limit_rad": [
+        -0.7854,
+        1.48
+      ],
+      "origin_xyz_m": [
+        -0.28,
+        -0.135,
+        0
+      ]
+    },
+    {
+      "parent": "rr_hip_link",
+      "child": "rr_thigh_link",
+      "joint": "rr_leg_pitch2",
+      "type": "revolute_pitch_about_local_y",
+      "urdf_limit_rad": [
+        -1.65,
+        1.65
+      ],
+      "origin_xyz_m": [
+        0,
+        0,
+        -0.38
+      ]
+    },
+    {
+      "parent": "rr_thigh_link",
+      "child": "rr_shank_link",
+      "joint": "rr_ankle_yaw",
+      "type": "revolute_steering_about_local_z",
+      "urdf_limit_rad": [
+        -1.5708,
+        1.5708
+      ],
+      "origin_xyz_m": [
+        0,
+        0.085,
+        -0.38
+      ]
+    },
+    {
+      "parent": "rr_thigh_link",
+      "child": "rr_foot_link",
+      "type": "fixed_kdl_ik_proxy",
+      "origin_xyz_m": [
+        0,
+        0,
+        -0.48
+      ],
+      "note": "Not downstream of shank; no collision box"
+    },
+    {
+      "parent": "rr_shank_link",
+      "child": "rr_wheel_link",
+      "joint": "wheel_rr",
+      "type": "continuous_wheel_rotation_about_local_y",
+      "origin_xyz_m": [
+        0,
+        -0.085,
+        -0.1
+      ],
+      "wheel_radius_m": 0.095,
+      "collision_box_m": [
+        0.19,
+        0.04,
+        0.19
+      ]
     }
   ],
   "cloud_contract": {
@@ -346,7 +685,9 @@
     "frame_id_relabel_without_transform_forbidden": true,
     "recommended_reference_for_path_and_occupancy": "map",
     "scan_planner_world_configuration_is_synthetic_not_actual_hive2_map": true,
-    "sensor_only_frame_may_remain_lidar_link_without_global_tf": true
+    "sensor_only_frame_may_remain_lidar_link_without_global_tf": true,
+    "odom_is_not_existent_anywhere": false,
+    "odom_note": "No odom edge in recorded mapping Bag, but motion stack has /odom and can publish odom TF separately; do not assume odom frame in this Bag nor claim it absent from all deployment modes."
   },
   "heights": {
     "nominal_sensor_height_above_base_footprint_z_m": 0.9,
@@ -364,6 +705,25 @@
     "Do not claim online single RSP authority because the recorded chain selected z=0.90 m.",
     "Do not assume odom==map, odom exists, or world==map.",
     "Do not guess actual floor Z or use a static pointcloud cluster as proven floor.",
-    "Do not assume actual locked joint pose/angles until hold-state telemetry or joint state evidence is available."
-  ]
+    "Do not assume actual locked joint pose/angles until hold-state telemetry or joint state evidence is available.",
+    "Do not disable steering ankle_yaw just because leg pitch is held fixed.",
+    "MoveHome joint positions are not evidence of mechanically grounded fixed pose."
+  ],
+  "primary_source_audit": {
+    "source_kind": "USER_UPLOADED_MOTION_AND_SLAM_INSTALL_FILES_INSPECTED",
+    "archive": "hive2_slam_sources_20261030_155649.tar.gz",
+    "inspected_original_file_count": 19,
+    "robot_entry": "hive2_motion/install/share/hive2_driver/description/hive2.config.xacro",
+    "body_xacro": "hive2_motion/install/share/quad_leg_description/urdf/hive2_body.xacro",
+    "kinematic_xacro": "hive2_motion/install/share/quad_leg_description/urdf/quad_leg_kinematics.xacro",
+    "sensor_xacro": "hive2_motion/install/share/quad_leg_description/urdf/hivecore_sensor_frames.xacro",
+    "leg_config": "hive2_motion/install/share/leg_controller/config/hive2_leg_parameters.yaml",
+    "chassis_supervisor_config": "hive2_motion/config/wheel_controller_refactor/hive2_chassis_params.yaml",
+    "wheel_controller_config": "hive2_motion/install/share/motion_wheel_hardware/config/wheels_can_controllers.yaml",
+    "status_message": "slam_release/install/hivecore_slam3d/share/hivecore_slam3d/msg/LocalizationStatus.msg",
+    "slam_rps_launcher": "slam_release/install/hivecore_console_slam3d/share/hivecore_console_slam3d/launch/helpers/console_slam3d_bringup.py",
+    "missing_critical_authoritative_file": "hive2_driver/config/robot_motion.yaml",
+    "source_verified_scope": "Xacro chain, command/feedback topic declarations, four wheel drive joints and four ankle yaw steering joints; runtime control law and hardware status not independently inspected",
+    "note": "Source checked inside user uploaded archive; no claims of live TF publishing, real controller enablement, or physical safety."
+  }
 }
