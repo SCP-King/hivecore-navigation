@@ -168,6 +168,10 @@ G3.3 发现旧的真实 Bag G3 候选经配置筛查可能显著超出底盘/SCA
 
 第 1 轮 G3.4 离线**平移限幅阶段通过**，但仍非四轮可执行模型。第 2 轮 G4 已新增 `g410_route_surface_ambiguity.py`，在 G4.9 原始 PCD 每路点 Z 表面统计之上生成 `g410_route_surface_ambiguity.json`，区分无 PCD 采样与多层 Z/未知地面；**不自动认地面，不允许放行到三维 SCAN**。见 [G4.10 只读路线表面证据审计](docs/n01_g48_real_bag_anchored_preflight.md#g410-更新沿真实-bag-锚定路线标记局部高度证据缺口只读)。
 
+## G4.11 — 用户目标转为导航全链演示：SCAN mode3 高度对齐只读诊断（2026-10-30）
+
+甲方 Hive2 `base_footprint→base_link` 名义 +0.90m，并不自动证明 `map` 的地面 Z=0。源码确认 SCAN `fsm.navi_mode=3` 的 `pathCallback` 将 `/initial_path` 的 Z 加 `grid_map.body_height`（现值 0.4m），而 G4 参考发布器还会核验路径起点 Z 与 Bag 重建的 `base_link` Z，严限 0.5m。现在的 G4.8 只读流程已新增 `g411_scan_mode3_height_alignment.json`：按**真实 Bag 首个有效位姿**计算如果研究假设 map Z=0 时的高度偏差，不猜地面、不自动放行 SCAN 或实机。新算法与单元测试已提交。下一步优先做**全局研究线→原生 SCAN→G2/G3 的隔离无电机输出联通演示**，之后在线只读确认唯一 0.9m TF 与 SLAM tracking；真实车轮行驶必须另经硬件、安全/停车验证。设计见 [导航全链联调决策与门槛](docs/n01_navigation_full_framework_integration_decision_20261030.md)。
+
 ## G4.8 — 第一帧有效 Bag 位姿锚定的只读导航前置检查（2026-10-30）
 
 确认来自同次建图的局部 PCD + Bag 后，研究起点不再使用自动最远点，而是按**历史 Livox 第一帧有效 scan 时间戳**读取 `map→base_footprint`；研究目标必须位于该起点实际连通的 G4.3 已观测、无冲突自由格。地面 map Z 未知时**不允许用旧 `-1.0` 测试值继续生成三维参考路线**。
