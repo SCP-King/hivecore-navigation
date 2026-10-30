@@ -1,0 +1,31 @@
+name: G4 offline pure-Python contracts
+on:
+  push:
+    paths:
+      - 'scripts/n01_g4_bag_start_preflight.py'
+      - 'scripts/run_n01_g4_full_chain.sh'
+      - 'src/n01_offline_integration/**'
+      - '.github/workflows/g4-offline-contract.yml'
+  workflow_dispatch:
+
+jobs:
+  research-contracts-only:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Static Bash syntax (never launch ROS or control)
+        run: |
+          bash -n scripts/run_n01_g4_full_chain.sh
+          bash -n scripts/run_n01_bag_functional.sh
+      - name: G4.8 real Bag start and fail-closed goal selection unit tests
+        run: python3 -m unittest discover -s src/n01_offline_integration/test -p 'test_bag_anchored_goal.py' -v
+      - name: G4.3 PCD/Bag conflict and A* contracts
+        run: python3 -m unittest discover -s src/n01_offline_integration/test -p 'test_pcd_bag_evidence_audit.py' -v
+      - name: G4.4-7 reference/chain contracts
+        run: |
+          python3 -m unittest discover -s src/n01_offline_integration/test -p 'test_g4_scan_reference.py' -v
+          python3 -m unittest discover -s src/n01_offline_integration/test -p 'test_g4_chain_evidence.py' -v
+      - name: Check standalone G4.8 script syntax (no rosbag2 import)
+        run: python3 -m py_compile scripts/n01_g4_bag_start_preflight.py
