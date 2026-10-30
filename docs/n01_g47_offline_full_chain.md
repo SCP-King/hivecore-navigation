@@ -17,6 +17,10 @@ PCD 原始 XYZ + G4.0 factory_map.pgm/json + G4.2 bag_ray.pgm/json
 
 不能把 G4.3 研究路线当作已验证的全局安全路线；SCAN 当前的静态障碍仍只来自历史点云局部地图，完整 PCD 静态占据体尚未融合。G4.7 只能证明**相应话题在同一观察进程中按顺序出现**，不证明 G3 输出确实严格追踪该新参考路线（报告中 `g3_output_proven_to_follow_the_new_g4_route=false`）；更不能证明地面连续、足轮净空、碰撞安全、实时定位或动态避障成功。
 
+## G4.8 更新提示（2026-10-30）
+
+用户已经确认 PCD/Bag 同源，但**不知道地面 map Z**。以前本页直接输入 `-1.0` 的方法仅能作为过往实验记录，**不应继续用于新的完整流程尝试**。新入口 `scripts/run_n01_g4_full_chain.sh` 首先从真实 Bag 第一帧有效 scan 提取起点、在同一观测连通分量选择研究目标，并输出 `g48_preflight.json`。没有经证实的地面高度时在进入 SCAN 前停止。请以 [G4.8 最新运行说明](n01_g48_real_bag_anchored_preflight.md) 为准。
+
 ## 使用前的真实数据前提
 
 - Ubuntu 22.04 + ROS 2 Humble；**真实 Hive2 控制器、SDK、SLAM 在线控制链物理隔离**。单纯设置 ROS_DOMAIN_ID 不能替代物理隔离与审批。
