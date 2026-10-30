@@ -1,4 +1,4 @@
-"""Non-actuating reference-only regression for the 25-frame Hive2 wheel R&D TF scope."""
+"""Non-actuating reference-only regression for the source-reviewed 29-frame Hive2 wheel R&D TF scope."""
 import json
 from pathlib import Path
 import unittest
@@ -12,10 +12,10 @@ class WheelOnlyTfContractTest(unittest.TestCase):
     def setUpClass(cls):
         cls.doc = json.loads(CONTRACT.read_text(encoding="utf-8"))
 
-    def test_25_unique_frames_and_primary_navigation_tree(self):
+    def test_29_unique_frames_and_primary_navigation_tree(self):
         frames = self.doc["frames"]
         names = [f["name"] for f in frames]
-        self.assertEqual(len(names), 25)
+        self.assertEqual(len(names), 29)
         self.assertEqual(len(names), len(set(names)))
         core = {"map", "base_footprint", "base_link", "lidar_link",
                 "imu_link", "livox_frame", "lpms_imu_link"}
@@ -32,24 +32,41 @@ class WheelOnlyTfContractTest(unittest.TestCase):
         self.assertIsNone(indexed["fixed_frame"]["parent"])
         self.assertEqual(indexed["imu_filtered"]["parent"], "fixed_frame")
         self.assertNotIn("odom", names)
+        for leg in ("fl", "fr", "rl", "rr"):
+            self.assertEqual(indexed[f"{leg}_foot_link"]["parent"],
+                             f"{leg}_thigh_link")
+            self.assertEqual(indexed[f"{leg}_wheel_link"]["parent"],
+                             f"{leg}_shank_link")
+            self.assertEqual(indexed[f"{leg}_hip_link"]["kind"],
+                             "revolute_pitch1")
+            self.assertEqual(indexed[f"{leg}_shank_link"]["kind"],
+                             "revolute_ankle_yaw")
 
     def test_four_fixed_posture_legs_still_part_of_collision_envelope(self):
         frames = self.doc["frames"]
         legs = [f for f in frames if f["name"].startswith(
             ("fl_", "fr_", "rl_", "rr_"))]
-        self.assertEqual(len(legs), 16)
+        self.assertEqual(len(legs), 20)
         self.assertTrue(all(
             f["usage"] == "COLLISION_GEOMETRY_ONLY_IN_WHEEL_LOCKED_MODE"
             for f in legs))
         mode = self.doc["current_development"]
-        self.assertEqual(mode["drive_mode"], "WHEEL_DRIVE_ONLY")
+        self.assertEqual(mode["drive_mode"], "FOUR_INDEPENDENT_DRIVE_WHEELS_WITH_FOUR_ANKLE_YAW_STEERING_JOINTS")
         self.assertTrue(mode["collision_geometry_includes_fixed_legs_wheels_and_shell"])
         self.assertFalse(mode["leg_joint_hold_feedback_verified"])
         self.assertIsNone(mode["leg_joint_angles_locked_pose_rad"])
         self.assertEqual(
             mode["wheel_steering_and_drive_kinematic_model"],
-            "UNVERIFIED_DO_NOT_ASSUME_DIFFERENTIAL_OR_ACKERMANN")
+            "STEERABLE_FOUR_WHEEL_TOPOLOGY_CONFIRMED_BUT_CONTROLLER_ALLOCATION_UNVERIFIED")
         self.assertFalse(mode["physical_control_authorized"])
+        self.assertTrue(mode["ankle_yaw_steering_allowed_in_wheel_only_mode"])
+        self.assertEqual(len(mode["verified_wheel_joint_names"]), 4)
+        self.assertEqual(len(mode["verified_ankle_yaw_joint_names"]), 4)
+        self.assertEqual(mode["nominal_wheel_radius_m"], .095)
+        self.assertFalse(mode["controller_kinematics_verified"])
+        self.assertEqual(
+            self.doc["primary_source_audit"]["missing_critical_authoritative_file"],
+            "hive2_driver/config/robot_motion.yaml")
 
     def test_scan_timestamp_map_and_no_odom_guess(self):
         cloud = self.doc["cloud_contract"]
@@ -66,6 +83,16 @@ class WheelOnlyTfContractTest(unittest.TestCase):
         launcher = (REPO / "src/n01_bringup/launch/sensor_only.launch.py").read_text()
         self.assertIn("default_value='lidar_link'", launcher)
         self.assertNotIn("must already provide /odom", launcher)
+
+    def test_localization_status_config_is_sourced_and_remains_fail_closed(self):
+        config = (REPO / "src/n01_offline_integration/config/offline_bridge.yaml").read_text()
+        self.assertIn("status_type: hivecore_slam3d/msg/LocalizationStatus", config)
+        self.assertIn("outer_path: control_signal_outer_role", config)
+        self.assertIn("outer_value: localization", config)
+        self.assertIn("inner_path: control_signal_session_mode", config)
+        self.assertIn("inner_value: tracking", config)
+        self.assertIn("tf_flag_path: registration_output_tf_published", config)
+        self.assertIn("slam_rsp_disabled_confirmed: false", config)
 
     def test_mount_conflict_unknown_ground_and_strict_research_scope(self):
         self.assertTrue(self.doc["artifact_type"].startswith("READ_ONLY"))
