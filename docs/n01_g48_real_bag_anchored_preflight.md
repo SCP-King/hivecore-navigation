@@ -59,11 +59,26 @@ G4.8_XY_READY_Z_UNKNOWN: stopped before SCAN (correct; ground not yet verified).
 - 3D 高度未知即不生成 `g45_scan_reference.json`，更不进入 SCAN
 - `safety_authorization=NEVER`、`actuator_output=DISABLED`
 
+## G4.9 更新：每段路的实测 PCD 表面高度（不认定地面）
+
+2026-10-30 收到 G4.8 真实日志 `run_20261030_145641_Sm7oWU`，证据显示：
+- 第一帧被接受的历史扫描是第 5 帧；前四帧在当前 1 秒 TF 时效设置下不匹配
+- `map→base_footprint` = (-0.002764, -0.000130, 0.003491) m。该帧最近 TF 采样年龄 0.999976426 秒，接近允许上限，**不是高精度定位已验证**
+- 真实起点属于 230 格连通的历史射线可见区域；自动研究终点 (5.02938,-2.05187) m，研究路线 29 个采样点、8.036m
+- 起点附近半径 1m 的 711 个 PCD XYZ 点的 Z 分位数：P10=-0.5265m，P25=-0.5014m，median=2.5945m，P75=2.6933m。显著多层面证据，**不能从低分位数推导真实地面 Z**。
+- G4.8 成功的含义仅是 Bag 起点→G4.3 XY 研究参考路径。未生成三维参考路径，未运行 SCAN/G2/G3 新路线链。
+
+新增 `pcd_route_height_profile.py`：对**该研究路线每个 XY 采样点**读取原始 PCD 表面高度，生成无地面标签的 Z 分位数、最常见高度区间、附近点数和缺少 PCD 采样的位置。输出文件 `g49_surface_height_profile.json`；无点 ≠ 净空，显著高度分层 ≠ 已识别地面/顶棚。结果永远保留 `ground_z_selected_m=null`、`support_continuity_verified=false`。
+
+与 G4.8 相同命令重新运行即可生成 G4.9 路段证据；不需要猜测或填写任何地面 Z，也不会启动 ROS 节点。
+
 ## 静态回归测试
 
 ```bash
 python3 -m unittest discover -s src/n01_offline_integration/test \
   -p 'test_bag_anchored_goal.py' -v
+python3 -m unittest discover -s src/n01_offline_integration/test \
+  -p 'test_pcd_route_height_profile.py' -v
 bash -n scripts/run_n01_g4_full_chain.sh
 ```
 
