@@ -209,6 +209,9 @@ private:
   void sensorPoseCallback(const nav_msgs::msg::Odometry::ConstSharedPtr& pose);
   void slidingMapFrameCallback(const nav_msgs::msg::Odometry::ConstSharedPtr& pose);
   void cloudCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr& img);
+  // Optional static PCD map layer; dynamic raycasting cannot clear static obstacles.
+  void staticCloudCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr& cloud);
+  void rebuildStaticOverlay();
 
   // update occupancy by raycasting
   void updateOccupancyCallback();
@@ -257,6 +260,14 @@ private:
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr lidar_pose_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr sliding_map_frame_sub_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_sub_;
+  rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr static_cloud_sub_;
+  sensor_msgs::msg::PointCloud2::ConstSharedPtr static_source_cloud_;
+  std::vector<char> static_occupancy_buffer_;
+  std::vector<char> static_inflate_buffer_;
+  bool static_cloud_enabled_{false};
+  int static_cloud_max_points_{1000000};
+  std::string static_cloud_topic_;
+  size_t static_occupied_voxels_{0};
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr map_pub_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr map_inf_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr sliding_map_bbox_pub_;
@@ -325,7 +336,10 @@ inline bool GridMap::isKnownFree(const Eigen::Vector3i& id) {
 
   // return md_.occupancy_buffer_[adr] >= mp_.clamp_min_log_ &&
   //     md_.occupancy_buffer_[adr] < mp_.min_occupancy_log_;
-  return md_.occupancy_buffer_[adr] >= mp_.clamp_min_log_ && md_.occupancy_buffer_inflate_[adr] == 0;
+  return md_.occupancy_buffer_[adr] >= mp_.clamp_min_log_ &&
+         md_.occupancy_buffer_inflate_[adr] == 0 &&
+         (!static_cloud_enabled_ || static_inflate_buffer_.empty() ||
+          static_inflate_buffer_[adr] == 0);
 }
 
 inline bool GridMap::isKnownOccupied(const Eigen::Vector3i& id) {
@@ -333,7 +347,9 @@ inline bool GridMap::isKnownOccupied(const Eigen::Vector3i& id) {
   boundIndex(id1);
   int adr = toAddress(id1);
 
-  return md_.occupancy_buffer_inflate_[adr] == 1;
+  return md_.occupancy_buffer_inflate_[adr] == 1 ||
+         (static_cloud_enabled_ && !static_inflate_buffer_.empty() &&
+          static_inflate_buffer_[adr] == 1);
 }
 
 inline void GridMap::setOccupied(Eigen::Vector3d pos) {
@@ -365,7 +381,10 @@ inline int GridMap::getOccupancy(Eigen::Vector3d pos) {
   Eigen::Vector3i id;
   posToIndex(pos, id);
 
-  return md_.occupancy_buffer_[toAddress(id)] > mp_.min_occupancy_log_ ? 1 : 0;
+  const int addr = toAddress(id);
+  return (md_.occupancy_buffer_[addr] > mp_.min_occupancy_log_ ||
+          (static_cloud_enabled_ && !static_occupancy_buffer_.empty() &&
+           static_occupancy_buffer_[addr] == 1)) ? 1 : 0;
 }
 
 inline int GridMap::getInflateOccupancy(Eigen::Vector3d pos, double yaw) {
@@ -375,8 +394,15 @@ inline int GridMap::getInflateOccupancy(Eigen::Vector3d pos, double yaw) {
 
   int front_occ = getInflateOccupancyFromBuffer(front, md_.occupancy_buffer_inflate_);
   if (front_occ != 0) return front_occ;
-
-  return getInflateOccupancyFromBuffer(rear, md_.occupancy_buffer_inflate_);
+  if (static_cloud_enabled_ && !static_inflate_buffer_.empty()) {
+    const int static_front = getInflateOccupancyFromBuffer(front, static_inflate_buffer_);
+    if (static_front != 0) return static_front;
+  }
+  const int rear_occ = getInflateOccupancyFromBuffer(rear, md_.occupancy_buffer_inflate_);
+  if (rear_occ != 0) return rear_occ;
+  if (static_cloud_enabled_ && !static_inflate_buffer_.empty())
+    return getInflateOccupancyFromBuffer(rear, static_inflate_buffer_);
+  return 0;
 }
 
 inline int GridMap::getInflateOccupancyFromBuffer(Eigen::Vector3d pos, const std::vector<char>& buffer) {
@@ -392,7 +418,10 @@ inline int GridMap::getOccupancy(Eigen::Vector3i id) {
   if (!isInMap(id))
     return -1;
 
-  return md_.occupancy_buffer_[toAddress(id)] > mp_.min_occupancy_log_ ? 1 : 0;
+  const int addr = toAddress(id);
+  return (md_.occupancy_buffer_[addr] > mp_.min_occupancy_log_ ||
+          (static_cloud_enabled_ && !static_occupancy_buffer_.empty() &&
+           static_occupancy_buffer_[addr] == 1)) ? 1 : 0;
 }
 
 inline bool GridMap::isInMap(const Eigen::Vector3d& pos) {
