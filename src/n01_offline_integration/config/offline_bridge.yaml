@@ -1,6 +1,11 @@
 n01_offline_sensor_bridge:
   ros__parameters:
-    # Verified against installed hivecore_slam3d/msg/LocalizationStatus.msg (2026-10-30).\n    # Still FAIL-CLOSED unless an operator independently verifies single motion RSP.\n    # This config is NOT a live robot authorization.
+    # Online/read-only integration target: Hive2 motion stack +0.90m.
+    # Do not apply this authority gate to the original Bag map's SLAM +0.30m.
+    # Historical mapping replay uses n01_historical_bag with an explicit profile.
+    # Real SLAM status wire fields verified from installed LocalizationStatus.msg.
+    # Still FAIL-CLOSED unless independent live TF publication evidence is checked.
+    # This config is NOT a live robot authorization.
     fixture_mode: false
     input_cloud_topic: /livox/lidar/geo_filtered
     input_frame: lidar_link
@@ -16,6 +21,9 @@ n01_offline_sensor_bridge:
     status_timeout_s: 1.0
     tf_timeout_s: 0.05
     max_cloud_points: 300000
-    # Must not be true without separate read-only P0 authority preflight evidence.
+    # Never set true just because /tf_static contains one +0.90m sample.
+    # First run scripts/n01_live_localization_readonly_audit.py while stationary;
+    # if conflicting TF edges are detected, change vendor launch/RSP ownership,
+    # not the acceptance flag. This boolean by itself proves no author identity.
     slam_rsp_disabled_confirmed: false
     use_sim_time: false
