@@ -1,0 +1,369 @@
+{
+  "schema": "n01.hive2.wheel_only_tf_contract.v1",
+  "snapshot_date": "2026-10-30",
+  "artifact_type": "READ_ONLY_REFERENCE_NOT_EXECUTABLE_ROS_PARAMETERS",
+  "evidence": {
+    "source": [
+      "USER_REPORTED_BAG_TF_AND_TF_STATIC_EXTRACTION",
+      "USER_REPORTED_HIVE2_URDF_STRUCTURE",
+      "USER_REPORTED_SLAM_PREPROCESSING_FRAME_SEMANTICS"
+    ],
+    "independently_reextracted_from_original_bag_in_this_change": false,
+    "stated_map_base_footprint_dynamic_transforms": 11,
+    "stated_imu_filter_relative_transforms": 296,
+    "map_alignment_same_pcd_bag": "OPERATOR_CONFIRMED_SAME_MAPPING_SESSION",
+    "note": "Reported per-session TF frame structure; cannot prove live unique broadcasters or exact moving-joint kinematics without original installed URDF/runtime graph."
+  },
+  "current_development": {
+    "drive_mode": "WHEEL_DRIVE_ONLY",
+    "leg_posture": "COMMANDED_FIXED_NO_ACTIVE_LEG_ARTICULATION_IN_NAVIGATION_DEVELOPMENT",
+    "legs_actuation_during_navigation": false,
+    "wheel_driven_motion": true,
+    "wheel_steering_and_drive_kinematic_model": "UNVERIFIED_DO_NOT_ASSUME_DIFFERENTIAL_OR_ACKERMANN",
+    "leg_joint_hold_feedback_verified": false,
+    "leg_joint_angles_locked_pose_rad": null,
+    "wheel_tread_m": null,
+    "wheel_base_effective_m": null,
+    "minimum_turn_radius_m": null,
+    "measured_braking_distance_m": null,
+    "maximum_vehicle_collision_envelope_m": null,
+    "collision_geometry_includes_fixed_legs_wheels_and_shell": true,
+    "navigation_uses_leg_tf_for_path_localization": false,
+    "articulated_legs_tf_still_needed_for_urdf_visualization_and_full_collision_geometry": true,
+    "physical_control_authorized": false,
+    "allowed_pipeline": "HISTORICAL_READ_ONLY_OFFLINE",
+    "actuator_output": "DISABLED",
+    "safety_authorization": "NEVER"
+  },
+  "frames": [
+    {
+      "name": "map",
+      "role": "SLAM/global-map root",
+      "parent": null,
+      "usage": "NAV_PRIMARY",
+      "kind": "root"
+    },
+    {
+      "name": "base_footprint",
+      "role": "planar tracking reference; not automatically a surveyed floor",
+      "parent": "map",
+      "usage": "NAV_PRIMARY",
+      "kind": "dynamic"
+    },
+    {
+      "name": "base_link",
+      "role": "body-frame origin",
+      "parent": "base_footprint",
+      "usage": "NAV_PRIMARY",
+      "kind": "fixed_selected_mount"
+    },
+    {
+      "name": "lidar_link",
+      "role": "filtered Livox cloud frame",
+      "parent": "base_link",
+      "usage": "NAV_PRIMARY",
+      "kind": "static"
+    },
+    {
+      "name": "imu_link",
+      "role": "Livox-linked SLAM IMU orientation frame",
+      "parent": "lidar_link",
+      "usage": "NAV_PRIMARY",
+      "kind": "static"
+    },
+    {
+      "name": "livox_frame",
+      "role": "raw Livox sensor cloud frame",
+      "parent": "imu_link",
+      "usage": "NAV_PRIMARY",
+      "kind": "static"
+    },
+    {
+      "name": "lpms_imu_link",
+      "role": "LPMS hardware IMU origin",
+      "parent": "base_link",
+      "usage": "NAV_PRIMARY",
+      "kind": "static"
+    },
+    {
+      "name": "fl_hip_link",
+      "parent": "base_link",
+      "kind": "URDF_mount_type_requires_source_confirmation",
+      "usage": "COLLISION_GEOMETRY_ONLY_IN_WHEEL_LOCKED_MODE",
+      "role": "fl hip link; geometry remains even if leg joints are stationary"
+    },
+    {
+      "name": "fr_hip_link",
+      "parent": "base_link",
+      "kind": "URDF_mount_type_requires_source_confirmation",
+      "usage": "COLLISION_GEOMETRY_ONLY_IN_WHEEL_LOCKED_MODE",
+      "role": "fr hip link; geometry remains even if leg joints are stationary"
+    },
+    {
+      "name": "rl_hip_link",
+      "parent": "base_link",
+      "kind": "URDF_mount_type_requires_source_confirmation",
+      "usage": "COLLISION_GEOMETRY_ONLY_IN_WHEEL_LOCKED_MODE",
+      "role": "rl hip link; geometry remains even if leg joints are stationary"
+    },
+    {
+      "name": "rr_hip_link",
+      "parent": "base_link",
+      "kind": "URDF_mount_type_requires_source_confirmation",
+      "usage": "COLLISION_GEOMETRY_ONLY_IN_WHEEL_LOCKED_MODE",
+      "role": "rr hip link; geometry remains even if leg joints are stationary"
+    },
+    {
+      "name": "fl_thigh_link",
+      "parent": "fl_hip_link",
+      "kind": "articulated_joint",
+      "usage": "COLLISION_GEOMETRY_ONLY_IN_WHEEL_LOCKED_MODE",
+      "role": "fl thigh link; geometry remains even if leg joints are stationary"
+    },
+    {
+      "name": "fr_thigh_link",
+      "parent": "fr_hip_link",
+      "kind": "articulated_joint",
+      "usage": "COLLISION_GEOMETRY_ONLY_IN_WHEEL_LOCKED_MODE",
+      "role": "fr thigh link; geometry remains even if leg joints are stationary"
+    },
+    {
+      "name": "rl_thigh_link",
+      "parent": "rl_hip_link",
+      "kind": "articulated_joint",
+      "usage": "COLLISION_GEOMETRY_ONLY_IN_WHEEL_LOCKED_MODE",
+      "role": "rl thigh link; geometry remains even if leg joints are stationary"
+    },
+    {
+      "name": "rr_thigh_link",
+      "parent": "rr_hip_link",
+      "kind": "articulated_joint",
+      "usage": "COLLISION_GEOMETRY_ONLY_IN_WHEEL_LOCKED_MODE",
+      "role": "rr thigh link; geometry remains even if leg joints are stationary"
+    },
+    {
+      "name": "fl_shank_link",
+      "parent": "fl_thigh_link",
+      "kind": "articulated_joint",
+      "usage": "COLLISION_GEOMETRY_ONLY_IN_WHEEL_LOCKED_MODE",
+      "role": "fl shank link; geometry remains even if leg joints are stationary"
+    },
+    {
+      "name": "fr_shank_link",
+      "parent": "fr_thigh_link",
+      "kind": "articulated_joint",
+      "usage": "COLLISION_GEOMETRY_ONLY_IN_WHEEL_LOCKED_MODE",
+      "role": "fr shank link; geometry remains even if leg joints are stationary"
+    },
+    {
+      "name": "rl_shank_link",
+      "parent": "rl_thigh_link",
+      "kind": "articulated_joint",
+      "usage": "COLLISION_GEOMETRY_ONLY_IN_WHEEL_LOCKED_MODE",
+      "role": "rl shank link; geometry remains even if leg joints are stationary"
+    },
+    {
+      "name": "rr_shank_link",
+      "parent": "rr_thigh_link",
+      "kind": "articulated_joint",
+      "usage": "COLLISION_GEOMETRY_ONLY_IN_WHEEL_LOCKED_MODE",
+      "role": "rr shank link; geometry remains even if leg joints are stationary"
+    },
+    {
+      "name": "fl_foot_link",
+      "parent": "fl_shank_link",
+      "kind": "static_fixed_foot_link",
+      "usage": "COLLISION_GEOMETRY_ONLY_IN_WHEEL_LOCKED_MODE",
+      "role": "fl foot link; geometry remains even if leg joints are stationary"
+    },
+    {
+      "name": "fr_foot_link",
+      "parent": "fr_shank_link",
+      "kind": "static_fixed_foot_link",
+      "usage": "COLLISION_GEOMETRY_ONLY_IN_WHEEL_LOCKED_MODE",
+      "role": "fr foot link; geometry remains even if leg joints are stationary"
+    },
+    {
+      "name": "rl_foot_link",
+      "parent": "rl_shank_link",
+      "kind": "static_fixed_foot_link",
+      "usage": "COLLISION_GEOMETRY_ONLY_IN_WHEEL_LOCKED_MODE",
+      "role": "rl foot link; geometry remains even if leg joints are stationary"
+    },
+    {
+      "name": "rr_foot_link",
+      "parent": "rr_shank_link",
+      "kind": "static_fixed_foot_link",
+      "usage": "COLLISION_GEOMETRY_ONLY_IN_WHEEL_LOCKED_MODE",
+      "role": "rr foot link; geometry remains even if leg joints are stationary"
+    },
+    {
+      "name": "fixed_frame",
+      "role": "complementary IMU filter independent root",
+      "parent": null,
+      "kind": "independent_root",
+      "usage": "NOT_MAP_TF_INPUT"
+    },
+    {
+      "name": "imu_filtered",
+      "role": "IMU complementary filter output",
+      "parent": "fixed_frame",
+      "kind": "dynamic",
+      "usage": "NOT_MAP_TF_INPUT"
+    }
+  ],
+  "tf_edges": [
+    {
+      "parent": "map",
+      "child": "base_footprint",
+      "type": "dynamic",
+      "publisher_reported": "slam3d_node",
+      "transform": "timestamped_estimated_pose_not_constant",
+      "navigation_dependency": true
+    },
+    {
+      "parent": "base_footprint",
+      "child": "base_link",
+      "type": "fixed_intended",
+      "xyz_m": [
+        0,
+        0,
+        0.9
+      ],
+      "rpy_rad": [
+        0,
+        0,
+        0
+      ],
+      "publisher_reported": "Hive2 motion robot_state_publisher",
+      "contradictory_bag_values_z_m": [
+        0.3,
+        0.9
+      ],
+      "live_single_authority_verified": false
+    },
+    {
+      "parent": "base_link",
+      "child": "lidar_link",
+      "type": "fixed",
+      "xyz_m": [
+        0.295,
+        0,
+        0
+      ],
+      "rpy_rad": [
+        0,
+        0,
+        0
+      ],
+      "publisher_reported": "Hive2 robot_state_publisher"
+    },
+    {
+      "parent": "base_link",
+      "child": "lpms_imu_link",
+      "type": "fixed",
+      "xyz_m": [
+        0,
+        0,
+        0
+      ],
+      "publisher_reported": "user-reported hardware IMU link"
+    },
+    {
+      "parent": "lidar_link",
+      "child": "imu_link",
+      "type": "fixed",
+      "xyz_m": [
+        0,
+        0,
+        0
+      ],
+      "pitch_deg_approx": 10.8,
+      "pitch_sign_not_confirmed": true,
+      "publisher_reported": "SLAM static_tf_publisher"
+    },
+    {
+      "parent": "imu_link",
+      "child": "livox_frame",
+      "type": "fixed",
+      "xyz_m": [
+        0,
+        0,
+        0
+      ],
+      "rotation": "identity",
+      "publisher_reported": "SLAM static_tf_publisher"
+    },
+    {
+      "parent": "base_link",
+      "child": "{fl,fr,rl,rr}_hip_link",
+      "type": "mounted_leg_joint_topology_reported",
+      "exact_joint_static_or_dynamic_requires_urdf_confirmation": true
+    },
+    {
+      "parent": "{leg}_hip_link",
+      "child": "{leg}_thigh_link",
+      "type": "articulated_joint",
+      "use_for_navigation_pose_estimation": false
+    },
+    {
+      "parent": "{leg}_thigh_link",
+      "child": "{leg}_shank_link",
+      "type": "articulated_joint",
+      "use_for_navigation_pose_estimation": false
+    },
+    {
+      "parent": "{leg}_shank_link",
+      "child": "{leg}_foot_link",
+      "type": "reported_fixed_offset",
+      "xyz_m": [
+        0,
+        0,
+        -0.48
+      ],
+      "verify_parent_and_offset_with_installed_urdf": true
+    },
+    {
+      "parent": "fixed_frame",
+      "child": "imu_filtered",
+      "type": "dynamic_imu_complementary_filter",
+      "not_connected_to_map_tree": true
+    }
+  ],
+  "cloud_contract": {
+    "filtered_topic": "/livox/lidar/geo_filtered",
+    "filtered_msg_type": "sensor_msgs/msg/PointCloud2",
+    "filtered_frame": "lidar_link",
+    "reported_filtered_cloud_header_sample_count": 100,
+    "reported_filtered_cloud_header_sample_agreement": 100,
+    "raw_topic": "/livox/lidar",
+    "raw_frame": "livox_frame",
+    "target_map_frame": "map",
+    "required_transform_at_scan_timestamp": "map <- base_footprint <- base_link <- lidar_link",
+    "no_odom_frame_in_recorded_bag_tf": true,
+    "odom_fallback_permitted": false,
+    "raw_cloud_not_enabled_without_own_tf_and_preprocessing_validation": true,
+    "frame_id_relabel_without_transform_forbidden": true,
+    "recommended_reference_for_path_and_occupancy": "map",
+    "scan_planner_world_configuration_is_synthetic_not_actual_hive2_map": true,
+    "sensor_only_frame_may_remain_lidar_link_without_global_tf": true
+  },
+  "heights": {
+    "nominal_sensor_height_above_base_footprint_z_m": 0.9,
+    "nominal_lidar_forward_offset_m": 0.295,
+    "ground_z_map_m": null,
+    "actual_sensor_height_over_ground_m": null,
+    "ground_height_is_local_function_of_xy": true,
+    "computation": "p_map_sensor = T_map_base_footprint * T_base_footprint_base_link * T_base_link_sensor * [0,0,0,1], H = p_map_sensor.z - z_ground_at_sensor_xy",
+    "chassis_base_link_collision_box_not_whole_robot": true,
+    "static_tf_conflict_resolved_live": false
+  },
+  "restrictions": [
+    "No publishing /cmd_vel, wheel commands, servo commands, TF or live autonomy based on this reference artifact.",
+    "Do not remove leg and wheel shapes from collision envelope merely because leg joints are held fixed.",
+    "Do not claim online single RSP authority because the recorded chain selected z=0.90 m.",
+    "Do not assume odom==map, odom exists, or world==map.",
+    "Do not guess actual floor Z or use a static pointcloud cluster as proven floor.",
+    "Do not assume actual locked joint pose/angles until hold-state telemetry or joint state evidence is available."
+  ]
+}
