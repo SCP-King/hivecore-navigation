@@ -42,14 +42,30 @@ cat "$RUN/bag_start.log"
 echo "G4.8 evidence: $RUN/bag_start_preflight/g48_preflight.json"
 echo "G4.8 conflict map: $RUN/bag_start_preflight/g43_evidence.svg"
 
-# As requested, the floor Z is UNKNOWN. A scientific research Z may not be
-# silently invented from a slice, a PCD percentile, or the Hive2 mount height.
+# Explicit G4.13 historical-mapping research SMOKE: only on the
+# physically disconnected Bag replay path. The local -0.55m map Z is a
+# measured-low-cluster hypothesis, NOT verified ground or driveable terrain.
+# This NEVER enables robot actuation, turns on SLAM or claims physical safety.
+RESEARCH_MAPPING_SMOKE=0
+if [[ "${N01_G4_MAPPING_SMOKE:-0}" == "1" ]]; then
+  if [[ "${N01_G4_FLOOR_Z_VERIFIED:-0}" == "1" || -n "${N01_G4_GROUND_Z_MAP_M:-}" ]]; then
+    echo "BLOCKED_MIXED_REAL_GROUND_AND_MAPPING_RESEARCH_PROFILES" >&2
+    exit 4
+  fi
+  RESEARCH_MAPPING_SMOKE=1
+  export N01_G4_GROUND_Z_MAP_M="-0.55"
+  export N01_G4_HISTORICAL_MOUNT_PROFILE="MAPPING_SLAM_DYNAMIC_0P30"
+  export N01_G4_SCAN_GROUND_HEIGHT_M="-0.55"
+  export N01_G4_SCAN_BODY_HEIGHT_M="0.85"
+  echo "G4.13: historical original-map frame profile, Bag only; hypothesized Z=-0.55 / SCAN body offset=.85"
+fi
+# Default unknown ground still blocks any SCAN reference.
 if [[ -z "${N01_G4_GROUND_Z_MAP_M:-}" ]]; then
   echo "G4.8_XY_READY_Z_UNKNOWN: stopped before SCAN (correct; ground not yet verified)."
   echo "Inspect the preflight report; no 3D path or ROS node was created."
   exit 0
 fi
-if [[ "${N01_G4_FLOOR_Z_VERIFIED:-}" != "1" ]]; then
+if [[ "${N01_G4_FLOOR_Z_VERIFIED:-}" != "1" && "$RESEARCH_MAPPING_SMOKE" != "1" ]]; then
   echo "BLOCKED_UNVERIFIED_GROUND_Z: remove N01_G4_GROUND_Z_MAP_M to inspect XY only." >&2
   echo "Only supply N01_G4_FLOOR_Z_VERIFIED=1 after actual map-frame terrain evidence." >&2
   exit 4
@@ -86,6 +102,24 @@ if ! python3 "$ROOT/scripts/n01_prepare_g4_research.py" \
   exit 3
 fi
 echo "G4 prepared research artifacts: $RUN/prepared"
+if [[ "$RESEARCH_MAPPING_SMOKE" == "1" ]]; then
+  python3 - "$RUN/prepared/manifest.json" <<'PY'
+import json,sys
+from pathlib import Path
+path=Path(sys.argv[1])
+data=json.loads(path.read_text(encoding="utf-8"))
+data["explicit_unverified_historical_mapping_smoke"]=True
+data["historical_tf_mount_profile"]="MAPPING_SLAM_DYNAMIC_0P30"
+data["scan_ground_height_map_candidate_m"]=-0.55
+data["scan_body_height_research_offset_m"]=0.85
+data["floor_verified"]=False
+data["safe_for_real_robot"]=False
+data["physical_execution_forbidden"]=True
+data["safety_authorization"]="NEVER"
+data["actuator_output"]="DISABLED"
+path.write_text(json.dumps(data,indent=2,ensure_ascii=False)+"\\n",encoding="utf-8")
+PY
+fi
 echo "Do not connect this offline test to an actual Hive2 motion controller."
 export N01_G4_REFERENCE_FILE="$RUN/prepared/g45_scan_reference.json"
 export N01_BAG_PATH="$BAG"
