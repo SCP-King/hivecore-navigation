@@ -59,6 +59,10 @@ class MappingProfileAndLiveAuditTest(unittest.TestCase):
         self.assertIn('RESEARCH_MAPPING_SMOKE',script)
         self.assertIn('BLOCKED_MIXED_REAL_GROUND',script)
         self.assertIn('"floor_verified"]=False',script)
+        # JSON must end with a REAL newline, not a literal backslash+n:
+        # the 19:41 user Bag generated "manifest.json" ending in }\\n.
+        self.assertIn('ensure_ascii=False)+"\\n",encoding="utf-8")',script)
+        self.assertNotIn('ensure_ascii=False)+"\\\\n",encoding="utf-8")',script)
         runner=(ROOT/"scripts/run_n01_bag_functional.sh").read_text()
         self.assertIn('historical_mount_profile:=',runner)
         self.assertIn('scan_ground_height_m:=',runner)
