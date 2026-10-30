@@ -22,7 +22,7 @@ jobs:
         run: |
           bash -n scripts/run_n01_g4_full_chain.sh
           bash -n scripts/run_n01_bag_functional.sh
-      - name: Hive2 25-frame and wheel-only fixed-leg mode contract
+      - name: Hive2 29-frame four-wheel steer and fixed-pitch source contract
         run: python3 -m unittest discover -s src/n01_offline_integration/test -p 'test_wheel_only_tf_contract.py' -v
       - name: G4.8 real Bag start and fail-closed goal selection unit tests
         run: python3 -m unittest discover -s src/n01_offline_integration/test -p 'test_bag_anchored_goal.py' -v
