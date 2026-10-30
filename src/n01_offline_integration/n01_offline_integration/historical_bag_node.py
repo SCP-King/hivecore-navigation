@@ -74,6 +74,13 @@ class RecordedBagReplay(Node):
         self.max_points=int(param("max_points",300000))
         self.max_age_s=float(param("max_map_tf_age_s",1.0))
         self.goal_forward=float(param("goal_forward_m",1.5))
+        self.mount_profile=str(param("historical_mount_profile","LEGACY_HIVE2_0P90"))
+        if self.mount_profile not in ("LEGACY_HIVE2_0P90",
+                                     "MAPPING_SLAM_DYNAMIC_0P30"):
+            raise ValueError("unknown historical mount profile; NO automatic TF guessing")
+        self.mount_height_m=(.30 if self.mount_profile=="MAPPING_SLAM_DYNAMIC_0P30"
+                             else SELECTED_MOUNT_HEIGHT_M)
+        self.dynamic_030_mount_seen=False
         if not (10<=self.max_clouds<=2000 and .5<=self.scan_rate_hz<=30
                 and 100<=self.max_points<=1000000 and .05<=self.max_age_s<=5.
                 and .3<=self.goal_forward<=3.):
@@ -82,7 +89,10 @@ class RecordedBagReplay(Node):
                                         max_interval_s=2*self.max_age_s)
         self.stats={
             "mode":"HISTORICAL_BAG_OPEN_LOOP_NOT_LOCALIZATION_TRACKING",
-            "bag_path":self.bag_root, "height_used_m":SELECTED_MOUNT_HEIGHT_M,
+            "bag_path":self.bag_root, "height_used_m":self.mount_height_m,
+            "historical_mount_profile":self.mount_profile,
+            "original_slam_tf_internal_query_verified":False,
+            "original_pcd_alignment_verified_by_replay":False,
             "lidar_x_used_m":SELECTED_LIDAR_X_M,
             "raw_tf_republished":False,"raw_bag_topics_republished":False,
             "cmd_vel_created":False,"cmd_vel_publishers_seen":False,
@@ -146,6 +156,8 @@ class RecordedBagReplay(Node):
                     z=round(tf.transform.translation.z,5)
                     if math.isfinite(z):
                         heights.add(z)
+                        if topic=="/tf" and abs(z-.30)<=1e-4:
+                            self.dynamic_030_mount_seen=True
                 elif parent=="map" and child=="base_footprint":
                     t=tf.transform.translation
                     q=tf.transform.rotation
@@ -156,6 +168,10 @@ class RecordedBagReplay(Node):
         self.stats["tf_map_samples"]=len(self.tf_history.times)
         self.stats["tf_height_values_recorded"]=sorted(heights)
         self.stats["historical_tf_height_conflict"]=len(heights)>1
+        self.stats["recorded_dynamic_030_mount_seen"]=self.dynamic_030_mount_seen
+        if (self.mount_profile=="MAPPING_SLAM_DYNAMIC_0P30"
+                and not self.dynamic_030_mount_seen):
+            raise RuntimeError("MAPPING_PROFILE_REQUIRES_ORIGINAL_DYNAMIC_0P30_TF")
         if not self.tf_history.times:
             raise RuntimeError("No historical map->base_footprint TF: cannot derive map pointcloud")
         self.reader=self.new_reader([BAG_CLOUD])
@@ -202,7 +218,7 @@ class RecordedBagReplay(Node):
             self.stats["skipped_no_map_tf"]+=1
             self.stats["rejected_clouds"]+=1
             return
-        body,lidar=mapped_mounts(pose)
+        body,lidar=mapped_mounts(pose,mount_height_m=self.mount_height_m)
         try:
             xyz=xyz_transform_bytes(
                 msg.data,msg.width,msg.height,msg.point_step,msg.row_step,
