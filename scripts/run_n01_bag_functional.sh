@@ -433,6 +433,7 @@ while [[ ! -s "$N01_OFFLINE_REPORT_PATH" ]]; do
   fi
   sleep 2
 done
+G3_BASELINE_OK=0
 if python3 - "$N01_OFFLINE_REPORT_PATH" "$OUT/bag_inventory.json" > "$OUT/logs/evaluation.txt" <<'PY'
 import json,sys
 d=json.load(open(sys.argv[1],encoding="utf-8"))
@@ -494,6 +495,7 @@ print("G3 dynamic-constraint candidate frames:",
 print("G3 path observations: OFFLINE ONLY; no control authority")
 PY
 then
+  G3_BASELINE_OK=1
   RESULT="BAG_FUNCTIONAL_PATH_SMOKE_PASS"
   REASON="real_recorded_bag_to_SCAN_map_and_bspline_reference_seen"
   if grep -q 'G2.3 projected frames LIVE: 0 POST_HOC: [1-9]' "$OUT/logs/evaluation.txt"; then
@@ -502,10 +504,19 @@ then
   fi
   say "Recorded Bag passed OPEN-LOOP functional replay; localization tracking, G1 collision and real control NOT TESTED"
 else
-  RESULT="BAG_FUNCTIONAL_INCOMPLETE"
-  REASON="check_bag_health_and_SCAN_trajectory_in_logs"
   cat "$OUT/logs/evaluation.txt"
-  exit 10
+  if [[ -n "${N01_G4_REFERENCE_FILE:-}" ]]; then
+    # Mode3 may correctly fail the old mode1 smoke criteria when the
+    # historical Bag robot pose does not match the research reference.
+    # Preserve FAIL while allowing G4.7 to write precise failure evidence.
+    RESULT="G4_CHAIN_INCOMPLETE"
+    REASON="legacy_g3_path_checks_incomplete_in_g4_mode3"
+    say "G4: baseline observer incomplete; collecting independent G4 diagnostics"
+  else
+    RESULT="BAG_FUNCTIONAL_INCOMPLETE"
+    REASON="check_bag_health_and_SCAN_trajectory_in_logs"
+    exit 10
+  fi
 fi
 
 # G4 passes only if a matching reference arrived and a NEW SCAN spline plus
@@ -537,6 +548,14 @@ PY
   then
     RESULT="G4_CHAIN_INCOMPLETE"; REASON="g4_path_scan_g2_g3_chain_not_observed"
     cat "$OUT/logs/g4_evaluation.txt"
+    exit 10
+  fi
+  if (( G3_BASELINE_OK != 1 )); then
+    # Never change a failed comprehensive Bag observer check into PASS merely
+    # because several G4 topic messages happened in the expected order.
+    RESULT="G4_CHAIN_INCOMPLETE"
+    REASON="g4_messages_seen_but_full_bag_observer_checks_incomplete"
+    say "G4 topic flow observed but comprehensive Bag baseline failed"
     exit 10
   fi
   REASON="g4_initial_path_native_scan_g2_g3_ordered_topics_seen_NOT_safety"
