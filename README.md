@@ -55,6 +55,15 @@ If the planner prints `final_plan_success=1` but the observer reports `bspline_m
 
 **P0 接口与只读预检规格：** [Hive2 SLAM / SCAN P0 Readiness Preflight](docs/hive2_slam_p0_readiness_preflight.md)，涵盖显式禁用 SLAM mount RSP、`/localization_status` tracking/配准判据和 `lidar_link→map` 点云采集时刻转换。**尚未执行、不作为真机运行许可。**
 
+## Hive2 固定腿姿态轮式导航与 25-frame TF 契约（2026-10-30）
+
+**用户确定的当前开发范围：四条腿保持固定工作姿态，仅以车轮移动。** 不开发足式步态、抬腿跨障或腿式路径控制；固定姿态的四条腿、轮胎、外壳**依然计入机器人碰撞外廓**，不能当作单个点质量。轮式转向/轮驱具体运动学、真实固定关节角与保持反馈仍未验证，因此 G3 数值模型不得当作 Hive2 实机运动控制模型。
+
+- [25 个 frame、静态/动态 TF、Livox/LPMS IMU、wheel-only 开发边界（中文）](docs/hive2_wheel_only_tf_frame_contract_20261030.md)
+- [机器可读只读 JSON](config/reference/hive2_wheel_only_tf_contract_20261030.json)
+
+**用户所报告的录制 Bag** 使用 `map → base_footprint → base_link → lidar_link` 直接链（无 `odom` 帧），过滤云 `/livox/lidar/geo_filtered` 的帧为 `lidar_link`；在原始采集时刻变换到 `map`。本仓库 `n01_sensor.yaml` 的目标帧现改为 `map`，sensor-only 仍允许 `lidar_link`。历史 0.30/0.90m 竞争 TF、实际地面 Z、整机净空仍须验证。**这只是接口基线，不会启用实机控制或放宽安全门控。**
+
 ## N-01 离线整体框架（最新）
 
 **一键验证：** `bash scripts/run_n01_offline_framework.sh`，自动启动隔离 TF/点云 fixture、严格输入桥接、真实 SCAN、B 样条参考路径与禁用的动态避障接口，并清理打包。可选 `N01_BAG_PATH=/path/to/bag` 对已录制 Bag 做只读清单；本轮**不会自动回放可能含运动命令的 Bag**。
