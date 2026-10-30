@@ -64,6 +64,8 @@ If the planner prints `final_plan_success=1` but the observer reports `bspline_m
 
 **用户所报告的录制 Bag** 使用 `map → base_footprint → base_link → lidar_link` 直接链（无 `odom` 帧），过滤云 `/livox/lidar/geo_filtered` 的帧为 `lidar_link`；在原始采集时刻变换到 `map`。本仓库 `n01_sensor.yaml` 的目标帧现改为 `map`，sensor-only 仍允许 `lidar_link`。历史 0.30/0.90m 竞争 TF、实际地面 Z、整机净空仍须验证。**这只是接口基线，不会启用实机控制或放宽安全门控。**
 
+**Hive2 `robot_motion.yaml` 双副本审计完成（2026-10-30）：** 用户上传安装版与配置版两份文件，内容逐字节一致（SHA-256 `3f19abe0a65e02b3…434584f0`）。四轮独立驱动与 ankle_yaw 转向、轮径 0.095m、底盘线速度上限配置 2.0m/s、最大线加速度配置 1.0m/s²、常规线加速度 0.6m/s²、命令超时 0.2s、底盘 odom TF 配置关闭，均已有实际 YAML 依据。**G3 当前默认加速度 3.2m/s² 高于底盘最大配置 1.0m/s²**，且使用未验证的全向点质点模型，绝不可视为 Hive2 可执行路径；四轮转向控制律仍须核对 `motion_controller/ChassisController`。参见 [robot_motion 源码与 G3 差异报告](docs/hive2_robot_motion_yaml_audit_20261030.md) 和 [只读 JSON](config/reference/hive2_robot_motion_audit_20261030.json)。未修改任何甲方运动配置、未启动硬件。
+
 **原始源码复核新增结论（2026-10-30）**：用户上传的 19 个运动/SLAM 配置文件已经核对。旧版本“25 个 frame”少了 4 个物理 wheel_link，真正 `*_foot_link` 从 `*_thigh_link` 直接固定连接，仅供 KDL IK。 `LocalizationStatus.msg` 的 outer 字段实际为 `control_signal_outer_role: localization`（小写），inner 为 `control_signal_session_mode: tracking`；隔离 bridge 配置已采用准确字段，仍不会在 TF 未核实时放行。SLAM 默认 `launch_robot_state_publisher=true` 与 Hive2 +0.90m 会冲突，须由集成启动层显式禁用；运动脚本的 `HIVE2_SLAM_MAPPING=1` **不是**这个 SLAM RSP 开关。详见 [接口复核文档](docs/hive2_wheel_only_tf_frame_contract_20261030.md)。
 
 ## N-01 离线整体框架（最新）
