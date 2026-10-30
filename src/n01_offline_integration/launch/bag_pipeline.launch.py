@@ -26,12 +26,18 @@ def generate_launch_description():
         DeclareLaunchArgument("max_clouds",default_value="2000"),
         DeclareLaunchArgument("scan_rate_hz",default_value="8.0"),
         DeclareLaunchArgument("scan_navi_mode",default_value="1"),
+        DeclareLaunchArgument("scan_ground_height_m",default_value="0.0"),
+        DeclareLaunchArgument("scan_body_height_m",default_value="0.4"),
         # Source-identified mapping TF is opt-in; legacy tests retain +0.90m.
         DeclareLaunchArgument("historical_mount_profile",
                               default_value="LEGACY_HIVE2_0P90"),
         Node(package="scan_planner",executable="scan_planner_node",
              name="scan_planner_node",parameters=[pcfg,{
                  "grid_map.frame_id":"map", "grid_map.cloud_is_world":True,
+                 "grid_map.ground_height":ParameterValue(
+                     LaunchConfiguration("scan_ground_height_m"),value_type=float),
+                 "grid_map.body_height":ParameterValue(
+                     LaunchConfiguration("scan_body_height_m"),value_type=float),
                  "fsm.navi_mode":ParameterValue(LaunchConfiguration("scan_navi_mode"),value_type=int),
                  "use_sim_time":False
              }],output="screen"),
