@@ -27,6 +27,7 @@ def generate_launch_description():
         DeclareLaunchArgument("scan_rate_hz",default_value="8.0"),
         DeclareLaunchArgument("scan_navi_mode",default_value="1"),
         DeclareLaunchArgument("scan_ground_height_m",default_value="0.0"),
+        DeclareLaunchArgument("scan_static_pcd_enable",default_value="false"),
         DeclareLaunchArgument("scan_body_height_m",default_value="0.4"),
         # Source-identified mapping TF is opt-in; legacy tests retain +0.90m.
         DeclareLaunchArgument("historical_mount_profile",
@@ -38,6 +39,8 @@ def generate_launch_description():
                      LaunchConfiguration("scan_ground_height_m"),value_type=float),
                  "grid_map.body_height":ParameterValue(
                      LaunchConfiguration("scan_body_height_m"),value_type=float),
+                 "grid_map.static_cloud_enabled":ParameterValue(
+                     LaunchConfiguration("scan_static_pcd_enable"),value_type=bool),
                  "fsm.navi_mode":ParameterValue(LaunchConfiguration("scan_navi_mode"),value_type=int),
                  "use_sim_time":False
              }],output="screen"),
