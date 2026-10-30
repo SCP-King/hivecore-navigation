@@ -41,6 +41,25 @@ class MappingProfileAndLiveAuditTest(unittest.TestCase):
         s["last_localization_status"]["age_at_receipt_s"]=20
         self.assertIn("STATUS",classify(s)["result"])
 
+    def test_user_actual_stationary_live_snapshot_reports_all_blockers(self):
+        snap=self._snapshot([{"topic":"/tf_static","height_m":.9}])
+        snap["map_to_base_footprint_seen"]=False
+        snap["last_localization_status"]=None
+        snap["last_filtered_cloud"]=None
+        snap["cmd_vel_publishers"]=[
+            {"node_name":"cmd_wheel_preprocessor_node"},
+            {"node_name":"person_follow_controller_node"}]
+        d=classify(snap)
+        self.assertEqual(d["result"],"BLOCKED_POSE_OR_SENSOR_NOT_OBSERVED")
+        self.assertEqual(d["cmd_vel_publisher_count"],2)
+        self.assertFalse(d["unique_mount_tf_publisher_attributed"])
+        self.assertIn("MAP_TO_BASE_FOOTPRINT_NOT_OBSERVED",d["blocking_conditions"])
+        self.assertIn("FILTERED_LIDAR_CLOUD_NOT_OBSERVED",d["blocking_conditions"])
+        self.assertIn("FRESH_LOCALIZATION_TRACKING_STATUS_NOT_OBSERVED",d["blocking_conditions"])
+        self.assertIn("CMD_VEL_PUBLISHER_PRESENT_BLOCK_MOTION_COMMISSIONING",
+                      d["blocking_conditions"])
+        self.assertTrue(d["motion_commissioning_blocked"])
+
     def test_historical_mode3_planner_and_reference_share_z_offset(self):
         p=ROOT/"src/n01_offline_integration/launch/bag_pipeline.launch.py"
         q=ROOT/"src/n01_offline_integration/launch/g4_offline_scan_reference.launch.py"
