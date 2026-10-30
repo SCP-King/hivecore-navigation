@@ -471,5 +471,25 @@
     "real_ground_height_verified": false,
     "live_single_tf_authority_verified": false,
     "provenance_note": "Do not equate sensor nominal Z with measured floor clearance; 0.90m does not resolve the simultaneous 0.30m / 0.90m RSP conflict."
+  },
+  "wheel_only_development_baseline_20261030": {
+    "mode": "FIXED_LEG_POSTURE_WHEEL_DRIVE_ONLY",
+    "decided_by": "user-confirmed research scope 2026-10-30",
+    "evidence_contract": "config/reference/hive2_wheel_only_tf_contract_20261030.json",
+    "tf_documentation": "docs/hive2_wheel_only_tf_frame_contract_20261030.md",
+    "recorded_frame_count": 25,
+    "map_base_footprint_tf": "direct (no odom in this recorded Bag)",
+    "target_frame_for_map_localized_navigation": "map",
+    "sensor_only_default_target_frame": "lidar_link",
+    "recorded_bag_tf_report": "USER_REPORTED",
+    "leg_joint_angles_rad": null,
+    "leg_hold_feedback_confirmed": false,
+    "wheel_steering_kinematics": null,
+    "wheelbase_and_tread_verified": false,
+    "full_locked_posture_collision_envelope_verified": false,
+    "actual_ground_elevation_map_m": null,
+    "actual_floor_clearance_verified": false,
+    "real_robot_navigation_authorized": false,
+    "continuous_motion_control_implemented": false
   }
 }
