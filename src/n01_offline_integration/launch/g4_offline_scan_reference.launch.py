@@ -23,6 +23,10 @@ def generate_launch_description():
         raise RuntimeError(
             "G4.6 requires ROS_DOMAIN_ID=88, localhost, HISTORICAL_BAG_ONLY, "
             "G4_RESEARCH_ENABLE=1; never use with physical robot")
+    # Z=0 and body_height=.90 are an EXPLICIT isolated research hypothesis;
+    # the real SCAN .40m default remains in all other run profiles.
+    research_flat=(os.environ.get("N01_G4_OFFLINE_FLAT_Z0_SMOKE")=="1")
+    research_height=.9 if research_flat else .4
     share=get_package_share_directory("n01_offline_integration")
     original=os.path.join(share,"launch","bag_pipeline.launch.py")
     return LaunchDescription([
@@ -40,6 +44,7 @@ def generate_launch_description():
                 "max_clouds":LaunchConfiguration("max_clouds"),
                 "scan_rate_hz":LaunchConfiguration("scan_rate_hz"),
                 "scan_navi_mode":"3",
+                "scan_body_height_m":str(research_height),
             }.items()),
         Node(package="n01_offline_integration",
              executable="n01_g4_chain_observer",
@@ -60,7 +65,7 @@ def generate_launch_description():
                  "reference_file":ParameterValue(
                      LaunchConfiguration("reference_file"),value_type=str),
                  "max_start_offset_m":.75,
-                 "scan_body_height_m":.4,
+                 "scan_body_height_m":research_height,
                  "max_start_vertical_offset_m":.5,
                  "use_sim_time":False,
              }],output="screen"),
