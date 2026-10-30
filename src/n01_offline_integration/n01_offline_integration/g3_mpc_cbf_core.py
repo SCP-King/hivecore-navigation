@@ -65,8 +65,14 @@ def solve_discrete_mpc_cbf(path_xy,body_xy,tracks, *,
                            dt=.25, steps=6, nominal_speed=.45,
                            max_speed=.75, max_accel=3.2,
                            cbf_alpha=.35, clearance=.55,
-                           max_path_deviation=1.5, beam_width=24):
+                           max_path_deviation=1.5, beam_width=24,
+                           control_lattice="legacy_fixed_speed"):
     """Search a finite control set for a kinematically valid CBF horizon.
+
+    control_lattice='acceleration_increment' explores velocity changes
+    bounded per dt, allowing the first step to ramp up under small acceleration
+    limits. The default legacy lattice is kept for historical G3 comparisons.
+    Both are HOLONOMIC POINT-MASS proxies, not verified Hive2 wheel dynamics.
 
     Returns a candidate XY trajectory, not a Twist. The FIRST nominal
     reference point is based on the exact recorded body stamp, not a live
@@ -94,12 +100,17 @@ def solve_discrete_mpc_cbf(path_xy,body_xy,tracks, *,
         "minimum_nominal_h_m2":None,
         "objective_value":None,
         "search_truncated":False,
+        "control_lattice":control_lattice,
+        "model_initial_velocity_xy_mps":[0.0,0.0],
+        "initial_velocity_source":"ASSUMED_ZERO_NOT_MEASURED_BAG_TWIST",
+        "planar_velocity_limited_not_hive2_wheel_kinematics":True,
     }
     if (not isinstance(path_xy,(tuple,list)) or
         not 2<=len(path_xy)<=3000 or _xy(body_xy) is None or
         not (0.1<=dt<=.5 and 2<=steps<=12 and
              .1<=nominal_speed<=1.5 and nominal_speed<=max_speed<=2 and
-             .2<=max_accel<=10 and .05<=cbf_alpha<=1 and
+             .1<=max_accel<=10 and .05<=cbf_alpha<=1 and
+             control_lattice in ("legacy_fixed_speed","acceleration_increment") and
              .2<=clearance<=2 and .1<=max_path_deviation<=5
              and 4<=beam_width<=100)):
         return base
@@ -156,8 +167,21 @@ def solve_discrete_mpc_cbf(path_xy,body_xy,tracks, *,
         reference=_position_on_polyline(
             remaining,nominal_speed*dt*(k+1))
         for cost,x,y,old_vx,old_vy,history,min_h in beam:
-            for vx,vy in controls:
-                if math.hypot(vx-old_vx,vy-old_vy)>max_accel*dt+1e-9:
+            if control_lattice == "acceleration_increment":
+                # Modelled velocity lattice is STATE-DEPENDENT. The old
+                # global lattice lacks any nonzero controls below 0.225m/s,
+                # so it cannot accelerate smoothly at SCAN's 0.5m/s^2 and
+                # 0.25s time step from its assumed rest state.
+                delta = max_accel * dt
+                choices=[(old_vx,old_vy),(0.,0.)]
+                choices.extend((old_vx+factor*delta*math.cos(a),
+                                old_vy+factor*delta*math.sin(a))
+                               for factor in (0.5,1.0) for a in headings)
+            else:
+                choices=controls
+            for vx,vy in choices:
+                if (math.hypot(vx,vy)>max_speed+1e-9 or
+                        math.hypot(vx-old_vx,vy-old_vy)>max_accel*dt+1e-9):
                     continue
                 nx=x+vx*dt
                 ny=y+vy*dt
@@ -208,4 +232,6 @@ def solve_discrete_mpc_cbf(path_xy,body_xy,tracks, *,
     base["discretization_dt_s"]=dt
     base["horizon_s"]=dt*steps
     base["assumed_clearance_m"]=clearance
+    base["model_speed_limit_mps"]=max_speed
+    base["model_acceleration_limit_mps2"]=max_accel
     return base
