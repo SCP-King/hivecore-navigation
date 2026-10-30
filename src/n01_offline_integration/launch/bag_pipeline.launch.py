@@ -25,9 +25,11 @@ def generate_launch_description():
         DeclareLaunchArgument("duration_s",default_value="165.0"),
         DeclareLaunchArgument("max_clouds",default_value="2000"),
         DeclareLaunchArgument("scan_rate_hz",default_value="8.0"),
+        DeclareLaunchArgument("scan_navi_mode",default_value="1"),
         Node(package="scan_planner",executable="scan_planner_node",
              name="scan_planner_node",parameters=[pcfg,{
                  "grid_map.frame_id":"map", "grid_map.cloud_is_world":True,
+                 "fsm.navi_mode":ParameterValue(LaunchConfiguration("scan_navi_mode"),value_type=int),
                  "use_sim_time":False
              }],output="screen"),
         Node(package="n01_scan_dynacbf_bridge",executable="scan_bspline_bridge",
