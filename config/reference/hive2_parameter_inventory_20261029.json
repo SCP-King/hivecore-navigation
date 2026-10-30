@@ -473,23 +473,44 @@
     "provenance_note": "Do not equate sensor nominal Z with measured floor clearance; 0.90m does not resolve the simultaneous 0.30m / 0.90m RSP conflict."
   },
   "wheel_only_development_baseline_20261030": {
-    "mode": "FIXED_LEG_POSTURE_WHEEL_DRIVE_ONLY",
+    "mode": "FIXED_PITCH1_PITCH2_FOUR_INDEPENDENT_DRIVE_WHEELS_AND_FOUR_STEERING_ANKLE_YAW_JOINTS",
     "decided_by": "user-confirmed research scope 2026-10-30",
     "evidence_contract": "config/reference/hive2_wheel_only_tf_contract_20261030.json",
     "tf_documentation": "docs/hive2_wheel_only_tf_frame_contract_20261030.md",
-    "recorded_frame_count": 25,
     "map_base_footprint_tf": "direct (no odom in this recorded Bag)",
     "target_frame_for_map_localized_navigation": "map",
     "sensor_only_default_target_frame": "lidar_link",
     "recorded_bag_tf_report": "USER_REPORTED",
     "leg_joint_angles_rad": null,
     "leg_hold_feedback_confirmed": false,
-    "wheel_steering_kinematics": null,
+    "wheel_steering_kinematics": "four active ankle yaw steering joints verified; exact speed/steering allocation missing robot_motion.yaml",
     "wheelbase_and_tread_verified": false,
     "full_locked_posture_collision_envelope_verified": false,
     "actual_ground_elevation_map_m": null,
     "actual_floor_clearance_verified": false,
     "real_robot_navigation_authorized": false,
-    "continuous_motion_control_implemented": false
+    "continuous_motion_control_implemented": false,
+    "original_user_reported_frame_count": 25,
+    "primary_source_verified_named_frame_count": 29,
+    "primary_source_archive": "hive2_slam_sources_20261030_155649.tar.gz",
+    "primary_source_summary": "four hip pitch1 + four knee pitch2 + four ankle yaw steering + four continuous wheel joints; KDL foot is child of thigh not shank",
+    "wheel_geometry_nominal_hip_pivot_spans_m": {
+      "longitudinal": 0.56,
+      "lateral": 0.27
+    },
+    "motion_parameters_authority_missing": "hive2_driver/config/robot_motion.yaml",
+    "localization_status_contract": {
+      "message_type": "hivecore_slam3d/msg/LocalizationStatus",
+      "outer_path": "control_signal_outer_role",
+      "outer_value": "localization",
+      "inner_path": "control_signal_session_mode",
+      "inner_value": "tracking",
+      "tf_flag_path": "registration_output_tf_published",
+      "tf_flag_required": true,
+      "live_status_runtime_verified": false
+    },
+    "slam_rsp_default_enabled_in_uploaded_source": true,
+    "wheel_only_leg_pitch_hold_mode_verified": false,
+    "ankle_yaw_steering_actuation_expected": true
   }
 }
