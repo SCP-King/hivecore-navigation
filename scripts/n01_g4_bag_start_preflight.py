@@ -227,7 +227,7 @@ def main(argv=None):
                 "x", encoding="utf-8") as ambiguity_file:
             json.dump(ambiguity, ambiguity_file, ensure_ascii=False,
                       indent=2, allow_nan=False)
-            ambiguity_file.write("\\n".replace("\\\\n","\\n"))
+            ambiguity_file.write("\n")
         manifest["g410_route_surface_ambiguity"] = (
             "g410_route_surface_ambiguity.json")
         manifest["g410_waypoints_multi_height_or_high_z_variation"] = (
