@@ -9,6 +9,7 @@ from collections import OrderedDict, deque
 import math
 
 from .g3_mpc_cbf_core import solve_discrete_mpc_cbf
+from .g3_hive2_wheel_screen import screen_g3_result
 
 
 class G3HistoricalCoordinator:
@@ -35,6 +36,10 @@ class G3HistoricalCoordinator:
         self.last_solver_status="NO_INPUT"
         self.last_result=None
         self.full_reports=0
+        self.hive2_screened_frames=0
+        self.hive2_chassis_exceeded_frames=0
+        self.hive2_scan_exceeded_frames=0
+        self.hive2_within_translation_frames=0
 
     def _push(self,cache,stamp,value):
         if type(stamp) is not int or stamp<=0:
@@ -132,6 +137,20 @@ class G3HistoricalCoordinator:
                 self.dynamic_constraint_solutions+=1
             elif result["status"].startswith("INFEASIBLE"):
                 self.infeasible+=1
+        # G3.3 post-screen: compare the candidate to actual CONFIGURED Hive2
+        # limits; do not transform G3 point-mass trajectory into wheel commands.
+        # Unknown steering angles, yaw and measured twist remain INCONCLUSIVE.
+        wheel_screen=screen_g3_result(result)
+        result["hive2_motion_limit_screen"]=wheel_screen
+        if wheel_screen["samples"] > 0:
+            self.hive2_screened_frames+=1
+            if wheel_screen["chassis_config_limits_exceeded"]:
+                self.hive2_chassis_exceeded_frames+=1
+            if wheel_screen["scan_planning_limits_exceeded"]:
+                self.hive2_scan_exceeded_frames+=1
+            if not wheel_screen["chassis_config_limits_exceeded"] and not (
+                    wheel_screen["scan_planning_limits_exceeded"]):
+                self.hive2_within_translation_frames+=1
         if posthoc:
             self.posthoc_attempts+=1
         self.full_reports+=1
@@ -155,6 +174,11 @@ class G3HistoricalCoordinator:
             "solver_executed_frames":self.solve_attempts,
             "nominal_only_solutions":self.nominal_only,
             "dynamic_cbf_candidate_solutions":self.dynamic_constraint_solutions,
+            "hive2_xy_screened_candidate_frames":self.hive2_screened_frames,
+            "hive2_chassis_limits_exceeded_frames":self.hive2_chassis_exceeded_frames,
+            "hive2_scan_limits_exceeded_frames":self.hive2_scan_exceeded_frames,
+            "hive2_translation_within_limits_frames_unverified_4ws":self.hive2_within_translation_frames,
+            "hive2_4ws_execution_verified":False,
             "infeasible_solver_frames":self.infeasible,
             "posthoc_solver_frames":self.posthoc_attempts,
             "invalid_path_messages":self.invalid_path,
