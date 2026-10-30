@@ -24,6 +24,7 @@ from n01_offline_integration.historical_tf import (
 from n01_offline_integration.pcd_bag_evidence_audit import audit, write_outputs
 from n01_offline_integration.pcd_static_preview import sample_pcd
 from n01_offline_integration.pcd_route_height_profile import profile_route_surfaces
+from n01_offline_integration.g410_route_surface_ambiguity import audit_surface_ambiguity
 
 
 def make_reader(bag_dir, topics):
@@ -218,6 +219,20 @@ def main(argv=None):
         manifest["g49_surface_height_profile"] = "g49_surface_height_profile.json"
         manifest["g49_waypoints_without_nearby_pcd_samples"] = (
             surface_profile["waypoints_without_nearby_pcd_samples"])
+        # G4.10: triage missing / vertically ambiguous surface samples
+        # along the SAME XY route. NEVER pick a lowest Z bin as floor.
+        manifest["stage"] = "g410_surface_ambiguity_audit"
+        ambiguity = audit_surface_ambiguity(surface_profile)
+        with (args.output_dir / "g410_route_surface_ambiguity.json").open(
+                "x", encoding="utf-8") as ambiguity_file:
+            json.dump(ambiguity, ambiguity_file, ensure_ascii=False,
+                      indent=2, allow_nan=False)
+            ambiguity_file.write("\\n".replace("\\\\n","\\n"))
+        manifest["g410_route_surface_ambiguity"] = (
+            "g410_route_surface_ambiguity.json")
+        manifest["g410_waypoints_multi_height_or_high_z_variation"] = (
+            ambiguity["waypoints_multi_height_or_high_z_variation"])
+        manifest["g410_route_to_scan_allowed"] = False
         manifest["g43_evidence"] = "g43_evidence.json"
         manifest["g43_preview"] = "g43_evidence.svg"
         manifest["result"] = "BAG_ANCHORED_XY_RESEARCH_ROUTE_READY_Z_UNKNOWN"
