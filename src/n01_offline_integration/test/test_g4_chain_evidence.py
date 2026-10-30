@@ -59,6 +59,32 @@ class G4ChainEvidenceTest(unittest.TestCase):
         self.assertFalse(out["g3_output_proven_to_follow_the_new_g4_route"])
         self.assertEqual(out["actuator_output"], "DISABLED")
 
+    def test_measured_waiting_pose_mismatch_is_reported_not_guessed(self):
+        ref = research_reference()
+        c = ChainEvidence(ref)
+        status = {
+            "schema": "n01.offline.g4_reference_status.v1",
+            "status": "WAITING_MATCHING_BAG_START_POSE",
+            "actuator_output": "DISABLED",
+            "safety_authorization": "NEVER",
+            "horizontal_error_m": 2.375,
+            "vertical_error_m": 1.125,
+            "horizontal_limit_m": .75,
+            "vertical_limit_m": .5,
+        }
+        c.reference_status(status)
+        result = c.finalize()
+        self.assertIn("G4_REFERENCE_WAITING_FOR_RECORDED_START_POSE", result["issues"])
+        self.assertEqual(result["last_recorded_start_pose_mismatch_m"],
+                         {k: status[k] for k in
+                          ("horizontal_error_m", "vertical_error_m",
+                           "horizontal_limit_m", "vertical_limit_m")})
+        # Missing fields must never be filled with guessed values.
+        c2 = ChainEvidence(ref)
+        del status["vertical_error_m"]
+        c2.reference_status(status)
+        self.assertIsNone(c2.finalize()["last_recorded_start_pose_mismatch_m"])
+
     def test_mismatched_path_cannot_pass(self):
         ref = research_reference()
         c = ChainEvidence(ref)
