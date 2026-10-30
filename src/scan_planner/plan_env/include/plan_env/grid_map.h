@@ -17,6 +17,7 @@
 #include <sensor_msgs/msg/image.hpp>
 #include <sensor_msgs/image_encodings.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
+#include <std_msgs/msg/bool.hpp>
 #include <tf2_ros/transform_broadcaster.h>
 #include <visualization_msgs/msg/marker.hpp>
 
@@ -261,6 +262,7 @@ private:
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr sliding_map_frame_sub_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_sub_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr static_cloud_sub_;
+  rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr static_ready_pub_;
   sensor_msgs::msg::PointCloud2::ConstSharedPtr static_source_cloud_;
   std::vector<char> static_occupancy_buffer_;
   std::vector<char> static_inflate_buffer_;
