@@ -120,3 +120,11 @@ Run `bash scripts/run_n01_bag_functional.sh` after pulling main. See [真实 Bag
 **本阶段全图 A* 不是 SCAN 输出。** 原生 SCAN 支持 `fsm.navi_mode=3` 接收 `initial_path`，但尚未将这份整图参考路径与静态占据地图接入其局部 B 样条优化，也未真实 PCD/起终点验证。项目此前在真实 Bag 上通过的 SCAN 是局部轨迹规划而非全厂 A→B 导航。开发/验收要求见 [G4 说明](docs/n01_g4_pcd_goal_planning.md)。严格保持离线、无底盘输出。
 
 另外已修复 G3.1 `Path` 名称冲突（ROS Path 覆盖 pathlib.Path）造成的启动崩溃；须在用户 ROS 2 Humble 环境复测。
+
+### G4.4–G4.6：真实 PCD+Bag 的 SCAN 参考路径接口（开发完成，待集中验收）
+
+- `scripts/n01_prepare_g4_research.py` 将现有 G4.2 Bag 射线栅格、G4.0 PCD 切片和原始 PCD 一次性处理为冲突地图、**未验证**的 3D 高度/障碍审计、A* 参考线 JSON、汇总报告。
+- `n01_offline_integration.g4_reference_node` 仅在明确声明的历史 Bag、ROS_DOMAIN_ID=88 本机隔离和 G4 研究开关下运行；起点 XY 和 Z 与历史位姿相符才向 `/initial_path` 发布一次。发现 `/cmd_vel` 发布者则阻断。
+- `g4_offline_scan_reference.launch.py` 显式启动 SCAN 的 `fsm.navi_mode=3`，现有普通 Bag 测试仍默认 mode=1。**这不是 PCD 全图障碍已融合或可实机执行的证明。**
+
+使用方法、一次性验收命令、严格限制见 [G4.4–G4.6 说明](docs/n01_g44_g46_scan_reference.md)。G4.6 尚未取得用户 ROS 2 Humble 的实际 SCAN `/planning/bspline` 结果。
