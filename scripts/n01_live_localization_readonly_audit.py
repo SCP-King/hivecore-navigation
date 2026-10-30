@@ -33,6 +33,23 @@ def classify(snapshot):
     status_time_check=status.get("age_at_receipt_s") if status else None
     fresh=(status_time_check is not None and
            0. <= status_time_check <= 2.0)
+    # Report ALL independent blockers; the top-level result alone can hide
+    # the fact that controller-capable /cmd_vel publishers are also present.
+    blockers=[]
+    if any(abs(v-.3)<.025 for v in vals) or len(vals)>1:
+        blockers.append("CONFLICTING_MOUNT_TF")
+    if not mount_ok:
+        blockers.append("HIVE2_0P90_MOUNT_NOT_UNIQUELY_OBSERVED")
+    if not map_ok:
+        blockers.append("MAP_TO_BASE_FOOTPRINT_NOT_OBSERVED")
+    if not cloud_ok:
+        blockers.append("FILTERED_LIDAR_CLOUD_NOT_OBSERVED")
+    if not status_ok or not recent or not fresh:
+        blockers.append("FRESH_LOCALIZATION_TRACKING_STATUS_NOT_OBSERVED")
+    if snapshot.get("status_subscription_error"):
+        blockers.append("LOCALIZATION_STATUS_TYPE_OR_SUBSCRIPTION_ERROR")
+    if snapshot.get("cmd_vel_publishers"):
+        blockers.append("CMD_VEL_PUBLISHER_PRESENT_BLOCK_MOTION_COMMISSIONING")
     if any(abs(v-.3)<.025 for v in vals) or len(vals)>1:
         result="BLOCKED_CONFLICTING_MOUNT_TF"
     elif not mount_ok:
@@ -47,6 +64,9 @@ def classify(snapshot):
         result="OBSERVATION_PRECHECK_PASSED_AUTHORSHIP_AND_MAP_ALIGNMENT_NOT_PROVEN"
     return {
         "result":result,
+        "blocking_conditions":blockers,
+        "cmd_vel_publisher_count":len(snapshot.get("cmd_vel_publishers",[])),
+        "motion_commissioning_blocked":True,
         "mount_one_value_0p90_observed":mount_ok,
         "mount_observed_on_topics":sorted(topics),
         "historical_0p30_seen_during_live_session":any(abs(v-.3)<.025 for v in vals),
