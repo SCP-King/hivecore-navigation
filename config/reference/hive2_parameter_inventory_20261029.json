@@ -498,7 +498,7 @@
       "longitudinal": 0.56,
       "lateral": 0.27
     },
-    "motion_parameters_authority_missing": "hive2_driver/config/robot_motion.yaml",
+    "motion_parameters_authority_missing": null,
     "localization_status_contract": {
       "message_type": "hivecore_slam3d/msg/LocalizationStatus",
       "outer_path": "control_signal_outer_role",
@@ -511,6 +511,28 @@
     },
     "slam_rsp_default_enabled_in_uploaded_source": true,
     "wheel_only_leg_pitch_hold_mode_verified": false,
-    "ankle_yaw_steering_actuation_expected": true
-  }
+    "ankle_yaw_steering_actuation_expected": true,
+    "motion_parameters_primary_source_verified": true,
+    "motion_parameters_primary_source_contract": "config/reference/hive2_robot_motion_audit_20261030.json",
+    "motion_parameters_primary_source_identical_copies": true,
+    "motion_parameters_primary_source_sha256": "3f19abe0a65e02b331a0d51c18ec0503278a4d9a6b942332b47c4f7d434584f0",
+    "configured_chassis_limits": {
+      "max_linear_speed_mps": 2,
+      "max_linear_acceleration_mps2": 1,
+      "nominal_linear_acceleration_mps2": 0.6,
+      "max_angular_acceleration_radps2": 2,
+      "nominal_angular_acceleration_radps2": 0.7,
+      "max_linear_jerk_mps3": 10,
+      "nominal_linear_jerk_mps3": 6,
+      "command_timeout_s": 0.2,
+      "odom_publish_tf": false,
+      "steer_angle_source": "feedback"
+    },
+    "g3_acceleration_model_default_mps2": 3.2,
+    "g3_acceleration_mismatch_with_chassis_config_verified": true,
+    "chassis_controller_kinematic_allocation_source_verified": false,
+    "urdf_steering_joint_limit_vs_chassis_yaw_soft_limit_semantics_verified": false,
+    "actual_loaded_parameter_file_and_overrides_verified": false
+  },
+  "motion_yaml_primary_source_audit_20261030": "config/reference/hive2_robot_motion_audit_20261030.json"
 }
