@@ -2,6 +2,8 @@
 #include <cmath>
 #include <limits>
 #include <string>
+#include <stdexcept>
+#include <cstdint>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 
 namespace
@@ -170,6 +172,9 @@ void GridMap::initMap(rclcpp::Node *node)
   }
 
   if (static_cloud_enabled_) {
+    static_ready_pub_ = node_->create_publisher<std_msgs::msg::Bool>(
+        "/grid_map/static_overlay_ready",
+        rclcpp::QoS(1).reliable().transient_local());
     static_cloud_sub_ = node_->create_subscription<sensor_msgs::msg::PointCloud2>(
         static_cloud_topic_, rclcpp::SensorDataQoS(),
         std::bind(&GridMap::staticCloudCallback, this, std::placeholders::_1));
@@ -956,6 +961,11 @@ void GridMap::rebuildStaticOverlay()
     }
   }
   static_occupied_voxels_ = occupied.size();
+  if (static_ready_pub_) {
+    std_msgs::msg::Bool ready;
+    ready.data = (static_occupied_voxels_ > 0);
+    static_ready_pub_->publish(ready);
+  }
   RCLCPP_INFO(node_->get_logger(),
               "[GridMap] immutable static PCD overlay: %zu occupied voxels in current "
               "window, dynamic updates remain separate", static_occupied_voxels_);
