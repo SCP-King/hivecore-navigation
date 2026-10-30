@@ -70,3 +70,9 @@ owned_process_cleanup: NOT_RUN
 - 已有 G1 合成日志报告首轨迹可能延迟（用户审计约 16–26 秒）。根因**未确定**，不能将其归因于某一个配置或用降低安全裕量来掩盖。
 
 **执行时机：** 等甲方和 Hive2 运动栈确认 SLAM mount RSP 关闭的启动方法、核实 `LocalizationStatus.msg` 真实字段，并满足受控只读运行条件后，再设计/运行一键 Preflight；目前无需新增 G1 实验。
+
+## 2026-10-30 已取得原始接口源码的修订说明
+
+已阅读用户上传 SLAM 安装包中 `hivecore_slam3d/msg/LocalizationStatus.msg`：真实字段 `control_signal_outer_role`（预期 `localization`，小写）、`control_signal_session_mode`（`tracking`）、`registration_output_tf_published`（true）、`registration_output_localization_mode`（枚举 `MODE_TRACKING=0`），其它完整字段请参考 [Hive2 29-frame 核对契约](hive2_wheel_only_tf_frame_contract_20261030.md)。
+
+已将隔离 `offline_bridge.yaml` 的旧空字段路径改为明确路径与小写值，同时**保持** `slam_rsp_disabled_confirmed=false`。这不代表已运行过线上 P0 预检、证明 TF 唯一权威或允许物理控制。源代码的 `launch_robot_state_publisher` 默认仍是 `true`；甲方运动脚本中的 `odom_publish_tf:=false` 是另一开关，不能替代关闭 SLAM 的 RSP。
