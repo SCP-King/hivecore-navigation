@@ -240,7 +240,7 @@ if ! PYTHONPATH="$ROOT/src/n01_offline_integration${PYTHONPATH:+:$PYTHONPATH}" \
   exit 3
 fi
 say "2/5 Building SCAN, bridge and offline integration"
-if ! colcon build --packages-up-to scan_planner n01_scan_dynacbf_bridge n01_offline_integration \
+if ! colcon build --packages-up-to scan_planner n01_scan_dynacbf_bridge n01_offline_integration n01_static_map \
      --event-handlers console_direct+ > "$OUT/logs/colcon_build.log" 2>&1; then
   RESULT="FAIL"; REASON="colcon_build_failed"
   tail -n 60 "$OUT/logs/colcon_build.log"
@@ -381,6 +381,8 @@ PY
       historical_mount_profile:="${N01_G4_HISTORICAL_MOUNT_PROFILE:-LEGACY_HIVE2_0P90}" \
       scan_ground_height_m:="${N01_G4_SCAN_GROUND_HEIGHT_M:-0.0}" \
       scan_body_height_m:="${N01_G4_SCAN_BODY_HEIGHT_M:-0.4}" \
+      scan_static_pcd_enable:="${N01_G4_STATIC_PCD_ENABLE:-false}" \
+      static_pcd_path:="${N01_G4_PCD:-/home/demo/lyy/slam_data/maps/cloud_map_20261027_225549.pcd}" \
       duration_s:=165.0 max_clouds:=2000 scan_rate_hz:=8.0 \
       > "$OUT/logs/integration_launch.log" 2>&1 &
 else
