@@ -1,5 +1,7 @@
 # Hive2 固定腿 pitch、四轮独立驱动与踝部转向：TF/机体参考模型（2026-10-30）
 
+> **2026-10-30 历史建图 TF 修订**：用户检查原始 Bag 时间轴，报告 /tf_static 中 +0.90m 有 1 条、/tf 中 +0.30m 有 866 条。旧 PCD 低表面约 map Z=-0.50～-0.53m，与 raw 点云经 +0.30m 链后低簇约 -0.61m 一致性较强。**原始 PCD 应优先按 +0.30m 历史约定研究，而 +0.90m 是未来 Hive2 运动 URDF 权威。** 一条静态 TF 不等于只在一瞬间生效，具体 TF 查询仍需源码/在线证据。详见 [G4.12 历史地图与底盘 TF 高度关系](n01_g412_historical_mapping_030_vs_motion_090.md)。
+
 **资料性质**：只读研究参考（不是 ROS 运行参数、实机启用或 TF 在线验收）。本版已直接检查用户上传的 `hive2_slam_sources_20261030_155649.tar.gz`（19 个文件）；以实际 Xacro/YAML/消息定义修正了上一版仅依据 Bag frame 名称推断的若干错误。用户提供的历史 Bag TF 数量及运行情况未在这次重新播放验证。
 
 机器可读主档案：[hive2_wheel_only_tf_contract_20261030.json](../config/reference/hive2_wheel_only_tf_contract_20261030.json)。
