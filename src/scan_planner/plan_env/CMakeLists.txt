@@ -17,6 +17,7 @@ find_package(PCL REQUIRED COMPONENTS common io filters)
 find_package(pcl_conversions REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(visualization_msgs REQUIRED)
@@ -30,7 +31,7 @@ target_include_directories(plan_env PUBLIC
 )
 ament_target_dependencies(plan_env
   cv_bridge geometry_msgs message_filters nav_msgs pcl_conversions rclcpp
-  sensor_msgs tf2 tf2_ros visualization_msgs
+  sensor_msgs std_msgs tf2 tf2_ros visualization_msgs
 )
 target_link_libraries(plan_env Eigen3::Eigen ${PCL_LIBRARIES} ${OpenCV_LIBS})
 
@@ -40,5 +41,5 @@ install(DIRECTORY include/ DESTINATION include)
 ament_export_targets(export_plan_env HAS_LIBRARY_TARGET)
 ament_export_dependencies(
   cv_bridge Eigen3 geometry_msgs message_filters nav_msgs pcl_conversions
-  rclcpp sensor_msgs tf2 tf2_ros visualization_msgs)
+  rclcpp sensor_msgs std_msgs tf2 tf2_ros visualization_msgs)
 ament_package()
