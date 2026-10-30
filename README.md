@@ -135,3 +135,16 @@ Run `bash scripts/run_n01_bag_functional.sh` after pulling main. See [真实 Bag
 新增 [G4.7 运行指南](docs/n01_g47_offline_full_chain.md)：`scripts/run_n01_g4_full_chain.sh` 先在已有 PCD/Bag 研究栅格上生成冲突图、3D 表面审计和 SCAN 路径 JSON，再复用原来的安全隔离 Bag 功能 runner，以 SCAN `fsm.navi_mode=3` 订阅严格匹配的 `/initial_path`。独立 `n01_g4_chain_observer` 只统计**该路径到达之后**的原生 B 样条、桥接 Path、G2 及 G3 消息，并将缺口明确记为 `G4_CHAIN_INCOMPLETE`。原 G3 默认入口仍保持 mode1 不变。自动归档 G4 研究文件与运行报告。
 
 **状态：已开发并提交，尚未在用户 Ubuntu/ROS2 环境实际跑完 G4.7；不是离线整链已验收。** 即使链路话题观测通过，也不表示 G3 候选真正跟随了新 A→B 路线，不等于静态整 PCD 已送入 SCAN，也不表示地面/碰撞净空、动态障碍真值或真机运动已验证。实验地面高度 `N01_G4_GROUND_Z_MAP_M` 必须由操作员显式提供；从未授权向实体机器人发运动指令。
+
+
+## G4.8 — 第一帧有效 Bag 位姿锚定的只读导航前置检查（2026-10-30）
+
+确认来自同次建图的局部 PCD + Bag 后，研究起点不再使用自动最远点，而是按**历史 Livox 第一帧有效 scan 时间戳**读取 `map→base_footprint`；研究目标必须位于该起点实际连通的 G4.3 已观测、无冲突自由格。地面 map Z 未知时**不允许用旧 `-1.0` 测试值继续生成三维参考路线**。
+
+```bash
+cd /home/demo/lyy/hivecore-navigation
+git -c http.version=HTTP/1.1 pull --ff-only origin main
+env -u N01_G4_GROUND_Z_MAP_M -u N01_G4_FLOOR_Z_VERIFIED bash scripts/run_n01_g4_full_chain.sh
+```
+
+输出 `.../runs/n01_g4_research/run_*/bag_start_preflight/g48_preflight.json` 和 G4.3 XY 研究线路/冲突 SVG。**这一步不运行 ROS 节点，不触发 SCAN，也不允许运动。** 若真实 Bag 起点处在 UNKNOWN，按证据阻断，不偷挪起点。详情：[G4.8 原始 Bag 起点和未知地面 Z 说明](docs/n01_g48_real_bag_anchored_preflight.md)。新版尚待用户 Ubuntu 端实际验证。
