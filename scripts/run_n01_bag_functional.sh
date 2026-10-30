@@ -363,6 +363,15 @@ PY
   then
     RESULT="FAIL"; REASON="g4_reference_preflight_failed"; exit 5
   fi
+  # Include generated G4 research provenance in the same final test archive.
+  # The original PCD/Bag are never copied into the repository or report.
+  mkdir -p "$OUT/g4_prepared"
+  for artifact in g43_evidence.json g43_evidence.svg g44_geometry_audit.json g45_scan_reference.json manifest.json; do
+    if [[ ! -r "$(dirname -- "$N01_G4_REFERENCE_FILE")/$artifact" ]]; then
+      RESULT="FAIL"; REASON="g4_prepared_artifact_missing_$artifact"; exit 5
+    fi
+    cp -- "$(dirname -- "$N01_G4_REFERENCE_FILE")/$artifact" "$OUT/g4_prepared/$artifact"
+  done
   export N01_G4_RESEARCH_ENABLE=1
   export N01_G4_CHAIN_REPORT_PATH="$OUT/g4_chain_evidence.json"
   say "5/5 Launching isolated Bag + SCAN mode3 + G4 reference + G4 chain observer"
