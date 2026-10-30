@@ -56,9 +56,17 @@ class PcdBagEvidenceAuditTest(unittest.TestCase):
     def test_start_goal_unknown_fail_closed(self):
         with tempfile.TemporaryDirectory() as temp:
             ray, pcd = self._inputs(temp)
-            report, _, _, _ = audit(ray, pcd, start_xy=(.61, .61), goal_xy=(.15,.15))
+            report, _, _, _ = audit(ray, pcd, start_xy=(.61, .86), goal_xy=(.15,.15))
             self.assertIn("route_error", report)
             self.assertNotIn("research_path_length_m", report)
+
+    def test_outside_map_reports_error_not_traceback(self):
+        with tempfile.TemporaryDirectory() as temp:
+            ray, pcd = self._inputs(temp)
+            report, _, path, _ = audit(ray, pcd,
+                                       start_xy=(99.,99.), goal_xy=(.15,.15))
+            self.assertEqual(path, [])
+            self.assertIn("outside map", report.get("route_error",""))
 
     def test_mismatched_origin_rejected(self):
         with tempfile.TemporaryDirectory() as temp:
