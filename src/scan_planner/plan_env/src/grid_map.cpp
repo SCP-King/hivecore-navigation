@@ -60,6 +60,17 @@ void GridMap::initMap(rclcpp::Node *node)
   load_parameter(node_, "grid_map.frame_id", mp_.frame_id_, string("world"));
   load_parameter(node_, "grid_map.sliding_map_frame_id", mp_.sliding_map_frame_id_, string("sliding_map"));
   load_parameter(node_, "grid_map.ground_height", mp_.ground_height_, 0.0);
+  // Static PCD is optional, explicit and kept independent from live rays.
+  // Default OFF so legacy SCAN planners preserve original behavior.
+  load_parameter(node_, "grid_map.static_cloud_enabled", static_cloud_enabled_, false);
+  load_parameter(node_, "grid_map.static_cloud_topic", static_cloud_topic_,
+                 std::string("/grid_map/static_occupancy"));
+  load_parameter(node_, "grid_map.static_cloud_max_points", static_cloud_max_points_, 1000000);
+  if (static_cloud_enabled_ &&
+      (static_cloud_max_points_ < 1000 || static_cloud_max_points_ > 2000000 ||
+       static_cloud_topic_.empty())) {
+    throw std::invalid_argument("[GridMap] invalid static PCD overlay parameters");
+  }
 
   load_parameter(node_, "grid_map.sensor_type", mp_.sensor_type_, string("lidar"));
   load_parameter(node_, "grid_map.cloud_is_world", mp_.cloud_is_world_, true);
@@ -119,6 +130,8 @@ void GridMap::initMap(rclcpp::Node *node)
   md_.occupancy_buffer_ = vector<double>(buffer_size, mp_.clamp_min_log_ - mp_.unknown_flag_);
   md_.occupancy_buffer_inflate_ = vector<char>(buffer_size, 0);
   md_.occupancy_buffer_inflate_cnt_ = vector<int>(buffer_size, 0);
+  static_occupancy_buffer_ = vector<char>(buffer_size, 0);
+  static_inflate_buffer_ = vector<char>(buffer_size, 0);
   rebuildInflationOffsets();
 
   md_.count_hit_and_miss_ = vector<short>(buffer_size, 0);
@@ -154,6 +167,16 @@ void GridMap::initMap(rclcpp::Node *node)
     cloud_sub_ = node_->create_subscription<sensor_msgs::msg::PointCloud2>(
         "cloud", rclcpp::SensorDataQoS(),
         std::bind(&GridMap::cloudCallback, this, std::placeholders::_1));
+  }
+
+  if (static_cloud_enabled_) {
+    static_cloud_sub_ = node_->create_subscription<sensor_msgs::msg::PointCloud2>(
+        static_cloud_topic_, rclcpp::SensorDataQoS(),
+        std::bind(&GridMap::staticCloudCallback, this, std::placeholders::_1));
+    RCLCPP_WARN(node_->get_logger(),
+                "[GridMap] static PCD occupancy overlay ENABLED: %s; "
+                "original PCD map frame required, no floor/whole-body validation",
+                static_cloud_topic_.c_str());
   }
 
   sliding_map_frame_sub_ = node_->create_subscription<nav_msgs::msg::Odometry>(
@@ -339,6 +362,7 @@ void GridMap::updateSlidingMap(const Eigen::Vector3d& center)
     updateMapBoundaryFromIndex();
     md_.local_bound_min_ = mp_.map_bound_min_idx_;
     md_.local_bound_max_ = mp_.map_bound_max_idx_;
+    rebuildStaticOverlay(); // restore static map when the entire rolling window resets
     return;
   }
 
@@ -418,6 +442,7 @@ void GridMap::updateSlidingMap(const Eigen::Vector3d& center)
   updateMapBoundaryFromIndex();
   boundIndex(md_.local_bound_min_);
   boundIndex(md_.local_bound_max_);
+  rebuildStaticOverlay(); // retained PCD reprojected into new sliding frame
 }
 
 void GridMap::resetBuffer()
@@ -869,6 +894,73 @@ void GridMap::slidingMapFrameCallback(const nav_msgs::msg::Odometry::ConstShared
   md_.sliding_map_frame_pos_ = Eigen::Vector3d(pos.x, pos.y, pos.z);
 }
 
+void GridMap::staticCloudCallback(
+    const sensor_msgs::msg::PointCloud2::ConstSharedPtr& cloud)
+{
+  if (!static_cloud_enabled_ || static_source_cloud_) return; // immutable PCD
+  if (cloud->header.frame_id != mp_.frame_id_) {
+    RCLCPP_ERROR(node_->get_logger(),
+                 "[GridMap] refuse static PCD in frame %s; expected %s",
+                 cloud->header.frame_id.c_str(), mp_.frame_id_.c_str());
+    return;
+  }
+  const uint64_t points =
+      static_cast<uint64_t>(cloud->width) * static_cast<uint64_t>(cloud->height);
+  if (points == 0 || points > static_cast<uint64_t>(static_cloud_max_points_)) {
+    RCLCPP_ERROR(node_->get_logger(),
+                 "[GridMap] static PCD point count %llu exceeds bounded limit %d; "
+                 "no partial map silently accepted",
+                 static_cast<unsigned long long>(points), static_cloud_max_points_);
+    return;
+  }
+  pcl::PointCloud<pcl::PointXYZ> decoded;
+  try {
+    pcl::fromROSMsg(*cloud, decoded);
+  } catch (const std::exception& exc) {
+    RCLCPP_ERROR(node_->get_logger(), "[GridMap] bad static PCD: %s", exc.what());
+    return;
+  }
+  if (decoded.empty()) return;
+  static_source_cloud_ = cloud;
+  rebuildStaticOverlay();
+}
+
+void GridMap::rebuildStaticOverlay()
+{
+  if (!static_cloud_enabled_ || !static_source_cloud_) return;
+  // Static layer is independent of dynamic occupancy probabilities. It
+  // survives raycasting clears and is reprojected after sliding window moves.
+  std::fill(static_occupancy_buffer_.begin(), static_occupancy_buffer_.end(), 0);
+  std::fill(static_inflate_buffer_.begin(), static_inflate_buffer_.end(), 0);
+  pcl::PointCloud<pcl::PointXYZ> cloud;
+  pcl::fromROSMsg(*static_source_cloud_, cloud);
+  std::vector<Eigen::Vector3i> occupied;
+  occupied.reserve(std::min(cloud.points.size(), static_occupancy_buffer_.size()));
+  for (const auto& pt : cloud.points) {
+    if (!std::isfinite(pt.x) || !std::isfinite(pt.y) || !std::isfinite(pt.z))
+      continue;
+    const Eigen::Vector3d p(pt.x, pt.y, pt.z);
+    if (!isInMap(p)) continue;
+    Eigen::Vector3i id;
+    posToIndex(p, id);
+    const int addr = toAddress(id);
+    if (static_occupancy_buffer_[addr] == 0) {
+      static_occupancy_buffer_[addr] = 1;
+      occupied.push_back(id);
+    }
+  }
+  for (const auto& id : occupied) {
+    for (const auto& offset : md_.inflate_offsets_) {
+      const Eigen::Vector3i inf_id = id + offset;
+      if (isInMap(inf_id)) static_inflate_buffer_[toAddress(inf_id)] = 1;
+    }
+  }
+  static_occupied_voxels_ = occupied.size();
+  RCLCPP_INFO(node_->get_logger(),
+              "[GridMap] immutable static PCD overlay: %zu occupied voxels in current "
+              "window, dynamic updates remain separate", static_occupied_voxels_);
+}
+
 void GridMap::cloudCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr &img)
 {
   if (mp_.sensor_type_ != "lidar")
@@ -953,7 +1045,9 @@ void GridMap::publishMap()
     for (int y = min_cut(1); y <= max_cut(1); ++y)
       for (int z = min_cut(2); z <= max_cut(2); ++z)
       {
-        if (md_.occupancy_buffer_[toAddress(x, y, z)] < mp_.min_occupancy_log_)
+        const int addr = toAddress(x, y, z);
+        if (md_.occupancy_buffer_[addr] < mp_.min_occupancy_log_ &&
+            (!static_cloud_enabled_ || static_occupancy_buffer_[addr] == 0))
           continue;
 
         Eigen::Vector3d pos;
@@ -994,7 +1088,9 @@ void GridMap::publishMapInflate(bool all_info)
     for (int y = min_cut(1); y <= max_cut(1); ++y)
       for (int z = min_cut(2); z <= max_cut(2); ++z)
       {
-        if (inflate_buffer[toAddress(x, y, z)] == 0)
+        const int addr = toAddress(x, y, z);
+        if (inflate_buffer[addr] == 0 &&
+            (!static_cloud_enabled_ || static_inflate_buffer_[addr] == 0))
           continue;
 
         Eigen::Vector3d pos;
