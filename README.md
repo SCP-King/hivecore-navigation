@@ -128,3 +128,10 @@ Run `bash scripts/run_n01_bag_functional.sh` after pulling main. See [真实 Bag
 - `g4_offline_scan_reference.launch.py` 显式启动 SCAN 的 `fsm.navi_mode=3`，现有普通 Bag 测试仍默认 mode=1。**这不是 PCD 全图障碍已融合或可实机执行的证明。**
 
 使用方法、一次性验收命令、严格限制见 [G4.4–G4.6 说明](docs/n01_g44_g46_scan_reference.md)。G4.6 尚未取得用户 ROS 2 Humble 的实际 SCAN `/planning/bspline` 结果。
+
+
+## G4.7 — 端到端历史 Bag 路线链路独立观测（2026-10-30）
+
+新增 [G4.7 运行指南](docs/n01_g47_offline_full_chain.md)：`scripts/run_n01_g4_full_chain.sh` 先在已有 PCD/Bag 研究栅格上生成冲突图、3D 表面审计和 SCAN 路径 JSON，再复用原来的安全隔离 Bag 功能 runner，以 SCAN `fsm.navi_mode=3` 订阅严格匹配的 `/initial_path`。独立 `n01_g4_chain_observer` 只统计**该路径到达之后**的原生 B 样条、桥接 Path、G2 及 G3 消息，并将缺口明确记为 `G4_CHAIN_INCOMPLETE`。原 G3 默认入口仍保持 mode1 不变。自动归档 G4 研究文件与运行报告。
+
+**状态：已开发并提交，尚未在用户 Ubuntu/ROS2 环境实际跑完 G4.7；不是离线整链已验收。** 即使链路话题观测通过，也不表示 G3 候选真正跟随了新 A→B 路线，不等于静态整 PCD 已送入 SCAN，也不表示地面/碰撞净空、动态障碍真值或真机运动已验证。实验地面高度 `N01_G4_GROUND_Z_MAP_M` 必须由操作员显式提供；从未授权向实体机器人发运动指令。
