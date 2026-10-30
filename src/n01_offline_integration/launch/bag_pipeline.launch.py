@@ -26,6 +26,9 @@ def generate_launch_description():
         DeclareLaunchArgument("max_clouds",default_value="2000"),
         DeclareLaunchArgument("scan_rate_hz",default_value="8.0"),
         DeclareLaunchArgument("scan_navi_mode",default_value="1"),
+        # Source-identified mapping TF is opt-in; legacy tests retain +0.90m.
+        DeclareLaunchArgument("historical_mount_profile",
+                              default_value="LEGACY_HIVE2_0P90"),
         Node(package="scan_planner",executable="scan_planner_node",
              name="scan_planner_node",parameters=[pcfg,{
                  "grid_map.frame_id":"map", "grid_map.cloud_is_world":True,
@@ -66,6 +69,8 @@ def generate_launch_description():
                  "scan_rate_hz":ParameterValue(LaunchConfiguration("scan_rate_hz"),value_type=float),
                  "max_map_tf_age_s":1.0,
                  "goal_forward_m":1.5,
+                 "historical_mount_profile":ParameterValue(
+                     LaunchConfiguration("historical_mount_profile"),value_type=str),
                  "use_sim_time":False
              }],output="screen"),
     ])
