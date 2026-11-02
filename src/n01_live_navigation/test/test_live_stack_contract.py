@@ -36,6 +36,7 @@ class LiveStackContractTests(unittest.TestCase):
         self.assertIn('"odom_child_frame": "base_link"', launch)
         self.assertIn('"body_frame": "base_footprint"', launch)
         self.assertIn("motion_compensated_pose(", bridge)
+        self.assertIn("self.last_processed_scan_stamp_ns == self.last_cloud_input_stamp_ns", bridge)
         self.assertIn("def on_odometry(", bridge)
         self.assertIn("odom_receive_fresh", supervisor)
         self.assertIn("interpolate_pose(", bridge)

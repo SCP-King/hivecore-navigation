@@ -520,6 +520,8 @@ class LiveScanBridge(Node):
                 return
         self.last_cloud_input_stamp_ns = stamp_ns
         self.last_cloud_input_rx_monotonic = time.monotonic()
+        # A newer input invalidates readiness until that exact scan is processed.
+        self.motion_compensation_ready = False
         if not self._status_is_fresh():
             self.counts["drop_status"] += 1
             return
@@ -528,7 +530,6 @@ class LiveScanBridge(Node):
             # the freshest obstacle observation, not a FIFO backlog.
             self.counts["drop_superseded"] += len(self.pending_clouds)
             self.pending_clouds.clear()
-        self.motion_compensation_ready = False
         self.pending_clouds.append((msg, time.monotonic(), False))
         self.counts["cloud_queued"] += 1
 
@@ -720,6 +721,8 @@ class LiveScanBridge(Node):
         ready = (
             status_fresh and pose_fresh and odom_fresh and cloud_fresh
             and self.sensor_extrinsic_ready and self.motion_compensation_ready
+            and bool(compensation_for_latest_scan)
+            and self.last_processed_scan_stamp_ns == self.last_cloud_input_stamp_ns
         )
         data = {
             "schema": "n01.live_scan_readiness.v6",
