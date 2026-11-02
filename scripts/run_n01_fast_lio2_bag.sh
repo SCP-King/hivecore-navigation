@@ -13,7 +13,9 @@ MAP_OUT="${2:-/home/demo/lyy/n01_runtime/slam/fast_lio2_${STAMP}.pcd}"
 RUN_DIR="/home/demo/lyy/n01_runtime/runs/fast_lio2_bag/${STAMP}"
 mkdir -p "$RUN_DIR" "$(dirname "$MAP_OUT")"
 
-source /opt/ros/humble/setup.bash
+if [[ "${ROS_DISTRO:-}" != "humble" ]]; then
+  source /opt/ros/humble/setup.bash
+fi
 if [[ -n "${LIVOX_SETUP:-}" ]]; then
   source "$LIVOX_SETUP"
 fi
