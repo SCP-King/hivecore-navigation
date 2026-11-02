@@ -35,6 +35,7 @@ from .core import (
     motion_compensated_pose,
     scan_output_is_fresh,
     select_pose_anchor,
+    pose_samples_equivalent,
 )
 
 
@@ -54,9 +55,9 @@ class LiveScanBridge(Node):
             "body_frame": "base_footprint",
             "max_status_age_s": 1.0,
             "max_pose_rx_age_s": 0.7,
-            "max_pose_stamp_age_s": 0.7,
-            "max_pose_anchor_delta_s": 0.5,
-            "max_live_body_pose_anchor_delta_s": 0.7,
+            "max_pose_stamp_age_s": 1.5,
+            "max_pose_anchor_delta_s": 1.25,
+            "max_live_body_pose_anchor_delta_s": 1.4,
             "pose_cache_size": 64,
             "max_odom_rx_age_s": 0.2,
             "max_odom_stamp_age_s": 0.4,
@@ -107,7 +108,7 @@ class LiveScanBridge(Node):
             0.1 <= self.max_status_age <= 3.0
             and 0.1 <= self.max_pose_rx_age <= 2.0
             and 0.1 <= self.max_pose_stamp_age <= 2.0
-            and 0.1 <= self.max_pose_anchor_delta <= 1.0
+            and 0.1 <= self.max_pose_anchor_delta <= 1.5
             and 0.1 <= self.max_live_body_pose_anchor_delta <= self.max_pose_stamp_age
             and 2 <= self.pose_cache_size <= 256
             and 0.05 <= self.max_odom_rx_age <= 1.0
@@ -145,6 +146,10 @@ class LiveScanBridge(Node):
         self.pose_contract_error = "waiting_robot_pose"
         self.last_pose_error = ""
         self.last_pose_stamp_ns = None
+        self.pose_conflict_stamps = set()
+        self.pose_publisher_endpoints = []
+        self.pose_publisher_query_error = ""
+        self.pose_publisher_query_monotonic = 0.0
         self.last_body = None
         self.last_velocity_valid = False
         self.last_live_body = None
@@ -181,7 +186,9 @@ class LiveScanBridge(Node):
         self.counts = {
             "cloud_in": 0, "cloud_queued": 0, "cloud_out": 0,
             "cloud_tf_wait_started": 0, "cloud_tf_wait_completed": 0,
-            "pose_in": 0, "pose_accepted": 0,
+            "pose_in": 0, "pose_accepted": 0, "pose_stamp_advance": 0,
+            "pose_duplicate": 0, "pose_out_of_order": 0,
+            "drop_pose_duplicate_conflict": 0,
             "odom_in": 0, "odom_accepted": 0, "odom_reordered": 0,
             "drop_odom_contract": 0, "drop_odom_timeout": 0, "drop_odom_tf": 0,
             "drop_pose_contract": 0, "drop_pose_timeout": 0,
@@ -359,19 +366,47 @@ class LiveScanBridge(Node):
             self.pose_contract_error = "robot_pose_position_nonfinite"
             return
 
+        if stamp_ns in self.pose_conflict_stamps:
+            self.counts["drop_pose_duplicate_conflict"] += 1
+            return
+
         stamps = [sample[0] for sample in self.pose_samples]
         index = bisect_left(stamps, stamp_ns)
         sample = (stamp_ns, position, orientation)
         if index < len(self.pose_samples) and self.pose_samples[index][0] == stamp_ns:
-            self.pose_samples[index] = sample
-        else:
-            self.pose_samples.insert(index, sample)
+            existing = self.pose_samples[index]
+            if pose_samples_equivalent(existing, position, orientation):
+                # Duplicate endpoints can legitimately repeat an identical sample.
+                # Do not treat a duplicate delivery as forward timestamp progress.
+                self.counts["pose_duplicate"] += 1
+                return
+            # The same source timestamp carrying materially different poses is
+            # ambiguous. Remove that anchor and reject further copies of it.
+            self.pose_samples.pop(index)
+            self.pose_conflict_stamps.add(stamp_ns)
+            if len(self.pose_conflict_stamps) > 64:
+                self.pose_conflict_stamps.remove(min(self.pose_conflict_stamps))
+            self.counts["drop_pose_duplicate_conflict"] += 1
+            self.pose_contract_error = "robot_pose_duplicate_stamp_conflict"
+            self.last_pose_error = self.pose_contract_error
+            self.last_pose_stamp_ns = (
+                self.pose_samples[-1][0] if self.pose_samples else None)
+            return
+
+        is_newest_stamp = not self.pose_samples or stamp_ns > self.pose_samples[-1][0]
+        if not is_newest_stamp:
+            self.counts["pose_out_of_order"] += 1
+        self.pose_samples.insert(index, sample)
         if len(self.pose_samples) > self.pose_cache_size:
             del self.pose_samples[:len(self.pose_samples) - self.pose_cache_size]
-        self.pose_rx_monotonic = time.monotonic()
-        self.pose_contract_error = ""
-        self.last_pose_stamp_ns = self.pose_samples[-1][0]
         self.counts["pose_accepted"] += 1
+        if is_newest_stamp:
+            # Only a strictly advancing source timestamp refreshes pose freshness.
+            # Re-delivery of an old sample must not mask a stalled SLAM pose stream.
+            self.pose_rx_monotonic = time.monotonic()
+            self.pose_contract_error = ""
+            self.last_pose_stamp_ns = stamp_ns
+            self.counts["pose_stamp_advance"] += 1
 
     @staticmethod
     def _transform_values(transform):
@@ -711,8 +746,32 @@ class LiveScanBridge(Node):
             self.last_processed_scan_stamp_ns = stamp_ns
             self.counts["cloud_out"] += 1
 
+    def _refresh_pose_publisher_endpoints(self, now_mono):
+        if now_mono - self.pose_publisher_query_monotonic < 2.0:
+            return
+        self.pose_publisher_query_monotonic = now_mono
+        try:
+            endpoints = self.get_publishers_info_by_topic(self.pose_topic)
+            self.pose_publisher_endpoints = []
+            for endpoint in endpoints:
+                try:
+                    gid = bytes(endpoint.endpoint_gid).hex()
+                except Exception:
+                    gid = str(getattr(endpoint, "endpoint_gid", ""))
+                namespace = str(endpoint.node_namespace).rstrip("/")
+                node_name = str(endpoint.node_name)
+                self.pose_publisher_endpoints.append({
+                    "node": (namespace + "/" + node_name) if namespace else "/" + node_name,
+                    "type": str(endpoint.topic_type),
+                    "gid": gid,
+                })
+            self.pose_publisher_query_error = ""
+        except Exception as exc:
+            self.pose_publisher_query_error = str(exc)
+
     def publish_diagnostics(self):
         now_mono = time.monotonic()
+        self._refresh_pose_publisher_endpoints(now_mono)
         now_ns = self.get_clock().now().nanoseconds
         status_fresh = self._status_is_fresh()
         pose_fresh = self._pose_rx_is_fresh()
@@ -732,6 +791,9 @@ class LiveScanBridge(Node):
 
         latest_pose_stamp_ns = self.pose_samples[-1][0] if self.pose_samples else None
         oldest_pose_stamp_ns = self.pose_samples[0][0] if self.pose_samples else None
+        pose_stamp_progress_age = (
+            now_mono - self.pose_rx_monotonic
+            if self.pose_rx_monotonic > 0.0 else None)
         latest_odom_stamp_ns = self.odom_samples[-1][0] if self.odom_samples else None
         oldest_odom_stamp_ns = self.odom_samples[0][0] if self.odom_samples else None
         odom_fresh = self._odom_rx_is_fresh()
@@ -823,6 +885,12 @@ class LiveScanBridge(Node):
             "robot_pose_receive_fresh": bool(pose_fresh),
             "robot_pose_receive_age_s": (
                 now_mono - self.pose_rx_monotonic if self.pose_rx_monotonic > 0.0 else None),
+            "robot_pose_stamp_progress_age_s": pose_stamp_progress_age,
+            "robot_pose_publisher_count": len(self.pose_publisher_endpoints),
+            "robot_pose_publishers": self.pose_publisher_endpoints,
+            "robot_pose_multiple_publisher_endpoints": (
+                len(self.pose_publisher_endpoints) > 1),
+            "robot_pose_publisher_query_error": self.pose_publisher_query_error,
             "robot_pose_stamp_age_s": self.pose_stamp_age_s,
             "robot_pose_cache_samples": len(self.pose_samples),
             "robot_pose_oldest_stamp_ns": oldest_pose_stamp_ns,
