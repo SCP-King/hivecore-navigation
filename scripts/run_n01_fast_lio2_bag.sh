@@ -92,8 +92,10 @@ if ! kill -0 "$FAST_PID" 2>/dev/null; then
   exit 5
 fi
 
+sleep 2 # allow the final queued scan and map callback to drain
+
 echo "[N01-FAST-LIO2] Saving accumulated FAST-LIO map."
-SAVE_OUTPUT="$(ros2 service call /n01/fast_lio/map_save std_srvs/srv/Trigger '{}' 2>&1)"
+SAVE_OUTPUT="$(timeout 30s ros2 service call /n01/fast_lio/map_save std_srvs/srv/Trigger '{}' 2>&1)"
 printf '%s\n' "$SAVE_OUTPUT" | tee "$RUN_DIR/map_save.txt"
 if ! grep -q "success: true" <<<"$SAVE_OUTPUT"; then
   echo "[N01-FAST-LIO2] Map save service did not report success." >&2
