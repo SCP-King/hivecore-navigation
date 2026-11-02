@@ -8,7 +8,9 @@ if [[ ! -f /opt/ros/humble/setup.bash ]]; then
   exit 2
 fi
 # Source ROS underlay first, then an optional existing Livox driver overlay.
-source /opt/ros/humble/setup.bash
+if [[ "${ROS_DISTRO:-}" != "humble" ]]; then
+  source /opt/ros/humble/setup.bash
+fi
 if [[ -n "${LIVOX_SETUP:-}" ]]; then
   if [[ ! -f "$LIVOX_SETUP" ]]; then
     echo "[N01-FAST-LIO2] LIVOX_SETUP does not exist: $LIVOX_SETUP" >&2
