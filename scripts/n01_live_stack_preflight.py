@@ -137,7 +137,8 @@ class LiveStackPreflight(Node):
             "tf_edges": Counter(),
         })
         self.topic_types = {}
-        self.subscriptions = []
+        # Avoid rclpy.node.Node's read-only `subscriptions` property.
+        self._audit_subscriptions = []
         self.subscribed_topics = set()
         self.topic_presence = {}
         self.topic_discovery_error = ""
@@ -174,7 +175,7 @@ class LiveStackPreflight(Node):
                     qos = self._qos_for(topic)
                     subscription = self.create_subscription(
                         message_class, topic, self._callback(topic), qos)
-                    self.subscriptions.append(subscription)
+                    self._audit_subscriptions.append(subscription)
                     self.subscribed_topics.add(topic)
                 except Exception as exc:
                     self.topic_presence[topic] = {
