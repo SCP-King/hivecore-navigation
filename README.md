@@ -1,3 +1,23 @@
+# Live vendor localization -> native SCAN integration (development, read-only)
+
+A new `n01_live_navigation` package connects the already-running Hivecore localization output and filtered Livox cloud to the repository's **native SCAN** inputs. It performs scan-stamp TF lookups and publishes map-frame `/cloud`, `/sensor_pose`, and `/body_pose`; it never publishes `/cmd_vel`, `/cmd_wheel`, or chassis commands. SCAN uses `/move_base_simple/goal` and publishes `/planning/bspline`.
+
+Build and launch only after confirming the PCD is registered in the active vendor map frame:
+
+```bash
+cd /home/demo/lyy/hivecore-navigation
+source /opt/ros/humble/setup.bash
+colcon build --packages-up-to n01_live_navigation scan_planner n01_static_map --event-handlers console_direct+
+source install/setup.bash
+ros2 launch n01_live_navigation live_scan.launch.py \\
+  pcd_path:=/home/demo/lyy/slam_data/maps/cloud_map_20261027_225549.pcd \\
+  pcd_map_frame_asserted:=true ground_z_map_m:=-0.55 body_height_m:=0.90
+```
+
+The PCD frame assertion and ground Z are operator-supplied research assumptions, not automatic registration or floor certification. This launch is planning-only; the Hive2 wheel steering/drive controller is not started or commanded. See [live SCAN integration notes](docs/n01_live_scan_integration.md).
+
+---
+
 ## 新增：FAST-LIO2 可选后端，甲方 SLAM 接口保持不变
 
 新增独立 `n01_fast_lio` ROS 2 Humble 包：使用固定版本的 HKU-MARS FAST-LIO2 ROS2 分支，读取原始 Livox `CustomMsg` + Livox 内置 IMU，所有输出隔离到 `/n01/fast_lio/*`，私有地图帧为 `n01_fast_lio_map`，FAST-LIO TF broadcaster 默认不创建（不会额外注册 `/tf` publisher endpoint）。甲方 `/localization_status`、`/robot_pose`、`/tf`、`/livox/lidar/geo_filtered`、原启动方式均不修改。可在开发阶段与甲方 SLAM 同时订阅传感器做 shadow comparison。
