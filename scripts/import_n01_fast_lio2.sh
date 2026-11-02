@@ -5,6 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEST="$ROOT/src/third_party/FAST_LIO"
 URL="https://github.com/hku-mars/FAST_LIO.git"
 PIN="cc3c9e8b1469b33b8072764d6db2348ed6dc597f"
+IKD_PIN="e2e3f4e9d3b95a9e66b1ba83dc98d4a05ed8a3c4"
 
 mkdir -p "$(dirname "$DEST")"
 
@@ -37,6 +38,11 @@ fi
 
 git -C "$DEST" submodule sync --recursive
 git -C "$DEST" submodule update --init --recursive
+IKD_ACTUAL="$(git -C "$DEST/include/ikd-Tree" rev-parse HEAD)"
+if [[ "$IKD_ACTUAL" != "$IKD_PIN" ]]; then
+  echo "[N01-FAST-LIO2] Wrong ikd-Tree submodule revision: $IKD_ACTUAL" >&2
+  exit 2
+fi
 
 python3 "$ROOT/scripts/patch_n01_fast_lio2.py" --source "$DEST"
 echo "[N01-FAST-LIO2] Source ready at $DEST"
