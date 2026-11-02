@@ -1,10 +1,19 @@
 import math
+import struct
 import unittest
 from types import SimpleNamespace
 
+import numpy as np
+
 from n01_live_navigation.core import (
     goal_is_valid,
-    estimate_velocity, localization_is_tracking, rotate_translate,
+    estimate_velocity,
+    localization_is_tracking,
+    rotate_translate,
+    decode_pointcloud_xyz,
+    transform_points,
+    cluster_xy_points,
+    four_wheel_steer_screen,
 )
 
 
@@ -22,7 +31,7 @@ class LiveScanCoreTests(unittest.TestCase):
         )
         self.assertEqual(localization_is_tracking(msg), (True, "tracking_ready"))
         msg.control_signal_session_mode = "relocalization"
-        self.assertEqual(localization_is_tracking(msg)[0], False)
+        self.assertFalse(localization_is_tracking(msg)[0])
 
     def test_status_contract_mismatch_fails_closed(self):
         self.assertEqual(
@@ -46,6 +55,55 @@ class LiveScanCoreTests(unittest.TestCase):
     def test_bad_quaternion_rejected(self):
         with self.assertRaises(ValueError):
             rotate_translate((0, 0, 0), (0, 0, 0), (0, 0, 0, 0))
+
+    def test_vectorized_transform_matches_quarter_turn(self):
+        points = np.asarray([[1, 0, 0], [0, 1, 0]], dtype=np.float32)
+        result = transform_points(
+            points, (2, 3, 4), (0, 0, math.sqrt(.5), math.sqrt(.5)))
+        np.testing.assert_allclose(result, [[2, 4, 4], [1, 3, 4]], atol=1e-6)
+
+    def test_pointcloud_decoder_honors_offsets_and_padding(self):
+        fields = [
+            SimpleNamespace(name="x", offset=0, datatype=7, count=1),
+            SimpleNamespace(name="y", offset=4, datatype=7, count=1),
+            SimpleNamespace(name="z", offset=8, datatype=7, count=1),
+        ]
+        payload = struct.pack("<ffff", 1.0, 2.0, 3.0, 123.0)
+        payload += struct.pack("<ffff", 4.0, 5.0, 6.0, 456.0)
+        msg = SimpleNamespace(
+            width=2, height=1, point_step=16, row_step=32,
+            fields=fields, is_bigendian=False, data=payload,
+        )
+        decoded = decode_pointcloud_xyz(msg, max_points=2, max_range_m=10.0)
+        np.testing.assert_allclose(decoded, [[1, 2, 3], [4, 5, 6]])
+
+    def test_pointcloud_decoder_rejects_oversize(self):
+        msg = SimpleNamespace(
+            width=2, height=1, point_step=12, row_step=24,
+            fields=[], is_bigendian=False, data=b"\0" * 24,
+        )
+        with self.assertRaises(ValueError):
+            decode_pointcloud_xyz(msg, max_points=1)
+
+    def test_cluster_xy_points_separates_components(self):
+        points = np.asarray([
+            [0.00, 0.00, 0.1], [0.02, 0.01, 0.2], [0.04, 0.02, 0.3],
+            [2.00, 2.00, 0.1], [2.02, 2.01, 0.2], [2.04, 2.02, 0.3],
+        ], dtype=np.float32)
+        clusters = cluster_xy_points(points, cell_size=0.2, min_points=3)
+        self.assertEqual(len(clusters), 2)
+
+    def test_four_wheel_screen_straight_path(self):
+        points = np.column_stack((
+            np.linspace(0.0, 5.0, 30),
+            np.zeros(30),
+            np.zeros(30),
+        ))
+        result = four_wheel_steer_screen(points)
+        self.assertTrue(result["necessary_conditions_pass"])
+        self.assertAlmostEqual(result["max_abs_steering_angle_rad"], 0.0, places=5)
+        self.assertFalse(result["controller_model_verified"])
+        self.assertFalse(result["execution_authorized"])
 
     def test_goal_gate_requires_live_and_static_readiness(self):
         goal = SimpleNamespace(
