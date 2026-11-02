@@ -103,7 +103,16 @@ LIVOX_SETUP=/path/to/existing_livox_workspace/install/setup.bash \
   bash scripts/build_n01_fast_lio2.sh
 ```
 
-Bag 回放时在隔离域启动 FAST-LIO2：
+推荐使用一个命令完成 metadata preflight、隔离 ROS domain 88、只回放原始雷达和 IMU、保存 PCD 与日志：
+
+```bash
+bash scripts/run_n01_fast_lio2_bag.sh \
+  /home/demo/lyy/slam_data/bags/bag_20261027_225100
+```
+
+可选第二个参数指定输出 PCD 路径。该脚本只回放 `/livox/lidar` 和 `/livox/imu`，原 Bag 中的 TF、定位状态和所有控制话题均不重放；只清理自己启动的进程。
+
+手动调试时也可以分终端启动：
 
 终端 A：
 ```bash
