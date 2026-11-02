@@ -88,7 +88,7 @@ if [[ ! -f "$LIVOX_CMAKE_CONFIG" ]]; then
 fi
 
 # Make the already-installed Hive2 package discoverable to CMake as well.
-case ":$${CMAKE_PREFIX_PATH:-}:" in
+case ":${CMAKE_PREFIX_PATH:-}:" in
   *":$LIVOX_PREFIX:"*) ;;
   *) export CMAKE_PREFIX_PATH="$LIVOX_PREFIX:${CMAKE_PREFIX_PATH:-}" ;;
 esac
