@@ -180,8 +180,10 @@ void GridMap::initMap(rclcpp::Node *node)
     static_ready_pub_ = node_->create_publisher<std_msgs::msg::Bool>(
         "/grid_map/static_overlay_ready",
         rclcpp::QoS(1).reliable().transient_local());
+    // Static PCD is immutable and published once with transient-local QoS.
+    // Request the retained sample even when SCAN starts after the map provider.
     static_cloud_sub_ = node_->create_subscription<sensor_msgs::msg::PointCloud2>(
-        static_cloud_topic_, rclcpp::SensorDataQoS(),
+        static_cloud_topic_, rclcpp::QoS(1).reliable().transient_local(),
         std::bind(&GridMap::staticCloudCallback, this, std::placeholders::_1));
     RCLCPP_WARN(node_->get_logger(),
                 "[GridMap] static PCD occupancy overlay ENABLED: %s; "
