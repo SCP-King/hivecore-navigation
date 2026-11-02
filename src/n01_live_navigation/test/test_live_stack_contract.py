@@ -27,6 +27,19 @@ class LiveStackContractTests(unittest.TestCase):
         self.assertNotIn("msg.header", monitor)
         self.assertIn("msg.traj_id", monitor)
 
+    def test_bridge_uses_robot_pose_interpolation_and_only_sensor_mount_tf(self):
+        bridge = (ROOT / "src/n01_live_navigation/n01_live_navigation/live_scan_bridge.py").read_text()
+        launch = (ROOT / "src/n01_live_navigation/launch/live_scan.launch.py").read_text()
+        supervisor = (ROOT / "src/n01_live_navigation/n01_live_navigation/runtime_supervisor.py").read_text()
+        self.assertIn('"pose_topic": "/robot_pose"', launch)
+        self.assertIn('"body_frame": "base_footprint"', launch)
+        self.assertIn("interpolate_pose(", bridge)
+        self.assertIn("compose_transform(", bridge)
+        self.assertIn("self.body_frame, self.cloud_frame, scan_time", bridge)
+        self.assertNotIn("self.map_frame, self.cloud_frame, scan_time", bridge)
+        self.assertNotIn("map_to_base_footprint_tf_not_observed", supervisor)
+        self.assertIn("sensor_extrinsic_ready", supervisor)
+
     def test_live_navigation_remains_non_actuating(self):
         package = ROOT / "src/n01_live_navigation/n01_live_navigation"
         combined = "\n".join(path.read_text() for path in package.glob("*.py"))
