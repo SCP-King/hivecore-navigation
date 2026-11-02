@@ -37,6 +37,28 @@ class FourStageDeliveryTests(unittest.TestCase):
         for marker in ("## A.", "## B.", "## C.", "## D."):
             self.assertIn(marker, source)
 
+    def test_dynamic_tracker_uses_sensor_time_and_publishes_invalid_status(self):
+        source = (ROOT / "src/n01_live_navigation/n01_live_navigation/dynamic_obstacle_tracker.py").read_text()
+        self.assertIn("estimate_velocity(", source)
+        self.assertIn("cloud_stamp_ns", source)
+        self.assertIn('"status": "INVALID_CLOUD_FRAME"', source)
+        self.assertIn('"status": "INVALID_CLOUD"', source)
+        self.assertIn('"velocity_valid"', source)
+
+    def test_safety_gate_consumes_dynamic_freshness_and_candidate_state(self):
+        source = (ROOT / "src/n01_live_navigation/n01_live_navigation/safety_supervisor.py").read_text()
+        self.assertIn("dynamic_obstacle_fresh=dynamic_fresh", source)
+        self.assertIn('dynamic_obstacle_status=self.dynamic_status.get("status", "UNKNOWN")', source)
+        core = (ROOT / "src/n01_live_navigation/n01_live_navigation/core.py").read_text()
+        self.assertIn("dynamic_obstacle_status_missing_or_stale", core)
+        self.assertIn("dynamic_obstacle_candidates_require_review", core)
+
+    def test_runtime_health_reports_planner_and_scene_diagnostic_freshness(self):
+        source = (ROOT / "src/n01_live_navigation/n01_live_navigation/runtime_supervisor.py").read_text()
+        self.assertIn('"scene_diagnostics_ready": scene_diagnostics_ready', source)
+        self.assertIn('"planner_candidate_status"', source)
+        self.assertIn('"dynamic_tracker_review_required"', source)
+
 
 if __name__ == "__main__":
     unittest.main()

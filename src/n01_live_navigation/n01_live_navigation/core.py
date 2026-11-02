@@ -493,9 +493,18 @@ def scan_output_is_fresh(last_processed_stamp_ns, latest_input_stamp_ns,
 def evaluate_safety_gate(*, health_fresh, navigation_ready,
                          feasibility_fresh, feasibility_status,
                          candidate_review_ready, operator_hold,
-                         physical_checks):
-    """Report a review-only safety state; never authorize robot motion."""
+                         physical_checks, dynamic_obstacle_fresh=False,
+                         dynamic_obstacle_status="UNKNOWN"):
+    """Report a review-only safety state; never authorize robot motion.
+
+    Dynamic diagnostics are deliberately fail-closed: missing, stale, invalid,
+    or candidate-bearing observations require review. This is a software
+    acceptance gate only and never commands a stop or authorizes motion.
+    """
     blockers = []
+    dynamic_status = str(dynamic_obstacle_status)
+    dynamic_status_valid = dynamic_status in (
+        "NO_UNMATCHED_CLUSTERS", "CANDIDATES_AVAILABLE")
     if bool(operator_hold):
         blockers.append("operator_hold_active")
     if not bool(health_fresh):
@@ -508,6 +517,12 @@ def evaluate_safety_gate(*, health_fresh, navigation_ready,
         blockers.append("candidate_kinematic_screen_not_passed")
     if not bool(candidate_review_ready):
         blockers.append("candidate_review_feedback_incomplete")
+    if not bool(dynamic_obstacle_fresh):
+        blockers.append("dynamic_obstacle_status_missing_or_stale")
+    elif not dynamic_status_valid:
+        blockers.append("dynamic_obstacle_status_invalid_or_waiting")
+    elif dynamic_status == "CANDIDATES_AVAILABLE":
+        blockers.append("dynamic_obstacle_candidates_require_review")
     required = (
         "emergency_stop_chain_verified",
         "communication_loss_stop_verified",
@@ -530,6 +545,10 @@ def evaluate_safety_gate(*, health_fresh, navigation_ready,
         status = "CANDIDATE_NOT_READY"
     elif not bool(candidate_review_ready):
         status = "CANDIDATE_REVIEW_INCOMPLETE"
+    elif not bool(dynamic_obstacle_fresh) or not dynamic_status_valid:
+        status = "DYNAMIC_OBSTACLE_STATUS_NOT_READY"
+    elif dynamic_status == "CANDIDATES_AVAILABLE":
+        status = "DYNAMIC_OBSTACLE_REVIEW_REQUIRED"
     elif missing:
         status = "PHYSICAL_ACCEPTANCE_INCOMPLETE"
     else:
@@ -538,6 +557,9 @@ def evaluate_safety_gate(*, health_fresh, navigation_ready,
         "status": status,
         "blockers": blockers,
         "physical_acceptance_missing": missing,
+        "dynamic_obstacle_status": dynamic_status,
+        "dynamic_obstacle_status_fresh": bool(dynamic_obstacle_fresh),
+        "dynamic_obstacle_review_required": bool(dynamic_status == "CANDIDATES_AVAILABLE"),
         "execution_authorized": False,
         "actuator_output": "DISABLED",
         "safety_authorization": "NEVER",

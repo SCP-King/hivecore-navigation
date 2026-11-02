@@ -219,6 +219,57 @@ class LiveScanCoreTests(unittest.TestCase):
         self.assertEqual(result["safety_authorization"], "NEVER")
         self.assertTrue(result["physical_acceptance_missing"])
 
+    @staticmethod
+    def _all_physical_checks_pass():
+        return {
+            name: True for name in (
+                "emergency_stop_chain_verified",
+                "communication_loss_stop_verified",
+                "localization_loss_stop_verified",
+                "dynamic_obstacle_stop_verified",
+                "manual_takeover_verified",
+                "wheel_controller_mapping_verified",
+                "wheel_contact_geometry_verified",
+                "collision_envelope_verified",
+                "braking_distance_verified",
+            )
+        }
+
+    def _evaluate_clear_dynamic_scene(self, dynamic_fresh=True, dynamic_status="NO_UNMATCHED_CLUSTERS"):
+        return evaluate_safety_gate(
+            health_fresh=True,
+            navigation_ready=True,
+            feasibility_fresh=True,
+            feasibility_status="NECESSARY_CONDITIONS_PASS",
+            candidate_review_ready=True,
+            operator_hold=False,
+            physical_checks=self._all_physical_checks_pass(),
+            dynamic_obstacle_fresh=dynamic_fresh,
+            dynamic_obstacle_status=dynamic_status,
+        )
+
+    def test_dynamic_obstacle_status_missing_or_stale_blocks_review(self):
+        result = self._evaluate_clear_dynamic_scene(dynamic_fresh=False)
+        self.assertEqual(result["status"], "DYNAMIC_OBSTACLE_STATUS_NOT_READY")
+        self.assertIn("dynamic_obstacle_status_missing_or_stale", result["blockers"])
+        self.assertFalse(result["execution_authorized"])
+
+    def test_dynamic_obstacle_candidates_require_review(self):
+        result = self._evaluate_clear_dynamic_scene(
+            dynamic_fresh=True, dynamic_status="CANDIDATES_AVAILABLE")
+        self.assertEqual(result["status"], "DYNAMIC_OBSTACLE_REVIEW_REQUIRED")
+        self.assertTrue(result["dynamic_obstacle_review_required"])
+        self.assertIn("dynamic_obstacle_candidates_require_review", result["blockers"])
+        self.assertFalse(result["execution_authorized"])
+
+    def test_fresh_clear_scene_still_never_authorizes_actuation(self):
+        result = self._evaluate_clear_dynamic_scene()
+        self.assertEqual(result["status"], "REVIEW_ONLY_NOT_AUTHORIZED")
+        self.assertTrue(result["dynamic_obstacle_status_fresh"])
+        self.assertFalse(result["execution_authorized"])
+        self.assertEqual(result["actuator_output"], "DISABLED")
+        self.assertEqual(result["safety_authorization"], "NEVER")
+
     def test_velocity_requires_valid_timestamp_delta(self):
         v, ok = estimate_velocity(((0, 0, 0), 1.0), ((.1, 0, 0), 1.1))
         self.assertTrue(ok)

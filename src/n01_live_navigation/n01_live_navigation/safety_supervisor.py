@@ -122,6 +122,8 @@ class LiveSafetySupervisor(Node):
             candidate_review_ready=self.feasibility.get("candidate_review_ready") is True,
             operator_hold=self.operator_hold,
             physical_checks=self.physical_checks,
+            dynamic_obstacle_fresh=dynamic_fresh,
+            dynamic_obstacle_status=self.dynamic_status.get("status", "UNKNOWN"),
         )
         status.update({
             "schema": "n01.live_safety_status.v1",

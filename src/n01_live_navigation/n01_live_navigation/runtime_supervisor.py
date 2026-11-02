@@ -179,6 +179,12 @@ class LiveRuntimeSupervisor(Node):
         # body<-LiDAR extrinsic lookup both succeed.
         navigation_ready = not blockers
         stage_b_ready = bool(navigation_ready and self.static_ready)
+        dynamic_fresh = dynamic_age is not None and 0.0 <= dynamic_age <= 1.0
+        dynamic_status = self.dynamic_obstacle.get("status", "WAITING")
+        dynamic_status_valid = dynamic_status in (
+            "NO_UNMATCHED_CLUSTERS", "CANDIDATES_AVAILABLE")
+        scene_diagnostics_ready = bool(dynamic_fresh and dynamic_status_valid)
+        planner_fresh = planner_age is not None and 0.0 <= planner_age <= 1.0
         feasibility_fresh = feasibility_age is not None and 0.0 <= feasibility_age <= 1.0
         stage_c_ready = bool(
             feasibility_fresh
@@ -197,10 +203,22 @@ class LiveRuntimeSupervisor(Node):
                 "ready": stage_b_ready,
                 "static_overlay_ready": bool(self.static_ready),
                 "native_scan_cloud_input": "/cloud",
-                "dynamic_tracker_status": self.dynamic_obstacle.get("status", "WAITING"),
+                "dynamic_tracker_status": dynamic_status,
                 "dynamic_tracker_age_s": dynamic_age,
+                "dynamic_tracker_fresh": bool(dynamic_fresh),
+                "dynamic_tracker_status_valid": bool(dynamic_status_valid),
+                "dynamic_tracker_review_required": bool(
+                    dynamic_status == "CANDIDATES_AVAILABLE"),
                 "dynamic_tracker_role": "VISUALIZATION_ONLY",
-                "planner_candidate_received": bool(planner_age is not None and planner_age <= 1.0),
+                "scene_diagnostics_ready": scene_diagnostics_ready,
+                "scene_diagnostics_blockers": (
+                    [] if scene_diagnostics_ready else [
+                        "dynamic_obstacle_status_missing_stale_or_invalid"]),
+                "planner_candidate_received": bool(planner_fresh),
+                "planner_candidate_status": (
+                    "FRESH" if planner_fresh
+                    else "WAITING_FOR_GOAL_OR_PLANNER_OUTPUT"
+                    if planner_age is None else "STALE"),
                 "planner_candidate_age_s": planner_age,
                 "planner_trajectory_id": self.planner_traj_id,
                 "planner_is_native_scan": True,
@@ -261,6 +279,8 @@ class LiveRuntimeSupervisor(Node):
                 "vendor-defined Vector3Stamped; raw x/y/z only, no guessed units or labels"),
             "robot_feasibility": self.robot_feasibility,
             "dynamic_obstacle_status": self.dynamic_obstacle,
+            "dynamic_obstacle_status_fresh": bool(dynamic_fresh),
+            "planner_candidate_fresh": bool(planner_fresh),
             "stages": stages,
             "actuator_output": "DISABLED",
             "safety_authorization": "NEVER",

@@ -59,6 +59,7 @@ class Hive2TrajectoryMonitor(Node):
         self.body_pose_stamp_ns = None
         self.joint_positions = {}
         self.joint_rx = None
+        self.joint_stamp_ns = None
         self.last_error = ""
         self.last_bspline_rx = None
 
@@ -87,10 +88,19 @@ class Hive2TrajectoryMonitor(Node):
             for name, position in zip(msg.name, msg.position)
             if math.isfinite(float(position))
         }
+        self.joint_stamp_ns = (
+            int(msg.header.stamp.sec) * 1000000000
+            + int(msg.header.stamp.nanosec))
         self.joint_rx = time.monotonic()
 
     def _pitch_reference_match(self):
         if self.joint_rx is None or time.monotonic() - self.joint_rx > 0.5:
+            return None
+        if self.joint_stamp_ns is None or self.joint_stamp_ns <= 0:
+            return None
+        joint_stamp_age = (
+            self.get_clock().now().nanoseconds - self.joint_stamp_ns) / 1e9
+        if not -0.2 <= joint_stamp_age <= 0.5:
             return None
         required = list(PITCH1_JOINTS) + list(PITCH2_JOINTS)
         if any(name not in self.joint_positions for name in required):
@@ -197,11 +207,20 @@ class Hive2TrajectoryMonitor(Node):
             now_mono - self.body_pose_rx if self.body_pose_rx is not None else None)
         joint_rx_age = (
             now_mono - self.joint_rx if self.joint_rx is not None else None)
+        joint_stamp_age = (
+            (now_ns - self.joint_stamp_ns) / 1e9
+            if self.joint_stamp_ns is not None else None)
+        body_pose_frame_match = bool(
+            self.body_pose is not None
+            and self.body_pose.header.frame_id.lstrip("/") == self.frame)
         body_feedback_fresh = (
-            body_stamp_age is not None and body_rx_age is not None
+            body_pose_frame_match
+            and body_stamp_age is not None and body_rx_age is not None
             and -0.2 <= body_stamp_age <= 0.35 and 0.0 <= body_rx_age <= 0.4)
         joint_feedback_fresh = (
-            joint_rx_age is not None and 0.0 <= joint_rx_age <= 0.5)
+            joint_rx_age is not None and 0.0 <= joint_rx_age <= 0.5
+            and joint_stamp_age is not None
+            and -0.2 <= joint_stamp_age <= 0.5)
         candidate_review_ready = bool(
             screen["necessary_conditions_pass"] and body_feedback_fresh
             and joint_feedback_fresh and pitch_match is True)
@@ -224,10 +243,12 @@ class Hive2TrajectoryMonitor(Node):
             **screen,
             "pitch_feedback_matches_home_reference": pitch_match,
             "pitch_reference_is_home_target_only": True,
+            "body_pose_frame_match": body_pose_frame_match,
             "body_pose_feedback_fresh": bool(body_feedback_fresh),
             "body_pose_stamp_age_s": body_stamp_age,
             "body_pose_receive_age_s": body_rx_age,
             "joint_feedback_fresh": bool(joint_feedback_fresh),
+            "joint_feedback_stamp_age_s": joint_stamp_age,
             "joint_feedback_receive_age_s": joint_rx_age,
             "candidate_review_ready": candidate_review_ready,
             "candidate_review_status": (

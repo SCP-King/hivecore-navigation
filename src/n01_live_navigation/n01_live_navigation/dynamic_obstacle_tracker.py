@@ -12,7 +12,7 @@ from sensor_msgs.msg import PointCloud2, PointField
 from std_msgs.msg import String
 from visualization_msgs.msg import Marker, MarkerArray
 
-from .core import decode_pointcloud_xyz, cluster_xy_points
+from .core import decode_pointcloud_xyz, cluster_xy_points, estimate_velocity
 
 
 class DynamicObstacleTracker(Node):
@@ -114,9 +114,12 @@ class DynamicObstacleTracker(Node):
         msg.data = pts.tobytes(order="C")
         return msg
 
-    def _associate(self, clusters, now):
+    def _associate(self, clusters, now, cloud_stamp_ns=None):
+        """Associate clusters and estimate velocity from sensor, not callback, time."""
         assigned = set()
         active = {}
+        stamp_ns = int(cloud_stamp_ns or 0)
+        stamp_s = stamp_ns / 1e9 if stamp_ns > 0 else None
         for cluster in clusters:
             centroid = np.mean(cluster, axis=0)
             best_id, best_distance = None, self.association_distance
@@ -130,20 +133,28 @@ class DynamicObstacleTracker(Node):
                 best_id = self.next_track_id
                 self.next_track_id += 1
                 velocity = [0.0, 0.0, 0.0]
+                velocity_valid = False
             else:
                 old = self.tracks[best_id]
-                dt = now - old["last_seen"]
-                if dt >= 0.02:
-                    measured = (centroid - old["centroid"]) / dt
-                    velocity = measured.tolist() if float(np.linalg.norm(measured)) <= 3.0 else [0.0, 0.0, 0.0]
+                previous_stamp_s = old.get("last_stamp_s")
+                if stamp_s is not None and previous_stamp_s is not None:
+                    measured, velocity_valid = estimate_velocity(
+                        (old["centroid"], previous_stamp_s),
+                        (centroid, stamp_s),
+                        max_speed=3.0,
+                    )
+                    velocity = list(measured)
                 else:
-                    velocity = old["velocity"]
+                    velocity = [0.0, 0.0, 0.0]
+                    velocity_valid = False
             assigned.add(best_id)
             active[best_id] = {
                 "centroid": centroid,
                 "minimum": np.min(cluster, axis=0),
                 "maximum": np.max(cluster, axis=0),
                 "velocity": velocity,
+                "velocity_valid": bool(velocity_valid),
+                "last_stamp_s": stamp_s,
                 "last_seen": now,
                 "points": int(cluster.shape[0]),
             }
@@ -220,6 +231,16 @@ class DynamicObstacleTracker(Node):
         self.cloud_count += 1
         if msg.header.frame_id.lstrip("/") != self.map_frame:
             self.last_error = "live_cloud_frame_mismatch"
+            self.diag_pub.publish(String(data=json.dumps({
+                "schema": "n01.dynamic_obstacle_status.v1",
+                "status": "INVALID_CLOUD_FRAME",
+                "reason": self.last_error,
+                "cloud_frame": msg.header.frame_id,
+                "expected_frame": self.map_frame,
+                "visualization_only": True,
+                "actuator_output": "DISABLED",
+                "safety_authorization": "NEVER",
+            }, sort_keys=True)))
             return
         if not self.static_ready:
             self.candidate_pub.publish(self._cloud_message(np.empty((0, 3)), msg.header))
@@ -234,8 +255,13 @@ class DynamicObstacleTracker(Node):
             self.diag_pub.publish(String(data=json.dumps({
                 "schema": "n01.dynamic_obstacle_status.v1",
                 "status": "WAITING_STATIC_MAP",
+                "cloud_stamp_ns": (
+                    int(msg.header.stamp.sec) * 1000000000
+                    + int(msg.header.stamp.nanosec)),
                 "visualization_only": True,
                 "planner_input": "unfiltered /cloud remains connected directly to native SCAN",
+                "actuator_output": "DISABLED",
+                "safety_authorization": "NEVER",
             }, sort_keys=True)))
             return
         try:
@@ -244,6 +270,19 @@ class DynamicObstacleTracker(Node):
             points = decode_pointcloud_xyz(msg, self.max_points, None)
         except (ValueError, OverflowError) as exc:
             self.last_error = str(exc)
+            self.diag_pub.publish(String(data=json.dumps({
+                "schema": "n01.dynamic_obstacle_status.v1",
+                "status": "INVALID_CLOUD",
+                "reason": self.last_error,
+                "cloud_frame": self.map_frame,
+                "cloud_stamp_ns": (
+                    int(msg.header.stamp.sec) * 1000000000
+                    + int(msg.header.stamp.nanosec)),
+                "visualization_only": True,
+                "planner_input": "unfiltered /cloud remains connected directly to native SCAN",
+                "actuator_output": "DISABLED",
+                "safety_authorization": "NEVER",
+            }, sort_keys=True)))
             return
         z_min = self.ground_z + 0.08
         z_max = self.ground_z + self.body_height + 0.30
@@ -260,7 +299,10 @@ class DynamicObstacleTracker(Node):
         clusters = cluster_xy_points(
             candidates, self.cluster_cell, self.min_points, max_clusters=64)
         now = time.monotonic()
-        expired = self._associate(clusters, now)
+        cloud_stamp_ns = (
+            int(msg.header.stamp.sec) * 1000000000
+            + int(msg.header.stamp.nanosec))
+        expired = self._associate(clusters, now, cloud_stamp_ns)
         self.cluster_count = len(clusters)
         self._publish_markers(msg.header.stamp, expired)
         self.last_error = ""
@@ -268,6 +310,7 @@ class DynamicObstacleTracker(Node):
             "schema": "n01.dynamic_obstacle_status.v1",
             "status": "CANDIDATES_AVAILABLE" if clusters else "NO_UNMATCHED_CLUSTERS",
             "cloud_frame": self.map_frame,
+            "cloud_stamp_ns": cloud_stamp_ns,
             "z_band_map_m": [z_min, z_max],
             "static_voxel_size_m": self.voxel,
             "candidate_voxel_match": "exact_coarse_voxel_match",
@@ -279,6 +322,10 @@ class DynamicObstacleTracker(Node):
                     "id": int(track_id),
                     "centroid_map": track["centroid"].tolist(),
                     "velocity_map_mps": track["velocity"],
+                    "velocity_valid": bool(
+                        track.get("velocity_valid", False)
+                        and now - track["last_seen"] <= 0.30),
+                    "track_age_s": max(0.0, now - track["last_seen"]),
                     "points": track["points"],
                 }
                 for track_id, track in sorted(self.tracks.items())
