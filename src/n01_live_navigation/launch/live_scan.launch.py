@@ -4,6 +4,9 @@ This launch does not start a SLAM backend, a controller, or any cmd_vel publishe
 The operator must explicitly assert that the supplied PCD belongs to the active
 vendor map coordinate frame before enabling the static PCD layer.
 """
+import os
+
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
@@ -25,9 +28,7 @@ def _nodes(context):
     if not (-1.5 <= ground_z <= 0.5 and 0.5 <= body_height <= 1.5):
         raise RuntimeError("ground/body height outside bounded research interval")
 
-    return [
-        Node(
-            package="n01_static_map", executable="static_map_node",
+    planner_config = os.path.join(\n        get_package_share_directory("scan_planner"), "config", "planner.yaml")\n    return [\n        Node(\n            package="n01_static_map", executable="static_map_node",
             name="n01_live_static_pcd",
             parameters=[{
                 "pcd_path": pcd, "resolution": 0.05, "publish_rate": 1.0,
@@ -53,7 +54,7 @@ def _nodes(context):
         Node(
             package="scan_planner", executable="scan_planner_node",
             name="scan_planner_node",
-            parameters=[{
+            parameters=[planner_config, {
                 "use_sim_time": False,
                 "fsm.navi_mode": 1,
                 "fsm.thresh_replan": 1.0,
@@ -108,7 +109,6 @@ def _nodes(context):
                 "optimization.max_vel": 0.25,
                 "optimization.max_acc": 0.25,
                 "optimization.order": 3,
-                "rviz_goal_height": body_height,
             }],
             output="screen",
         ),
