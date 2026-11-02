@@ -112,6 +112,7 @@ def _nodes(context):
                 "track_y_m": 0.27,
                 "wheel_radius_m": 0.095,
                 "steering_limit_rad": 1.5708,
+                "max_bspline_receive_age_s": 1.0,
             }],
             output="screen",
         ),
