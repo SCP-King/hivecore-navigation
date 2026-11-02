@@ -1,11 +1,14 @@
-"""Live Hive2 localization + LiDAR adapter for native SCAN.
+"""Live Hivecore localization + LiDAR adapter for native SCAN.
 
-The bridge never invents a transform or rewrites a sensor timestamp. A bounded
-FIFO waits for scan-time TF; expired scans are dropped before they can enter SCAN.
+Global robot pose comes from the vendor's timestamped /robot_pose Odometry.
+The bridge interpolates that pose at the original LiDAR stamp and composes it
+with the robot-description sensor extrinsic (body_frame <- lidar_frame).
+It never substitutes latest pose/TF or rewrites the scan timestamp.
 """
 import json
 import math
 import time
+from bisect import bisect_left
 from collections import deque
 
 import numpy as np
@@ -22,8 +25,13 @@ from sensor_msgs.msg import PointCloud2, PointField
 from std_msgs.msg import String
 
 from .core import (
-    localization_is_tracking, estimate_velocity,
-    decode_pointcloud_xyz, transform_points,
+    localization_is_tracking,
+    estimate_velocity,
+    decode_pointcloud_xyz,
+    transform_points,
+    normalize_quaternion,
+    compose_transform,
+    interpolate_pose,
 )
 
 
@@ -34,10 +42,14 @@ class LiveScanBridge(Node):
             "status_topic": "/localization_status",
             "status_type": "hivecore_slam3d/msg/LocalizationStatus",
             "cloud_topic": "/livox/lidar/geo_filtered",
+            "pose_topic": "/robot_pose",
             "expected_cloud_frame": "lidar_link",
             "map_frame": "map",
-            "body_frame": "base_link",
+            "body_frame": "base_footprint",
             "max_status_age_s": 1.0,
+            "max_pose_rx_age_s": 0.7,
+            "pose_interpolation_max_gap_s": 0.5,
+            "pose_cache_size": 64,
             "max_cloud_age_s": 0.6,
             "max_tf_wait_s": 0.45,
             "tf_retry_period_s": 0.02,
@@ -50,10 +62,14 @@ class LiveScanBridge(Node):
         get = lambda name: self.get_parameter(name).value
         self.status_topic = str(get("status_topic"))
         self.cloud_topic = str(get("cloud_topic"))
+        self.pose_topic = str(get("pose_topic"))
         self.cloud_frame = str(get("expected_cloud_frame")).lstrip("/")
         self.map_frame = str(get("map_frame")).lstrip("/")
         self.body_frame = str(get("body_frame")).lstrip("/")
         self.max_status_age = float(get("max_status_age_s"))
+        self.max_pose_rx_age = float(get("max_pose_rx_age_s"))
+        self.pose_interpolation_max_gap = float(get("pose_interpolation_max_gap_s"))
+        self.pose_cache_size = int(get("pose_cache_size"))
         self.max_cloud_age = float(get("max_cloud_age_s"))
         self.max_tf_wait = float(get("max_tf_wait_s"))
         self.tf_retry_period = float(get("tf_retry_period_s"))
@@ -62,6 +78,9 @@ class LiveScanBridge(Node):
         self.max_range = float(get("max_point_range_m"))
         if not (
             0.1 <= self.max_status_age <= 3.0
+            and 0.1 <= self.max_pose_rx_age <= 2.0
+            and 0.1 <= self.pose_interpolation_max_gap <= 1.0
+            and 2 <= self.pose_cache_size <= 256
             and 0.1 <= self.max_cloud_age <= 2.0
             and 0.01 <= self.max_tf_wait <= 1.0
             and 0.005 <= self.tf_retry_period <= 0.1
@@ -78,6 +97,14 @@ class LiveScanBridge(Node):
         self.status_rx_monotonic = 0.0
         self.status_imu_sync = False
         self.status_fitness = float("nan")
+
+        # Samples are (stamp_ns, map_position_xyz, map_orientation_xyzw).
+        # A bounded sorted cache permits interpolation without latest-pose reuse.
+        self.pose_samples = []
+        self.pose_rx_monotonic = 0.0
+        self.pose_contract_error = "waiting_robot_pose"
+        self.last_pose_error = ""
+        self.last_pose_stamp_ns = None
         self.last_body = None
         self.last_velocity_valid = False
 
@@ -87,12 +114,15 @@ class LiveScanBridge(Node):
         self.last_tf_wait_s = 0.0
         self.max_tf_wait_observed_s = 0.0
         self.last_tf_error = ""
+        self.sensor_extrinsic_ready = False
 
         self.counts = {
             "cloud_in": 0, "cloud_queued": 0, "cloud_out": 0,
             "cloud_tf_wait_started": 0, "cloud_tf_wait_completed": 0,
-            "drop_status": 0, "drop_frame": 0, "drop_stamp": 0,
+            "pose_in": 0, "pose_accepted": 0,
+            "drop_pose_contract": 0, "drop_pose_timeout": 0,
             "drop_tf": 0, "drop_tf_timeout": 0,
+            "drop_status": 0, "drop_frame": 0, "drop_stamp": 0,
             "drop_stale_after_wait": 0, "drop_queue_overflow": 0,
             "drop_cloud": 0,
         }
@@ -101,17 +131,23 @@ class LiveScanBridge(Node):
         self.tf_listener = TransformListener(self.tf_buffer, self, spin_thread=True)
         self.status_sub = self.create_subscription(
             self.status_class, self.status_topic, self.on_status, qos_profile_sensor_data)
+        self.pose_sub = self.create_subscription(
+            Odometry, self.pose_topic, self.on_robot_pose, qos_profile_sensor_data)
         self.cloud_sub = self.create_subscription(
             PointCloud2, self.cloud_topic, self.on_cloud, qos_profile_sensor_data)
         self.cloud_pub = self.create_publisher(PointCloud2, "/cloud", qos_profile_sensor_data)
-        self.sensor_pose_pub = self.create_publisher(Odometry, "/sensor_pose", qos_profile_sensor_data)
-        self.body_pose_pub = self.create_publisher(Odometry, "/body_pose", qos_profile_sensor_data)
-        self.diag_pub = self.create_publisher(String, "/n01/live_navigation/readiness", 10)
+        self.sensor_pose_pub = self.create_publisher(
+            Odometry, "/sensor_pose", qos_profile_sensor_data)
+        self.body_pose_pub = self.create_publisher(
+            Odometry, "/body_pose", qos_profile_sensor_data)
+        self.diag_pub = self.create_publisher(
+            String, "/n01/live_navigation/readiness", 10)
 
         self.create_timer(self.tf_retry_period, self.process_pending_clouds)
         self.create_timer(0.5, self.publish_diagnostics)
         self.get_logger().warning(
-            "READ-ONLY bridge: scan-time TF + exact-stamp SCAN inputs; no actuator publishers")
+            "READ-ONLY bridge: interpolated /robot_pose + body-to-LiDAR extrinsic; "
+            "no latest-pose substitution and no actuator publishers")
 
     def on_status(self, msg):
         ok, reason = localization_is_tracking(msg)
@@ -128,14 +164,83 @@ class LiveScanBridge(Node):
             and time.monotonic() - self.status_rx_monotonic <= self.max_status_age
         )
 
+    def _pose_rx_is_fresh(self):
+        return (
+            self.pose_rx_monotonic > 0.0
+            and time.monotonic() - self.pose_rx_monotonic <= self.max_pose_rx_age
+        )
+
+    def on_robot_pose(self, msg):
+        self.counts["pose_in"] += 1
+        parent = str(msg.header.frame_id).lstrip("/")
+        child = str(msg.child_frame_id).lstrip("/")
+        if parent != self.map_frame or child != self.body_frame:
+            self.counts["drop_pose_contract"] += 1
+            self.pose_contract_error = (
+                "robot_pose_frame_mismatch: expected %s<- %s, received %s<- %s"
+                % (self.map_frame, self.body_frame, parent, child)
+            )
+            return
+        stamp_ns = (
+            int(msg.header.stamp.sec) * 1000000000
+            + int(msg.header.stamp.nanosec)
+        )
+        if stamp_ns <= 0:
+            self.counts["drop_pose_contract"] += 1
+            self.pose_contract_error = "robot_pose_stamp_invalid"
+            return
+        p = msg.pose.pose.position
+        q = msg.pose.pose.orientation
+        position = (float(p.x), float(p.y), float(p.z))
+        try:
+            orientation = normalize_quaternion(
+                (float(q.x), float(q.y), float(q.z), float(q.w)))
+        except ValueError as exc:
+            self.counts["drop_pose_contract"] += 1
+            self.pose_contract_error = str(exc)
+            return
+        if not all(math.isfinite(v) for v in position):
+            self.counts["drop_pose_contract"] += 1
+            self.pose_contract_error = "robot_pose_position_nonfinite"
+            return
+
+        stamps = [sample[0] for sample in self.pose_samples]
+        index = bisect_left(stamps, stamp_ns)
+        sample = (stamp_ns, position, orientation)
+        if index < len(self.pose_samples) and self.pose_samples[index][0] == stamp_ns:
+            self.pose_samples[index] = sample
+        else:
+            self.pose_samples.insert(index, sample)
+        if len(self.pose_samples) > self.pose_cache_size:
+            del self.pose_samples[:len(self.pose_samples) - self.pose_cache_size]
+        self.pose_rx_monotonic = time.monotonic()
+        self.pose_contract_error = ""
+        self.last_pose_stamp_ns = stamp_ns
+        self.counts["pose_accepted"] += 1
+
     @staticmethod
     def _transform_values(transform):
         t = transform.transform.translation
         q = transform.transform.rotation
         return (t.x, t.y, t.z), (q.x, q.y, q.z, q.w)
 
-    def _xyz_map_cloud(self, msg, transform):
-        translation, quaternion = self._transform_values(transform)
+    def _pose_at(self, stamp_ns):
+        if not self._pose_rx_is_fresh():
+            self.last_pose_error = "robot_pose_receive_stale"
+            return None
+        try:
+            pose = interpolate_pose(
+                self.pose_samples, stamp_ns, self.pose_interpolation_max_gap)
+        except ValueError as exc:
+            self.last_pose_error = str(exc)
+            return None
+        if pose is None:
+            self.last_pose_error = "robot_pose_not_bracketed_at_scan_stamp"
+            return None
+        self.last_pose_error = ""
+        return pose
+
+    def _xyz_map_cloud(self, msg, translation, quaternion):
         points = decode_pointcloud_xyz(msg, self.max_points, self.max_range)
         world = transform_points(points, translation, quaternion)
         cloud = PointCloud2()
@@ -156,17 +261,22 @@ class LiveScanBridge(Node):
         return cloud
 
     @staticmethod
-    def _odom(stamp, parent, child, transform, velocity=(0.0, 0.0, 0.0)):
-        t = transform.transform.translation
-        q = transform.transform.rotation
+    def _odom(stamp, parent, child, translation, quaternion,
+              velocity=(0.0, 0.0, 0.0)):
         msg = Odometry()
         msg.header.stamp = stamp
         msg.header.frame_id = parent
         msg.child_frame_id = child
-        msg.pose.pose.position.x, msg.pose.pose.position.y, msg.pose.pose.position.z = t.x, t.y, t.z
-        (msg.pose.pose.orientation.x, msg.pose.pose.orientation.y,
-         msg.pose.pose.orientation.z, msg.pose.pose.orientation.w) = q.x, q.y, q.z, q.w
-        msg.twist.twist.linear.x, msg.twist.twist.linear.y, msg.twist.twist.linear.z = velocity
+        (msg.pose.pose.position.x,
+         msg.pose.pose.position.y,
+         msg.pose.pose.position.z) = translation
+        (msg.pose.pose.orientation.x,
+         msg.pose.pose.orientation.y,
+         msg.pose.pose.orientation.z,
+         msg.pose.pose.orientation.w) = quaternion
+        (msg.twist.twist.linear.x,
+         msg.twist.twist.linear.y,
+         msg.twist.twist.linear.z) = velocity
         return msg
 
     def on_cloud(self, msg):
@@ -203,16 +313,37 @@ class LiveScanBridge(Node):
                 self.pending_clouds.popleft()
                 self.counts["drop_status"] += 1
                 continue
+
+            pose = self._pose_at(stamp_ns)
+            if pose is None:
+                if not wait_counted:
+                    self.counts["cloud_tf_wait_started"] += 1
+                    self.pending_clouds[0] = (msg, enqueued, True)
+                if waited_s >= self.max_tf_wait:
+                    self.pending_clouds.popleft()
+                    self.counts["drop_pose_timeout"] += 1
+                    self.last_tf_wait_s = waited_s
+                    self.max_tf_wait_observed_s = max(
+                        self.max_tf_wait_observed_s, waited_s)
+                    continue
+                break
+
             try:
                 scan_time = Time.from_msg(msg.header.stamp)
-                tf_lidar = self.tf_buffer.lookup_transform(
-                    self.map_frame, self.cloud_frame, scan_time,
+                # Only the rigid sensor mount is taken from TF. The global
+                # map<-body pose is sourced from /robot_pose and interpolated.
+                body_from_lidar = self.tf_buffer.lookup_transform(
+                    self.body_frame, self.cloud_frame, scan_time,
                     timeout=Duration(seconds=0.0))
-                tf_body = self.tf_buffer.lookup_transform(
-                    self.map_frame, self.body_frame, scan_time,
-                    timeout=Duration(seconds=0.0))
-            except TransformException as exc:
+                body_lidar_translation, body_lidar_quaternion = self._transform_values(
+                    body_from_lidar)
+                map_body_translation, map_body_quaternion = pose
+                map_lidar_translation, map_lidar_quaternion = compose_transform(
+                    map_body_translation, map_body_quaternion,
+                    body_lidar_translation, body_lidar_quaternion)
+            except (TransformException, ValueError) as exc:
                 self.last_tf_error = str(exc)
+                self.sensor_extrinsic_ready = False
                 if not wait_counted:
                     self.counts["cloud_tf_wait_started"] += 1
                     self.pending_clouds[0] = (msg, enqueued, True)
@@ -221,49 +352,51 @@ class LiveScanBridge(Node):
                     self.counts["drop_tf"] += 1
                     self.counts["drop_tf_timeout"] += 1
                     self.last_tf_wait_s = waited_s
-                    self.max_tf_wait_observed_s = max(self.max_tf_wait_observed_s, waited_s)
+                    self.max_tf_wait_observed_s = max(
+                        self.max_tf_wait_observed_s, waited_s)
                     continue
                 break
 
             try:
-                cloud_map = self._xyz_map_cloud(msg, tf_lidar)
+                cloud_map = self._xyz_map_cloud(
+                    msg, map_lidar_translation, map_lidar_quaternion)
             except (ValueError, OverflowError) as exc:
                 self.pending_clouds.popleft()
                 self.counts["drop_cloud"] += 1
                 self.get_logger().warning("drop cloud: invalid XYZ payload: %s" % exc)
                 continue
 
-            # Enforce freshness again after point decoding/transformation.
             output_age_s = (self.get_clock().now().nanoseconds - stamp_ns) / 1e9
             if output_age_s > self.max_cloud_age:
                 self.pending_clouds.popleft()
                 self.counts["drop_stale_after_wait"] += 1
                 continue
 
-            body_xyz = (
-                tf_body.transform.translation.x,
-                tf_body.transform.translation.y,
-                tf_body.transform.translation.z,
-            )
+            body_xyz = map_body_translation
             velocity, velocity_valid = estimate_velocity(
                 self.last_body, (body_xyz, stamp_ns / 1e9))
             self.last_body = (body_xyz, stamp_ns / 1e9)
             body_odom = self._odom(
-                msg.header.stamp, self.map_frame, self.body_frame, tf_body, velocity)
+                msg.header.stamp, self.map_frame, self.body_frame,
+                map_body_translation, map_body_quaternion, velocity)
             sensor_odom = self._odom(
-                msg.header.stamp, self.map_frame, self.cloud_frame, tf_lidar)
+                msg.header.stamp, self.map_frame, self.cloud_frame,
+                map_lidar_translation, map_lidar_quaternion)
 
-            # All three messages have the exact original scan timestamp.
+            # All outputs retain the exact original LiDAR scan timestamp.
             self.sensor_pose_pub.publish(sensor_odom)
             self.body_pose_pub.publish(body_odom)
             self.cloud_pub.publish(cloud_map)
             self.pending_clouds.popleft()
 
+            self.sensor_extrinsic_ready = True
+            self.last_tf_error = ""
             self.last_velocity_valid = velocity_valid
             self.last_cloud_out_monotonic = time.monotonic()
             self.last_cloud_age_s = output_age_s
             self.last_tf_wait_s = waited_s
-            self.max_tf_wait_observed_s = max(self.max_tf_wait_observed_s, waited_s)
+            self.max_tf_wait_observed_s = max(
+                self.max_tf_wait_observed_s, waited_s)
             if wait_counted:
                 self.counts["cloud_tf_wait_completed"] += 1
             self.counts["cloud_out"] += 1
@@ -271,17 +404,29 @@ class LiveScanBridge(Node):
     def publish_diagnostics(self):
         now_mono = time.monotonic()
         status_fresh = self._status_is_fresh()
+        pose_fresh = self._pose_rx_is_fresh()
         output_age = None
         if self.last_cloud_out_monotonic > 0.0 and self.last_cloud_age_s is not None:
             output_age = max(
                 0.0, self.last_cloud_age_s + now_mono - self.last_cloud_out_monotonic)
         cloud_fresh = output_age is not None and output_age <= self.max_cloud_age
         pending_age = now_mono - self.pending_clouds[0][1] if self.pending_clouds else 0.0
+        ready = status_fresh and pose_fresh and cloud_fresh and self.sensor_extrinsic_ready
         data = {
-            "schema": "n01.live_scan_readiness.v3",
-            "status": "LIVE_SCAN_INPUTS_READY" if status_fresh and cloud_fresh else "WAITING_OR_BLOCKED",
+            "schema": "n01.live_scan_readiness.v4",
+            "status": "LIVE_SCAN_INPUTS_READY" if ready else "WAITING_OR_BLOCKED",
             "localization_status": self.status_reason,
             "localization_status_fresh": bool(status_fresh),
+            "robot_pose_topic": self.pose_topic,
+            "robot_pose_contract": self.pose_contract_error or "map_to_base_footprint",
+            "robot_pose_receive_fresh": bool(pose_fresh),
+            "robot_pose_cache_samples": len(self.pose_samples),
+            "robot_pose_last_stamp_ns": self.last_pose_stamp_ns,
+            "robot_pose_interpolation_max_gap_s": self.pose_interpolation_max_gap,
+            "robot_pose_last_error": self.last_pose_error,
+            "sensor_extrinsic_parent_frame": self.body_frame,
+            "sensor_extrinsic_child_frame": self.cloud_frame,
+            "sensor_extrinsic_ready": bool(self.sensor_extrinsic_ready),
             "cloud_output_fresh": bool(cloud_fresh),
             "cloud_output_age_s": output_age,
             "vendor_imu_sync_ok": bool(self.status_imu_sync),
