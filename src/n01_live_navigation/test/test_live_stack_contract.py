@@ -59,6 +59,12 @@ class LiveStackContractTests(unittest.TestCase):
         tracker = (ROOT / "src/n01_live_navigation/n01_live_navigation/dynamic_obstacle_tracker.py").read_text()
         self.assertIn("decode_pointcloud_xyz(msg, self.max_points, None)", tracker)
 
+    def test_rviz_goal_tool_targets_fail_closed_goal_gate_input(self):
+        rviz = (ROOT / "src/n01_live_navigation/rviz/n01_live_navigation.rviz").read_text()
+        gate = (ROOT / "src/n01_live_navigation/n01_live_navigation/goal_gate.py").read_text()
+        self.assertIn("Value: /move_base_simple/goal", rviz)
+        self.assertIn('PoseStamped, "/move_base_simple/goal"', gate)
+
     def test_native_scan_is_configured_for_static_map_overlay(self):
         launch = (ROOT / "src/n01_live_navigation/launch/live_scan.launch.py").read_text()
         self.assertIn('"grid_map.static_cloud_enabled": True', launch)
