@@ -19,7 +19,7 @@ class LiveSafetySupervisor(Node):
             "operator_hold_topic": "/n01/live_navigation/operator_hold",
             "max_health_age_s": 0.75,
             "max_feasibility_age_s": 1.0,
-            "max_dynamic_status_age_s": 1.0,
+            "max_dynamic_status_age_s": 0.6,
             "operator_hold": True,
             "emergency_stop_chain_verified": False,
             "communication_loss_stop_verified": False,

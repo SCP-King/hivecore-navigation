@@ -182,11 +182,11 @@ class LiveRuntimeSupervisor(Node):
         navigation_ready = not blockers
         stage_b_ready = bool(navigation_ready and self.static_ready)
         dynamic_receive_fresh = (
-            dynamic_age is not None and 0.0 <= dynamic_age <= 1.0)
+            dynamic_age is not None and 0.0 <= dynamic_age <= 0.6)
         dynamic_stamp_fresh, dynamic_stamp_age = stamped_data_is_fresh(
             self.dynamic_obstacle.get("cloud_stamp_ns"),
             now_ns,
-            1.0,
+            0.6,
         )
         dynamic_fresh = bool(dynamic_receive_fresh and dynamic_stamp_fresh)
         dynamic_status = self.dynamic_obstacle.get("status", "WAITING")

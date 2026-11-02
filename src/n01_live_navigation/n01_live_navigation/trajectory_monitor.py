@@ -14,7 +14,7 @@ from visualization_msgs.msg import Marker, MarkerArray
 from scan_planner_msgs.msg import Bspline
 
 from n01_scan_dynacbf_bridge.curve import BSplineCurve, CurveError
-from .core import four_wheel_steer_screen, trajectory_window_is_active
+from .core import four_wheel_steer_screen
 
 
 PITCH1_JOINTS = (
@@ -204,8 +204,13 @@ class Hive2TrajectoryMonitor(Node):
         pitch_match = self._pitch_reference_match()
         now_mono = time.monotonic()
         now_ns = self.get_clock().now().nanoseconds
-        trajectory_active, trajectory_start_age_s = trajectory_window_is_active(
-            trajectory_start_ns, now_ns, trajectory_duration_s)
+        trajectory_start_age_s = (
+            (now_ns - trajectory_start_ns) / 1e9
+            if trajectory_start_ns > 0 else None)
+        trajectory_active = bool(
+            trajectory_start_age_s is not None
+            and trajectory_duration_s > 0.0
+            and -0.25 <= trajectory_start_age_s <= trajectory_duration_s + 0.2)
         body_stamp_age = (
             (now_ns - self.body_pose_stamp_ns) / 1e9
             if self.body_pose_stamp_ns is not None else None)

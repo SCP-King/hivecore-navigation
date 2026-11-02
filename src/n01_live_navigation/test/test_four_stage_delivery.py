@@ -62,7 +62,6 @@ class FourStageDeliveryTests(unittest.TestCase):
         self.assertIn('"dynamic_tracker_stamp_age_s"', source)
         trajectory = (ROOT / "src/n01_live_navigation/n01_live_navigation/trajectory_monitor.py").read_text()
         self.assertIn('"trajectory_active": trajectory_active', trajectory)
-        self.assertIn("trajectory_window_is_active(", trajectory)
         self.assertIn('"TRAJECTORY_NOT_ACTIVE_OR_STALE"', trajectory)
         self.assertIn('"joint_feedback_stamp_age_s": joint_stamp_age', trajectory)
         self.assertIn('"body_pose_frame_match": body_pose_frame_match', trajectory)
