@@ -19,6 +19,7 @@ from n01_live_navigation.core import (
     motion_compensated_pose,
     scan_output_is_fresh,
     evaluate_safety_gate,
+    select_pose_anchor,
 )
 
 
@@ -142,6 +143,22 @@ class LiveScanCoreTests(unittest.TestCase):
         self.assertIsNone(interpolate_pose(samples, 500_000_000, max_gap_s=0.5))
         self.assertIsNone(interpolate_pose(samples, 3_500_000_000, max_gap_s=0.5))
         self.assertIsNone(interpolate_pose(samples, 2_000_000_000, max_gap_s=0.5))
+
+    def test_live_body_pose_uses_separate_anchor_bound_from_scan_compensation(self):
+        samples = [
+            (1_000_000_000, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)),
+            (1_700_000_000, (0.7, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)),
+        ]
+        target = 1_650_000_000
+        # Scan-time compensation keeps the strict 0.5 s bound and chooses
+        # the nearby future anchor rather than extrapolating from an old pose.
+        scan_anchor = select_pose_anchor(samples, target, 0.5)
+        self.assertEqual(scan_anchor[0], 1_700_000_000)
+        # Current body pose may propagate from the latest causal SLAM anchor
+        # for up to the independently bounded 0.7 s using timestamped /odom.
+        live_anchor = select_pose_anchor(samples, target, 0.7)
+        self.assertEqual(live_anchor[0], 1_000_000_000)
+        self.assertIsNone(select_pose_anchor(samples, target, 0.4))
 
     def test_body_pose_and_sensor_extrinsic_compose_into_map_lidar(self):
         translation, rotation = compose_transform(
