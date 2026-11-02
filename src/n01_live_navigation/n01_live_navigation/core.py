@@ -225,6 +225,33 @@ def compose_transform(parent_from_mid_translation, parent_from_mid_quaternion,
     return translation, rotation
 
 
+
+def invert_transform(translation, quaternion):
+    """Invert a parent<-child rigid transform (translation, xyzw quaternion)."""
+    t = tuple(float(v) for v in translation)
+    if len(t) != 3 or not all(math.isfinite(v) for v in t):
+        raise ValueError("invalid_transform_translation")
+    qx, qy, qz, qw = normalize_quaternion(quaternion)
+    inverse_q = (-qx, -qy, -qz, qw)
+    inverse_t = rotate_translate(tuple(-v for v in t), (0.0, 0.0, 0.0), inverse_q)
+    return inverse_t, inverse_q
+
+
+def motion_compensated_pose(map_anchor, odom_anchor, odom_target):
+    """Propagate a map-frame body pose anchor using relative odometry motion.
+
+    All three poses must describe the same rigid body frame. The odometry
+    parent frame cancels in inv(odom_anchor) * odom_target, so no map<->odom
+    alignment or absolute odometry origin is assumed.
+    """
+    map_t, map_q = map_anchor
+    anchor_t, anchor_q = odom_anchor
+    target_t, target_q = odom_target
+    inverse_anchor = invert_transform(anchor_t, anchor_q)
+    relative_motion = compose_transform(
+        inverse_anchor[0], inverse_anchor[1], target_t, target_q)
+    return compose_transform(map_t, map_q, relative_motion[0], relative_motion[1])
+
 def interpolate_pose(samples, stamp_ns, max_gap_s=0.5):
     """Interpolate a map-frame pose at a sensor timestamp; never extrapolate.
 

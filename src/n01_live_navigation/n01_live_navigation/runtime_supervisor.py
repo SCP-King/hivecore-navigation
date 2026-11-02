@@ -123,6 +123,8 @@ class LiveRuntimeSupervisor(Node):
             self.bridge.get("status") == "LIVE_SCAN_INPUTS_READY"
             and self.bridge.get("localization_status_fresh") is True
             and self.bridge.get("robot_pose_receive_fresh") is True
+            and self.bridge.get("odom_receive_fresh") is True
+            and self.bridge.get("motion_compensation_ready") is True
             and self.bridge.get("sensor_extrinsic_ready") is True
             and self.bridge.get("cloud_output_fresh") is True
         )
@@ -159,6 +161,8 @@ class LiveRuntimeSupervisor(Node):
             "global_pose_source": self.bridge.get("robot_pose_topic"),
             "global_pose_interpolation_ready": (
                 self.bridge.get("robot_pose_receive_fresh") is True),
+            "odometry_motion_compensation_ready": (
+                self.bridge.get("motion_compensation_ready") is True),
             "sensor_extrinsic_ready": (
                 self.bridge.get("sensor_extrinsic_ready") is True),
             "vendor_processing_timings_raw_xyz": self.timings,

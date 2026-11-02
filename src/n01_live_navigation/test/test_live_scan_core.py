@@ -16,6 +16,7 @@ from n01_live_navigation.core import (
     four_wheel_steer_screen,
     interpolate_pose,
     compose_transform,
+    motion_compensated_pose,
 )
 
 
@@ -150,6 +151,27 @@ class LiveScanCoreTests(unittest.TestCase):
         np.testing.assert_allclose(translation, (1.0, 1.0, 0.0), atol=1e-7)
         np.testing.assert_allclose(
             rotation, (0.0, 0.0, math.sqrt(0.5), math.sqrt(0.5)), atol=1e-7)
+
+
+    def test_odometry_relative_motion_propagates_map_anchor(self):
+        yaw90 = (0.0, 0.0, math.sqrt(0.5), math.sqrt(0.5))
+        pose = motion_compensated_pose(
+            ((10.0, 0.0, 0.0), yaw90),
+            ((1.0, 2.0, 0.0), (0.0, 0.0, 0.0, 1.0)),
+            ((2.0, 2.0, 0.0), (0.0, 0.0, 0.0, 1.0)),
+        )
+        np.testing.assert_allclose(pose[0], (10.0, 1.0, 0.0), atol=1e-7)
+        np.testing.assert_allclose(pose[1], yaw90, atol=1e-7)
+
+    def test_odometry_rotation_is_applied_about_body_anchor(self):
+        yaw90 = (0.0, 0.0, math.sqrt(0.5), math.sqrt(0.5))
+        pose = motion_compensated_pose(
+            ((3.0, 4.0, 0.0), (0.0, 0.0, 0.0, 1.0)),
+            ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)),
+            ((0.0, 0.0, 0.0), yaw90),
+        )
+        np.testing.assert_allclose(pose[0], (3.0, 4.0, 0.0), atol=1e-7)
+        np.testing.assert_allclose(pose[1], yaw90, atol=1e-7)
 
     def test_velocity_requires_valid_timestamp_delta(self):
         v, ok = estimate_velocity(((0, 0, 0), 1.0), ((.1, 0, 0), 1.1))
