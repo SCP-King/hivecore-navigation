@@ -835,9 +835,9 @@ class LiveScanBridge(Node):
             "odom_scan_bracket_available": odom_scan_bracket_available,
             "motion_compensation_method": "slam_anchor_plus_odom_relative_motion",
             "motion_compensation_ready": bool(
-                self.motion_compensation_ready and bool(compensation_for_latest_scan)),
+                self.motion_compensation_ready and bool(compensation_for_processed_scan)),
             "motion_compensation_error": self.last_motion_compensation_error or self.last_pose_error,
-            "motion_compensation_anchor_stamp_ns": compensation_for_latest_scan.get("anchor_stamp_ns"),
+            "motion_compensation_anchor_stamp_ns": compensation_for_processed_scan.get("anchor_stamp_ns"),
             "motion_compensation_anchor_delta_s": compensation_for_processed_scan.get("anchor_delta_s"),
             "latest_scan_lag_s": latest_scan_lag_s,
             "latest_scan_within_lag": bool(scan_output_current),
