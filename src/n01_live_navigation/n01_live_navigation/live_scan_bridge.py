@@ -306,6 +306,19 @@ class LiveScanBridge(Node):
                 self.get_logger().warning("drop cloud: invalid XYZ payload: %s" % exc)
                 continue
 
+            # Point transformation can itself take time; enforce freshness again
+            # immediately before publishing, not only before the TF lookup.
+            output_age_s = (
+                self.get_clock().now().nanoseconds - stamp_ns
+            ) / 1e9
+            if output_age_s > self.max_cloud_age:
+                self.pending_clouds.popleft()
+                self.counts["drop_stale_after_wait"] += 1
+                self.get_logger().warning(
+                    "drop cloud: age %.3fs exceeded max_cloud_age_s %.3fs before publish"
+                    % (output_age_s, self.max_cloud_age))
+                continue
+
             self.pending_clouds.popleft()
             body_xyz = (tf_body.transform.translation.x,
                         tf_body.transform.translation.y,
@@ -329,7 +342,7 @@ class LiveScanBridge(Node):
 
             self.last_velocity_valid = velocity_valid
             self.last_cloud_out_monotonic = time.monotonic()
-            self.last_cloud_age_s = age_s
+            self.last_cloud_age_s = output_age_s
             self.last_tf_wait_s = waited_s
             self.max_tf_wait_observed_s = max(
                 self.max_tf_wait_observed_s, waited_s)
@@ -340,9 +353,16 @@ class LiveScanBridge(Node):
     def publish_diagnostics(self):
         now_monotonic = time.monotonic()
         status_fresh = self._status_is_fresh()
+        cloud_output_age_s = None
+        if self.last_cloud_out_monotonic > 0.0 and self.last_cloud_age_s is not None:
+            cloud_output_age_s = max(
+                0.0,
+                self.last_cloud_age_s
+                + (now_monotonic - self.last_cloud_out_monotonic),
+            )
         cloud_output_fresh = (
-            self.last_cloud_out_monotonic > 0.0
-            and now_monotonic - self.last_cloud_out_monotonic <= self.max_cloud_age
+            cloud_output_age_s is not None
+            and cloud_output_age_s <= self.max_cloud_age
         )
         oldest_pending_wait_s = (
             now_monotonic - self.pending_clouds[0][1]
@@ -358,6 +378,7 @@ class LiveScanBridge(Node):
             "localization_status": self.status_reason,
             "localization_status_fresh": bool(status_fresh),
             "cloud_output_fresh": bool(cloud_output_fresh),
+            "cloud_output_age_s": cloud_output_age_s,
             "vendor_imu_sync_ok": bool(self.status_imu_sync),
             "fitness_mse": self.status_fitness if math.isfinite(self.status_fitness) else None,
             "velocity_estimate_valid": bool(self.last_velocity_valid),
