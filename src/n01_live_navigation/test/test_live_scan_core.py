@@ -14,6 +14,8 @@ from n01_live_navigation.core import (
     transform_points,
     cluster_xy_points,
     four_wheel_steer_screen,
+    interpolate_pose,
+    compose_transform,
 )
 
 
@@ -117,6 +119,37 @@ class LiveScanCoreTests(unittest.TestCase):
                          (True, "accepted"))
         goal.header.frame_id = "odom"
         self.assertFalse(goal_is_valid(goal, live_ready=True, static_ready=True)[0])
+
+    def test_robot_pose_interpolates_position_and_orientation_at_scan_time(self):
+        samples = [
+            (1_000_000_000, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)),
+            (3_000_000_000, (2.0, 0.0, 0.0), (0.0, 0.0, 1.0, 0.0)),
+        ]
+        pose = interpolate_pose(samples, 2_000_000_000, max_gap_s=0.5)
+        self.assertIsNotNone(pose)
+        np.testing.assert_allclose(pose[0], (1.0, 0.0, 0.0), atol=1e-8)
+        np.testing.assert_allclose(
+            pose[1], (0.0, 0.0, math.sqrt(0.5), math.sqrt(0.5)), atol=1e-7)
+
+    def test_robot_pose_interpolation_never_extrapolates_or_crosses_large_gap(self):
+        samples = [
+            (1_000_000_000, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)),
+            (3_000_000_000, (2.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)),
+        ]
+        self.assertIsNone(interpolate_pose(samples, 500_000_000, max_gap_s=0.5))
+        self.assertIsNone(interpolate_pose(samples, 3_500_000_000, max_gap_s=0.5))
+        self.assertIsNone(interpolate_pose(samples, 2_000_000_000, max_gap_s=0.5))
+
+    def test_body_pose_and_sensor_extrinsic_compose_into_map_lidar(self):
+        translation, rotation = compose_transform(
+            (1.0, 0.0, 0.0),
+            (0.0, 0.0, math.sqrt(0.5), math.sqrt(0.5)),
+            (1.0, 0.0, 0.0),
+            (0.0, 0.0, 0.0, 1.0),
+        )
+        np.testing.assert_allclose(translation, (1.0, 1.0, 0.0), atol=1e-7)
+        np.testing.assert_allclose(
+            rotation, (0.0, 0.0, math.sqrt(0.5), math.sqrt(0.5)), atol=1e-7)
 
     def test_velocity_requires_valid_timestamp_delta(self):
         v, ok = estimate_velocity(((0, 0, 0), 1.0), ((.1, 0, 0), 1.1))
