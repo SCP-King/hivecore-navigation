@@ -3,6 +3,22 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# Colcon-generated local_setup.bash scripts may read COLCON_CURRENT_PREFIX
+# before initializing it. This build script uses nounset, so source overlays
+# with -u temporarily disabled, then restore strict mode immediately.
+source_overlay_compat() {
+  local setup_file="$1"
+  local source_rc=0
+  set +u
+  if source "$setup_file"; then
+    source_rc=0
+  else
+    source_rc=$?
+  fi
+  set -u
+  return "$source_rc"
+}
+
 if [[ ! -f /opt/ros/humble/setup.bash ]]; then
   echo "[N01-FAST-LIO2] ROS 2 Humble not found at /opt/ros/humble." >&2
   exit 2
@@ -16,7 +32,7 @@ if [[ -n "${LIVOX_SETUP:-}" ]]; then
     echo "[N01-FAST-LIO2] LIVOX_SETUP does not exist: $LIVOX_SETUP" >&2
     exit 2
   fi
-  source "$LIVOX_SETUP"
+  source_overlay_compat "$LIVOX_SETUP"
 fi
 
 if [[ "${ROS_DISTRO:-}" != "humble" ]]; then
@@ -35,7 +51,7 @@ if ! ros2 pkg prefix livox_ros_driver2 >/dev/null 2>&1; then
   if [[ -f "$HIVE2_LIVOX_LOCAL_SETUP" ]]; then
     echo "[N01-FAST-LIO2] Livox not visible yet; sourcing existing Hive2 overlay:"
     echo "  $HIVE2_LIVOX_LOCAL_SETUP"
-    source "$HIVE2_LIVOX_LOCAL_SETUP"
+    source_overlay_compat "$HIVE2_LIVOX_LOCAL_SETUP"
   fi
 fi
 
