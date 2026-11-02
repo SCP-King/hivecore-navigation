@@ -43,7 +43,7 @@ Visualization Manager:
       Topic:
         Value: /grid_map/static_occupancy
         Reliability Policy: Reliable
-        Durability Policy: Volatile
+        Durability Policy: Transient Local
         History Policy: Keep Last
         Depth: 1
       Style: Points
