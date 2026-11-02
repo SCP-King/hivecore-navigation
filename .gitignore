@@ -31,3 +31,6 @@
 # Documentation and local datasets are kept outside this source-only repository
 /docs/
 /n01_runtime/
+
+# Pinned third-party source checkouts are imported at build time, not vendored
+/src/third_party/FAST_LIO/
