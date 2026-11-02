@@ -71,3 +71,19 @@ def estimate_velocity(previous, current, max_speed=3.0):
     if not all(math.isfinite(v) for v in vel) or speed > max_speed:
         return (0.0, 0.0, 0.0), False
     return vel, True
+
+
+def goal_is_valid(goal, *, live_ready, static_ready):
+    """Pure fail-closed goal contract; goal is any object with ROS-like fields."""
+    if not live_ready:
+        return False, "live_localization_or_cloud_not_ready"
+    if not static_ready:
+        return False, "native_scan_static_pcd_not_ready"
+    if str(goal.header.frame_id).lstrip("/") != "map":
+        return False, "goal_frame_must_be_map"
+    p = goal.pose.position
+    if not all(math.isfinite(float(v)) for v in (p.x, p.y, p.z)):
+        return False, "goal_nonfinite"
+    if float(p.z) < -0.1:
+        return False, "goal_z_below_scan_ground_guard"
+    return True, "accepted"
