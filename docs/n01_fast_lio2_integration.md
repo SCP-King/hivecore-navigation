@@ -140,3 +140,37 @@ ros2 service call /n01/fast_lio/map_save std_srvs/srv/Trigger {}
 保存路径由 launch 参数 `map_file_path` 指定，默认 `/home/demo/lyy/n01_runtime/slam/fast_lio_map.pcd`。RViz 默认不启动；需要时加 `rviz:=true`。
 
 **这只是离线算法回放，不会连接 Hive2 运动控制链。不要在真实底盘 ROS 域中直接照搬 ROS_DOMAIN_ID=88 的隔离 Bag 命令；真实在线运行需要单独的传感器/计算资源与 TF preflight。**
+
+## 7. 双后端选择与统一 N-01 里程计入口（新增）
+
+新增 `slam_backend.launch.py`，明确采用“甲方兼容、FAST-LIO 可选”的双后端：
+
+- 默认 `backend:=vendor`。该模式不启动第二套 SLAM，也不改甲方 launch、消息、话题或 TF；甲方仍按原启动方式工作，原 `/robot_pose`、`/localization_status` 等接口继续由甲方发布。
+- `backend:=fast_lio` 才启动独立 FAST-LIO2 mapping 和 N-01 odometry adapter。FAST-LIO 私有输出保持在 `/n01/fast_lio/*`。
+- Adapter 将通过检查的 FAST-LIO Odometry 转发到内部统一入口 `/n01/slam/odometry`，并发布 `/n01/slam/diagnostics`。它保留 `header.frame_id=n01_fast_lio_map`，严格检查 frame、child frame、有限位姿、四元数和消息新鲜度。
+- Adapter 不发布 TF，不伪造甲方 `/robot_pose` 或 `/localization_status`，也不把 `n01_fast_lio_map` 字符串改成 `map`。因此当前是**统一里程计入口的第一步**，不是已完成的导航定位后端替换。
+- FAST-LIO mapping 目前不能加载已保存 PCD 并在其中持续定位/重定位。切换到 FAST-LIO 模式时，仍然是实时 LIO 建图/里程计实验。
+
+在已经构建好 FAST-LIO overlay 的情况下，可用下面的 launch 选择后端：
+
+```bash
+# 默认 vendor：只提示保持甲方原 launch，不启动替代节点
+ros2 launch n01_fast_lio slam_backend.launch.py backend:=vendor
+
+# 选择 FAST-LIO2：独立 map frame，无 TF broadcaster
+ros2 launch n01_fast_lio slam_backend.launch.py backend:=fast_lio use_sim_time:=false
+```
+
+历史 Bag 的 ROS domain 隔离仍优先使用既有 `scripts/run_n01_fast_lio2_bag.sh`；该脚本只回放原始 Livox 点云和 IMU，不回放甲方 TF/定位/控制话题。
+
+## 8. 尚未完成的自主定位能力
+
+以下功能不属于 FAST-LIO2 当前上游 mapping 节点，也尚未在 N-01 实现：
+1. 保存地图加载后的 scan-to-map localization。
+2. 初始位姿估计、全局重定位及定位丢失恢复。
+3. 回环检测/全局因子图优化与地图坐标稳定性管理。
+4. FAST-LIO 私有地图与甲方现有 PCD/map 的刚体对齐及误差验收。
+5. 将内部 FAST-LIO 里程计转换为完整甲方 `LocalizationStatus` 语义——当前不做伪造。
+6. 将统一定位接口接入 G4/SCAN 并处理地图 frame 对齐。
+
+因此开发策略为：先并行 shadow mapping 对比；之后补 saved-map localization/relocalization；最终再提供后端选择，不会删除甲方 SLAM。实机启用 FAST-LIO 前还需要确认传感器输入资源唯一、时间同步与外参、CPU 负载及 TF 权威配置。
