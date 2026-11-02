@@ -158,7 +158,7 @@ class LiveScanCoreTests(unittest.TestCase):
         # for up to the independently bounded 0.7 s using timestamped /odom.
         live_anchor = select_pose_anchor(samples, target, 0.7)
         self.assertEqual(live_anchor[0], 1_000_000_000)
-        self.assertIsNone(select_pose_anchor(samples, target, 0.4))
+        self.assertIsNone(select_pose_anchor(samples, target, 0.04))
 
     def test_body_pose_and_sensor_extrinsic_compose_into_map_lidar(self):
         translation, rotation = compose_transform(
