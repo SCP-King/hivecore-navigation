@@ -49,6 +49,7 @@ def generate_launch_description():
                 "expected_frame": "n01_fast_lio_map",
                 "expected_child_frame": "imu_link",
                 "max_age_s": 0.5,
+                "use_sim_time": LaunchConfiguration("use_sim_time"),
             }],
             condition=IfCondition(LaunchConfiguration("backend").equals("fast_lio"))),
     ])
