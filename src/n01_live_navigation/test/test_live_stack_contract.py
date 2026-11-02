@@ -35,6 +35,17 @@ class LiveStackContractTests(unittest.TestCase):
         self.assertIn('"actuator_output": "DISABLED"', combined)
         self.assertIn('"safety_authorization": "NEVER"', combined)
 
+    def test_static_pcd_is_retained_once_for_late_joining_consumers(self):
+        provider = (ROOT / "src/n01_static_map/n01_static_map/static_map_node.py").read_text()
+        grid_map = (ROOT / "src/scan_planner/plan_env/src/grid_map.cpp").read_text()
+        self.assertIn("DurabilityPolicy.TRANSIENT_LOCAL", provider)
+        self.assertIn("rclcpp::QoS(1).reliable().transient_local()", grid_map)
+        self.assertNotIn("create_timer(1.0 / self._publish_rate", provider)
+
+    def test_global_map_cloud_is_not_clipped_by_sensor_origin_range(self):
+        tracker = (ROOT / "src/n01_live_navigation/n01_live_navigation/dynamic_obstacle_tracker.py").read_text()
+        self.assertIn("decode_pointcloud_xyz(msg, self.max_points, None)", tracker)
+
     def test_native_scan_is_configured_for_static_map_overlay(self):
         launch = (ROOT / "src/n01_live_navigation/launch/live_scan.launch.py").read_text()
         self.assertIn('"grid_map.static_cloud_enabled": True', launch)
