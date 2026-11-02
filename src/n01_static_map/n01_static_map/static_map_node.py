@@ -16,7 +16,6 @@
 # 随机 z(在该列点云 z 范围内)的代表点。这样既保留 2D 占用语义(N-01 滑窗
 # 栅格 3D 是 2D 膨胀),又把地面/墙面/顶部压缩成稀疏代表点。
 import math
-import random
 import struct
 
 import numpy as np
@@ -102,23 +101,26 @@ class StaticMapNode(Node):
                 "仅用于检查静态地图供给链。请配置 pcd_path=<绝对路径>。")
             return
         self.load_and_publish()
-        rng = random.Random(self._seed)
-        self._timer = self.create_timer(1.0 / self._publish_rate,
-                                        lambda: self._publish(rng))
+        self._timer = self.create_timer(1.0 / self._publish_rate, self._publish)
 
     def _apply_params(self):
         path = self.get_parameter("pcd_path").value
         res = self.get_parameter("resolution").value
-        if res <= 0:
-            raise ValueError("resolution must be > 0")
-        if self.get_parameter("min_z").value > self.get_parameter("max_z").value:
+        publish_rate = float(self.get_parameter("publish_rate").value)
+        min_z = float(self.get_parameter("min_z").value)
+        max_z = float(self.get_parameter("max_z").value)
+        if not math.isfinite(float(res)) or not 0.01 <= float(res) <= 0.5:
+            raise ValueError("resolution must be finite and in [0.01, 0.5]")
+        if not math.isfinite(publish_rate) or not 0.1 <= publish_rate <= 10.0:
+            raise ValueError("publish_rate must be finite and in [0.1, 10]")
+        if not math.isfinite(min_z) or not math.isfinite(max_z) or min_z > max_z:
             raise ValueError("min_z must be <= max_z")
         self._pcd_path = str(path)
         self._resolution = float(res)
-        self._publish_rate = float(self.get_parameter("publish_rate").value)
+        self._publish_rate = publish_rate
         self._frame_id = str(self.get_parameter("frame_id").value)
-        self._min_z = float(self.get_parameter("min_z").value)
-        self._max_z = float(self.get_parameter("max_z").value)
+        self._min_z = min_z
+        self._max_z = max_z
         self._seed = int(self.get_parameter("seed").value)
 
     def _on_param_change(self, params):
@@ -161,9 +163,11 @@ class StaticMapNode(Node):
         ix = np.floor((xs - xs.min()) / self._resolution).astype(np.int64)
         iy = np.floor((ys - ys.min()) / self._resolution).astype(np.int64)
         iz = np.floor((zs - self._min_z) / self._resolution).astype(np.int64)
-        key = (ix * 1048576 + iy) * 2048 + iz  # 37 位内唯一(取余),int64 安全
-        # 遍历分组:对每个体素格任意取一点(用 unique return_index)
-        _, first_idx = np.unique(key, return_index=True)
+        # Structured 3-D integer keys avoid collisions from hand-packed
+        # coordinate multipliers when a large map exceeds an assumed axis range.
+        voxel_indices = np.column_stack((ix, iy, iz))
+        _, first_idx = np.unique(voxel_indices, axis=0, return_index=True)
+        first_idx.sort()
         ix_o = ix[first_idx]; iy_o = iy[first_idx]; iz_o = iz[first_idx]
         # z window explicitly filtered above; do not infer floor from any point.
         cx = xs.min(); cy = ys.min()
@@ -181,7 +185,7 @@ class StaticMapNode(Node):
             f"耗时{dt:.1f}s 发布到 {PUBLISH_TOPIC} (frame={self._frame_id}, "
             f"z窗口[{self._min_z},{self._max_z}])")
 
-    def _publish(self, rng):
+    def _publish(self):
         if self._payload is None:
             return
         msg = PointCloud2()
