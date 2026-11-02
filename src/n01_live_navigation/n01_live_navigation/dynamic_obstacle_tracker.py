@@ -127,10 +127,11 @@ class DynamicObstacleTracker(Node):
             else:
                 old = self.tracks[best_id]
                 dt = now - old["last_seen"]
-                velocity = (
-                    ((centroid - old["centroid"]) / dt).tolist()
-                    if dt >= 0.02 else old["velocity"]
-                )
+                if dt >= 0.02:
+                    measured = (centroid - old["centroid"]) / dt
+                    velocity = measured.tolist() if float(np.linalg.norm(measured)) <= 3.0 else [0.0, 0.0, 0.0]
+                else:
+                    velocity = old["velocity"]
             assigned.add(best_id)
             active[best_id] = {
                 "centroid": centroid,
@@ -140,9 +141,12 @@ class DynamicObstacleTracker(Node):
                 "last_seen": now,
                 "points": int(cluster.shape[0]),
             }
-        expired = set(self.tracks) - set(active)
+        expired = {
+            track_id for track_id, track in self.tracks.items()
+            if now - track["last_seen"] > self.track_timeout
+        }
         for track_id, track in self.tracks.items():
-            if track_id not in assigned and now - track["last_seen"] <= self.track_timeout:
+            if track_id not in assigned and track_id not in expired:
                 active[track_id] = track
         self.tracks = active
         return expired
