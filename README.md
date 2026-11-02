@@ -1,6 +1,6 @@
 ## 新增：FAST-LIO2 可选后端，甲方 SLAM 接口保持不变
 
-新增独立 `n01_fast_lio` ROS 2 Humble 包：使用固定版本的 HKU-MARS FAST-LIO2 ROS2 分支，读取原始 Livox `CustomMsg` + Livox 内置 IMU，所有输出隔离到 `/n01/fast_lio/*`，私有地图帧为 `n01_fast_lio_map`，FAST-LIO TF broadcaster 默认关闭。甲方 `/localization_status`、`/robot_pose`、`/tf`、`/livox/lidar/geo_filtered`、原启动方式均不修改。可在开发阶段与甲方 SLAM 同时订阅传感器做 shadow comparison。
+新增独立 `n01_fast_lio` ROS 2 Humble 包：使用固定版本的 HKU-MARS FAST-LIO2 ROS2 分支，读取原始 Livox `CustomMsg` + Livox 内置 IMU，所有输出隔离到 `/n01/fast_lio/*`，私有地图帧为 `n01_fast_lio_map`，FAST-LIO TF broadcaster 默认不创建（不会额外注册 `/tf` publisher endpoint）。甲方 `/localization_status`、`/robot_pose`、`/tf`、`/livox/lidar/geo_filtered`、原启动方式均不修改。可在开发阶段与甲方 SLAM 同时订阅传感器做 shadow comparison。
 
 - 上游与版本：[`hku-mars/FAST_LIO` ROS2 branch](https://github.com/hku-mars/FAST_LIO/tree/ROS2)，commit `cc3c9e8b1469b33b8072764d6db2348ed6dc597f)，ikd-Tree 子模块固定提交见 [集成说明](docs/n01_fast_lio2_integration.md)。
 - 导入/构建：`bash scripts/build_n01_fast_lio2.sh`；若 Livox ROS Driver2 位于已有 overlay，设置 `LIVOX_SETUP=/path/to/install/setup.bash`。
