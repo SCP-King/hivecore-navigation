@@ -75,8 +75,13 @@ def json_summary(topic, value):
     if topic.endswith("/readiness"):
         keys = (
             "status", "localization_status", "motion_compensation_error",
-            "robot_pose_stamp_age_s", "robot_pose_anchor_max_delta_s",
-            "robot_pose_live_anchor_max_delta_s", "body_pose_live_fresh",
+            "robot_pose_stamp_age_s", "robot_pose_stamp_progress_age_s",
+            "robot_pose_publisher_count", "robot_pose_multiple_publisher_endpoints",
+            "robot_pose_publishers", "robot_pose_anchor_max_delta_s",
+            "robot_pose_live_anchor_max_delta_s", "pose_duplicate",
+            "pose_out_of_order", "drop_pose_duplicate_conflict",
+            "pose_scan_before_delta_s", "pose_scan_anchor_available",
+            "body_pose_live_fresh",
             "body_pose_live_stamp_age_s", "body_pose_live_anchor_delta_s",
             "body_pose_live_anchor_fresh", "body_pose_live_error",
             "latest_scan_lag_s", "cloud_output_age_s", "drop_tf_timeout",
@@ -131,9 +136,23 @@ class LiveStackPreflight(Node):
             "joint_names": [],
             "tf_edges": Counter(),
         })
-        self.topic_types = dict(self.get_topic_names_and_types())
+        self.topic_types = {}
         self.subscriptions = []
+        self.subscribed_topics = set()
         self.topic_presence = {}
+        self.topic_discovery_error = ""
+        self.refresh_topic_subscriptions()
+        # DDS discovery can complete after this observer starts. Re-scan the
+        # graph so late transient-local topics are subscribed and reported.
+        self.create_timer(0.5, self.refresh_topic_subscriptions)
+
+    def refresh_topic_subscriptions(self):
+        try:
+            self.topic_types = dict(self.get_topic_names_and_types())
+            self.topic_discovery_error = ""
+        except Exception as exc:
+            self.topic_discovery_error = str(exc)
+            return
 
         for topic, expected_type in EXPECTED_TYPES.items():
             available = self.topic_types.get(topic, [])
@@ -149,21 +168,24 @@ class LiveStackPreflight(Node):
                     "expected_type": expected_type, "type_mismatch": True,
                 }
                 continue
-            try:
-                message_class = get_message(actual_type)
-                qos = self._qos_for(topic)
-                subscription = self.create_subscription(
-                    message_class, topic, self._callback(topic), qos)
-                self.subscriptions.append(subscription)
-                self.topic_presence[topic] = {
-                    "present": True, "available_types": available,
-                    "expected_type": expected_type, "subscribed_type": actual_type,
-                }
-            except Exception as exc:
-                self.topic_presence[topic] = {
-                    "present": True, "available_types": available,
-                    "expected_type": expected_type, "subscribe_error": str(exc),
-                }
+            if topic not in self.subscribed_topics:
+                try:
+                    message_class = get_message(actual_type)
+                    qos = self._qos_for(topic)
+                    subscription = self.create_subscription(
+                        message_class, topic, self._callback(topic), qos)
+                    self.subscriptions.append(subscription)
+                    self.subscribed_topics.add(topic)
+                except Exception as exc:
+                    self.topic_presence[topic] = {
+                        "present": True, "available_types": available,
+                        "expected_type": expected_type, "subscribe_error": str(exc),
+                    }
+                    continue
+            self.topic_presence[topic] = {
+                "present": True, "available_types": available,
+                "expected_type": expected_type, "subscribed_type": actual_type,
+            }
 
     @staticmethod
     def _qos_for(topic):
@@ -306,6 +328,7 @@ class LiveStackPreflight(Node):
         return result
 
     def report(self):
+        self.refresh_topic_subscriptions()
         topics = {topic: self._topic_summary(topic) for topic in EXPECTED_TYPES}
         cloud_stamps = set(self.records["/cloud"]["stamps"])
         sensor_pose_stamps = set(self.records["/sensor_pose"]["stamps"])
@@ -318,10 +341,31 @@ class LiveStackPreflight(Node):
         }
 
         node_pairs = self.get_node_names_and_namespaces()
-        name_counts = Counter(name for name, _namespace in node_pairs)
+        name_counts = Counter(
+            (str(name), str(namespace).rstrip("/") or "/")
+            for name, namespace in node_pairs
+        )
         duplicate_names = {
-            name: count for name, count in name_counts.items() if count > 1
+            (namespace + "/" + name) if namespace != "/" else "/" + name: count
+            for (name, namespace), count in name_counts.items() if count > 1
         }
+        multiple_publisher_endpoints = {}
+        same_node_multiple_publisher_endpoints = {}
+        for topic, summary in topics.items():
+            publishers = summary.get("publishers", [])
+            if len(publishers) > 1:
+                multiple_publisher_endpoints[topic] = {
+                    "publisher_count": len(publishers),
+                    "publishers": publishers,
+                }
+                endpoint_node_counts = Counter(
+                    publisher.get("node", "UNKNOWN") for publisher in publishers)
+                repeated_nodes = {
+                    node: count for node, count in endpoint_node_counts.items()
+                    if count > 1
+                }
+                if repeated_nodes:
+                    same_node_multiple_publisher_endpoints[topic] = repeated_nodes
         tf_publishers = {}
         for topic in ("/tf", "/tf_static"):
             try:
@@ -343,6 +387,21 @@ class LiveStackPreflight(Node):
             warnings.append("odom_rate_below_20_hz")
         if topics["/robot_pose"]["receive_rate_hz"] < 1.0:
             warnings.append("robot_pose_rate_below_1_hz_or_missing")
+        robot_pose_stamp_age = topics["/robot_pose"].get("latest_stamp_age_s")
+        robot_pose_receive_age = topics["/robot_pose"].get("latest_receive_age_s")
+        if robot_pose_stamp_age is not None and robot_pose_stamp_age > 0.5:
+            warnings.append("robot_pose_stamp_lag_above_0_5s")
+        if (
+            robot_pose_stamp_age is not None and robot_pose_stamp_age > 0.5
+            and robot_pose_receive_age is not None and robot_pose_receive_age <= 0.7
+        ):
+            warnings.append("robot_pose_stamp_stale_despite_recent_delivery")
+        if robot_pose_stamp_age is not None and robot_pose_stamp_age > 1.5:
+            warnings.append("robot_pose_stamp_age_exceeds_bridge_budget")
+        for topic in multiple_publisher_endpoints:
+            warnings.append("multiple_publisher_endpoints:" + topic)
+        for topic in same_node_multiple_publisher_endpoints:
+            warnings.append("multiple_publisher_endpoints_same_node:" + topic)
         if topics["/body_pose"]["samples"] < 2 or body_rate < 10.0:
             warnings.append("body_pose_rate_below_10_hz")
         if exact_pairs["cloud_sensor_pose_exact_matches"] == 0:
@@ -371,10 +430,14 @@ class LiveStackPreflight(Node):
                 "static_overlay_ready": static_ready,
                 "body_pose_receive_rate_hz": body_rate,
                 "safety_status": safety_diag.get("status"),
+                "multiple_publisher_endpoint_topics": sorted(multiple_publisher_endpoints),
             },
             "exact_stamp_pairs": exact_pairs,
             "warnings": warnings,
             "duplicate_node_names": duplicate_names,
+            "multiple_publisher_endpoints": multiple_publisher_endpoints,
+            "same_node_multiple_publisher_endpoints": same_node_multiple_publisher_endpoints,
+            "topic_discovery_error": self.topic_discovery_error,
             "tf_publishers": tf_publishers,
             "topic_presence": self.topic_presence,
             "topics": topics,
