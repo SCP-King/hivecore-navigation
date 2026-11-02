@@ -21,5 +21,5 @@ setup(
     description="Isolated FAST-LIO2 backend for Hive2 MID-360.",
     license="Apache-2.0",
     tests_require=["pytest"],
-    entry_points={"console_scripts": []},
+    entry_points={"console_scripts": [\n        "n01_fast_lio_odometry_adapter = n01_fast_lio.odometry_adapter:main",\n    ]},
 )
