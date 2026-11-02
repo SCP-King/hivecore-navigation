@@ -10,6 +10,7 @@ from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
 
@@ -32,7 +33,8 @@ def generate_launch_description():
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(fast_launch),
             launch_arguments={
-                "use_sim_time": LaunchConfiguration("use_sim_time"),
+                "use_sim_time": ParameterValue(
+                    LaunchConfiguration("use_sim_time"), value_type=bool),
                 "map_file_path": LaunchConfiguration("map_file_path"),
                 "rviz": LaunchConfiguration("rviz"),
             }.items(),
