@@ -208,6 +208,8 @@ private:
   void depthPoseCallback(const sensor_msgs::msg::Image::ConstSharedPtr& img,
                          const nav_msgs::msg::Odometry::ConstSharedPtr& pose);
   void sensorPoseCallback(const nav_msgs::msg::Odometry::ConstSharedPtr& pose);
+  void cloudPoseCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr& cloud,
+                         const nav_msgs::msg::Odometry::ConstSharedPtr& pose);
   void slidingMapFrameCallback(const nav_msgs::msg::Odometry::ConstSharedPtr& pose);
   void cloudCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr& img);
   // Optional static PCD map layer; dynamic raycasting cannot clear static obstacles.
@@ -251,6 +253,10 @@ private:
   typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::msg::Image, nav_msgs::msg::Odometry>
       SyncPolicyImagePose;
   typedef shared_ptr<message_filters::Synchronizer<SyncPolicyImagePose>> SynchronizerImagePose;
+  // Pair live LiDAR and its map-frame pose at the identical original scan stamp.
+  typedef message_filters::sync_policies::ExactTime<sensor_msgs::msg::PointCloud2, nav_msgs::msg::Odometry>
+      SyncPolicyCloudPose;
+  typedef shared_ptr<message_filters::Synchronizer<SyncPolicyCloudPose>> SynchronizerCloudPose;
 
   rclcpp::Node* node_{nullptr};
   std::shared_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
@@ -258,9 +264,10 @@ private:
   shared_ptr<message_filters::Subscriber<nav_msgs::msg::Odometry>> depth_pose_sub_;
   SynchronizerImagePose sync_image_pose_;
 
-  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr lidar_pose_sub_;
+  shared_ptr<message_filters::Subscriber<nav_msgs::msg::Odometry>> lidar_pose_sub_;
+  shared_ptr<message_filters::Subscriber<sensor_msgs::msg::PointCloud2>> cloud_sub_;
+  SynchronizerCloudPose sync_cloud_pose_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr sliding_map_frame_sub_;
-  rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_sub_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr static_cloud_sub_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr static_ready_pub_;
   sensor_msgs::msg::PointCloud2::ConstSharedPtr static_source_cloud_;
