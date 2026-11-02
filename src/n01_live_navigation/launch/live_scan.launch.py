@@ -62,6 +62,9 @@ def _nodes(context):
                 "odom_interpolation_max_gap_s": 0.08,
                 "odom_cache_size": 512,
                 "max_cloud_age_s": 0.6,
+                "max_latest_scan_lag_s": 0.45,
+                "body_pose_publish_period_s": 0.05,
+                "max_live_body_pose_age_s": 0.25,
                 "max_tf_wait_s": 0.45, "tf_retry_period_s": 0.02,
                 "max_pending_clouds": 1, "max_points": 100000,
                 "max_point_range_m": 12.0, "use_sim_time": False,
@@ -72,10 +75,14 @@ def _nodes(context):
             package="n01_live_navigation", executable="n01_live_runtime_supervisor",
             name="n01_live_runtime_supervisor",
             parameters=[{
-                "max_body_pose_age_s": 0.6,
-                "max_body_pose_rx_age_s": 0.8,
+                "max_body_pose_age_s": 0.25,
+                "max_body_pose_rx_age_s": 0.35,
             }],
             output="screen",
+        ),
+        Node(
+            package="n01_live_navigation", executable="n01_live_safety_supervisor",
+            name="n01_live_safety_supervisor", output="screen",
         ),
         Node(
             package="n01_live_navigation", executable="n01_live_dynamic_obstacle_tracker",
