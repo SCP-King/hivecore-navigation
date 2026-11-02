@@ -96,12 +96,15 @@ source /opt/ros/humble/setup.bash
 bash scripts/build_n01_fast_lio2.sh
 ```
 
-如果需通过脚本指定 Livox overlay：
+Hive2 当前已知的 Livox 驱动安装前缀为 `/opt/hivecore/hive2-motion/1.0.0/install`。优先 source **`local_setup.bash`**，不要 source 可能引用旧 `/home/demo/FROZEN/slam3d_release` 的 `setup.bash`：
 
 ```bash
-LIVOX_SETUP=/path/to/existing_livox_workspace/install/setup.bash \
+source /opt/ros/humble/setup.bash
+LIVOX_SETUP=/opt/hivecore/hive2-motion/1.0.0/install/local_setup.bash \
   bash scripts/build_n01_fast_lio2.sh
 ```
+
+构建脚本现在也会在当前环境暂时找不到 Livox 包时，自动尝试该 Hive2 `local_setup.bash`，并在仍失败时输出 `ROS_DISTRO` 与 `AMENT_PREFIX_PATH` 诊断。若你的实际安装路径不同，可用 `LIVOX_SETUP=/实际路径/local_setup.bash` 覆盖。
 
 推荐使用一个命令完成 metadata preflight、隔离 ROS domain 88、只回放原始雷达和 IMU、保存 PCD 与日志：
 
