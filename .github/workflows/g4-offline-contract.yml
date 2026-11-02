@@ -14,6 +14,7 @@ on:
       - 'scripts/patch_n01_fast_lio2.py'
       - 'scripts/build_n01_fast_lio2.sh'
       - 'scripts/n01_fast_lio_bag_preflight.py'
+      - 'scripts/run_n01_fast_lio2_bag.sh'
       - 'src/n01_fast_lio/**'
       - 'docs/n01_fast_lio2_integration.md'
       - 'src/n01_offline_integration/test/test_fast_lio2_integration_contract.py'
@@ -73,5 +74,6 @@ jobs:
         run: |
           bash -n scripts/import_n01_fast_lio2.sh
           bash -n scripts/build_n01_fast_lio2.sh
+          bash -n scripts/run_n01_fast_lio2_bag.sh
           python3 -m py_compile scripts/patch_n01_fast_lio2.py scripts/n01_fast_lio_bag_preflight.py src/n01_fast_lio/launch/fast_lio_mapping.launch.py
           python3 -m unittest discover -s src/n01_offline_integration/test -p 'test_fast_lio2_integration_contract.py' -v
