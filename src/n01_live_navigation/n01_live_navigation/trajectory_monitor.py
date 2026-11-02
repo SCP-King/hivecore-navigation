@@ -137,8 +137,8 @@ class Hive2TrajectoryMonitor(Node):
 
     def on_bspline(self, msg):
         try:
-            if msg.header.frame_id.lstrip("/") != self.frame:
-                raise CurveError("bspline_frame_must_be_map")
+            # scan_planner_msgs/Bspline has no Header; its coordinate frame is
+            # supplied by the live launch contract (map), not inferred from a field.
             curve = BSplineCurve(
                 int(msg.order), list(msg.knots),
                 [(p.x, p.y, p.z) for p in msg.pos_pts], table_samples=500)
@@ -168,7 +168,7 @@ class Hive2TrajectoryMonitor(Node):
 
         path = Path()
         path.header.frame_id = self.frame
-        path.header.stamp = msg.header.stamp
+        path.header.stamp = self.get_clock().now().to_msg()
         for i, xyz in enumerate(points):
             before = points[max(0, i - 1)]
             after = points[min(len(points) - 1, i + 1)]
@@ -180,7 +180,7 @@ class Hive2TrajectoryMonitor(Node):
             pose.pose.orientation.w = math.cos(yaw / 2.0)
             path.poses.append(pose)
         self.path_pub.publish(path)
-        self._publish_wheel_markers(msg.header.stamp, screen)
+        self._publish_wheel_markers(path.header.stamp, screen)
 
         pitch_match = self._pitch_reference_match()
         data = {
@@ -192,6 +192,11 @@ class Hive2TrajectoryMonitor(Node):
             "candidate_only": True,
             "path_frame": self.frame,
             "path_points": len(path.poses),
+            "trajectory_id": int(msg.traj_id),
+            "trajectory_start_time": {
+                "sec": int(msg.start_time.sec),
+                "nanosec": int(msg.start_time.nanosec),
+            },
             "max_speed_limit_mps": self.max_speed,
             "max_accel_limit_mps2": self.max_accel,
             **screen,
