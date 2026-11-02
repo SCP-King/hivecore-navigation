@@ -56,6 +56,7 @@ def _nodes(context):
                 "max_status_age_s": 1.0, "max_pose_rx_age_s": 0.7,
                 "max_pose_stamp_age_s": 0.7,
                 "max_pose_anchor_delta_s": 0.5,
+                "max_live_body_pose_anchor_delta_s": 0.7,
                 "pose_cache_size": 64,
                 "max_odom_rx_age_s": 0.2,
                 "max_odom_stamp_age_s": 0.4,
