@@ -11,7 +11,8 @@ import subprocess
 import sys
 
 PIN = "cc3c9e8b1469b33b8072764d6db2348ed6dc597f"
-MARKER = "// N01_FAST_LIO_ISOLATION_PATCH_V1"
+MARKER = "// N01_FAST_LIO_ISOLATION_PATCH_V2"
+LEGACY_MARKER = "// N01_FAST_LIO_ISOLATION_PATCH_V1"
 
 
 def replace_exact(text: str, old: str, new: str, expected: int) -> str:
@@ -54,6 +55,7 @@ def main() -> int:
         'common.imu_frame_id',
         'common.publish_tf',
         'if (n01_publish_tf) tf_br->sendTransform(trans);',
+        'if (n01_publish_tf) {\n            tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);\n        }',
         'odomAftMapped.header.frame_id = n01_map_frame_id;',
         'odomAftMapped.child_frame_id = n01_imu_frame_id;',
     )
@@ -63,6 +65,28 @@ def main() -> int:
             print("FAST-LIO N-01 patch is partial/corrupt: %r" % missing, file=sys.stderr)
             return 2
         print("FAST-LIO2 N-01 isolation patch already present; no changes.")
+        return 0
+
+    # Upgrade a checkout that received patch V1 before the /tf publisher
+    # itself was made conditional.
+    if LEGACY_MARKER in source:
+        if args.check:
+            print("FAST-LIO2 N-01 patch V1 found; V2 broadcaster isolation is pending.")
+            return 1
+        patched = replace_exact(
+            source,
+            "tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);",
+            "if (n01_publish_tf) {\n"
+            "            tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);\n"
+            "        }",
+            1,
+        ).replace(LEGACY_MARKER, MARKER, 1)
+        if any(item not in patched for item in required):
+            raise RuntimeError("V1-to-V2 upgrade verification failed.")
+        tmp = cpp.with_suffix(".cpp.n01.tmp")
+        tmp.write_text(patched, encoding="utf-8")
+        tmp.replace(cpp)
+        print("FAST-LIO2 N-01 isolation patch upgraded to V2; /tf publisher is not created by default.")
         return 0
 
     if args.check:
@@ -131,6 +155,14 @@ def main() -> int:
     patched = replace_exact(
         patched, "tf_br->sendTransform(trans);",
         "if (n01_publish_tf) tf_br->sendTransform(trans);", 1)
+    patched = replace_exact(
+        patched,
+        "tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);",
+        "if (n01_publish_tf) {\n"
+        "            tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);\n"
+        "        }",
+        1,
+    )
 
     if any(item not in patched for item in required):
         raise RuntimeError("Post-patch verification failed; source was not written.")
@@ -140,7 +172,7 @@ def main() -> int:
     print("FAST-LIO2 N-01 isolation patch applied.")
     print("  private map frame: n01_fast_lio_map")
     print("  IMU body frame: imu_link")
-    print("  FAST-LIO TF broadcaster: disabled by default")
+    print("  FAST-LIO TF broadcaster and /tf publisher: not created by default")
     print("  vendor SLAM topics and source files: untouched")
     return 0
 
