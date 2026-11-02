@@ -161,6 +161,110 @@ def estimate_velocity(previous, current, max_speed=3.0):
     return vel, True
 
 
+
+def normalize_quaternion(quaternion):
+    """Return a finite unit quaternion in xyzw order."""
+    q = np.asarray(quaternion, dtype=np.float64)
+    if q.shape != (4,) or not np.isfinite(q).all():
+        raise ValueError("invalid_quaternion")
+    norm = float(np.linalg.norm(q))
+    if not math.isfinite(norm) or norm < 1e-9:
+        raise ValueError("invalid_quaternion_norm")
+    return tuple(float(v) for v in (q / norm))
+
+
+def quaternion_multiply(a, b):
+    """Compose rotations a * b in xyzw order."""
+    ax, ay, az, aw = normalize_quaternion(a)
+    bx, by, bz, bw = normalize_quaternion(b)
+    return normalize_quaternion((
+        aw*bx + ax*bw + ay*bz - az*by,
+        aw*by - ax*bz + ay*bw + az*bx,
+        aw*bz + ax*by - ay*bx + az*bw,
+        aw*bw - ax*bx - ay*by - az*bz,
+    ))
+
+
+def quaternion_slerp(a, b, fraction):
+    """Shortest-arc spherical interpolation between xyzw quaternions."""
+    q0 = np.asarray(normalize_quaternion(a), dtype=np.float64)
+    q1 = np.asarray(normalize_quaternion(b), dtype=np.float64)
+    u = float(fraction)
+    if not math.isfinite(u) or u < 0.0 or u > 1.0:
+        raise ValueError("quaternion_interpolation_fraction_out_of_range")
+    dot = float(np.dot(q0, q1))
+    if dot < 0.0:
+        q1 = -q1
+        dot = -dot
+    dot = min(1.0, max(-1.0, dot))
+    if dot > 0.9995:
+        return normalize_quaternion(q0 + u * (q1 - q0))
+    theta = math.acos(dot)
+    sin_theta = math.sin(theta)
+    if abs(sin_theta) < 1e-9:
+        return normalize_quaternion(q0)
+    return normalize_quaternion(
+        (math.sin((1.0-u)*theta) / sin_theta) * q0
+        + (math.sin(u*theta) / sin_theta) * q1
+    )
+
+
+def compose_transform(parent_from_mid_translation, parent_from_mid_quaternion,
+                      mid_from_child_translation, mid_from_child_quaternion):
+    """Compose parent<-mid and mid<-child into parent<-child."""
+    t1 = tuple(float(v) for v in parent_from_mid_translation)
+    t2 = tuple(float(v) for v in mid_from_child_translation)
+    if len(t1) != 3 or len(t2) != 3 or not all(
+        math.isfinite(v) for v in t1 + t2
+    ):
+        raise ValueError("invalid_transform_translation")
+    q1 = normalize_quaternion(parent_from_mid_quaternion)
+    q2 = normalize_quaternion(mid_from_child_quaternion)
+    translation = rotate_translate(t2, t1, q1)
+    rotation = quaternion_multiply(q1, q2)
+    return translation, rotation
+
+
+def interpolate_pose(samples, stamp_ns, max_gap_s=0.5):
+    """Interpolate a map-frame pose at a sensor timestamp; never extrapolate.
+
+    Each sample is (stamp_ns, xyz_tuple, quaternion_xyzw_tuple). A single exact
+    timestamp is accepted; otherwise two bracketing samples are required.
+    """
+    target = int(stamp_ns)
+    gap_limit = float(max_gap_s)
+    if target <= 0 or not math.isfinite(gap_limit) or gap_limit <= 0.0:
+        raise ValueError("invalid_pose_interpolation_request")
+    ordered = sorted(samples, key=lambda sample: int(sample[0]))
+    if not ordered:
+        return None
+    for sample_stamp, xyz, quaternion in ordered:
+        if int(sample_stamp) == target:
+            position = tuple(float(v) for v in xyz)
+            if len(position) != 3 or not all(math.isfinite(v) for v in position):
+                raise ValueError("invalid_pose_position")
+            return position, normalize_quaternion(quaternion)
+    for left, right in zip(ordered[:-1], ordered[1:]):
+        t0, p0, q0 = left
+        t1, p1, q1 = right
+        t0, t1 = int(t0), int(t1)
+        if t0 < target < t1:
+            gap = (t1 - t0) / 1e9
+            if gap <= 0.0 or gap > gap_limit:
+                return None
+            alpha = (target - t0) / float(t1 - t0)
+            p0 = np.asarray(p0, dtype=np.float64)
+            p1 = np.asarray(p1, dtype=np.float64)
+            if p0.shape != (3,) or p1.shape != (3,) or not (
+                np.isfinite(p0).all() and np.isfinite(p1).all()
+            ):
+                raise ValueError("invalid_pose_position")
+            position = tuple(float(v) for v in (p0 + alpha * (p1 - p0)))
+            orientation = quaternion_slerp(q0, q1, alpha)
+            return position, orientation
+    return None
+
+
 def cluster_xy_points(points, cell_size=0.30, min_points=6, max_clusters=64):
     """Connected components over occupied XY cells; returns arrays of real points."""
     pts = np.asarray(points, dtype=np.float32)
