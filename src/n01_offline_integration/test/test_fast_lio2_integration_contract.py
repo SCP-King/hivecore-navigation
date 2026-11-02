@@ -54,7 +54,7 @@ class FastLio2IntegrationContract(unittest.TestCase):
         self.assertIn("tf_flag_path: registration_output_tf_published", bridge)
         self.assertIn("input_topic: /livox/lidar/geo_filtered", sensor)
         self.assertIn("target_frame: map", sensor)
-        self.assertIn("vendor slam", self.read("docs/n01_fast_lio2_integration.md").lower())
+        self.assertIn("甲方 slam", self.read("docs/n01_fast_lio2_integration.md").lower())
 
 
 if __name__ == "__main__":
