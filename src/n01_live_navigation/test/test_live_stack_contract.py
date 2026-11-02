@@ -15,7 +15,7 @@ class LiveStackContractTests(unittest.TestCase):
         self.assertIn("sensorPoseCallback(pose);", source)
         self.assertIn("cloudCallback(cloud);", source)
         self.assertNotIn(
-            'cloud_sub_ = node_->create_subscription<sensor_msgs::msg::PointCloud2>',
+            '\\n    cloud_sub_ = node_->create_subscription<sensor_msgs::msg::PointCloud2>',
             source,
         )
 
