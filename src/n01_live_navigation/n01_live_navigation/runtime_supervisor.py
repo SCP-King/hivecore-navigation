@@ -11,13 +11,14 @@ from nav_msgs.msg import Odometry
 from std_msgs.msg import Bool, String
 from tf2_msgs.msg import TFMessage
 from geometry_msgs.msg import Vector3Stamped
+from scan_planner_msgs.msg import Bspline
 
 
 class LiveRuntimeSupervisor(Node):
     def __init__(self):
         super().__init__("n01_live_runtime_supervisor")
-        self.declare_parameter("max_body_pose_age_s", 0.6)
-        self.declare_parameter("max_body_pose_rx_age_s", 0.8)
+        self.declare_parameter("max_body_pose_age_s", 0.25)
+        self.declare_parameter("max_body_pose_rx_age_s", 0.35)
         self.declare_parameter("status_topic", "/n01/live_navigation/readiness")
         self.declare_parameter("static_ready_topic", "/grid_map/static_overlay_ready")
         self.declare_parameter("body_pose_topic", "/body_pose")
@@ -39,6 +40,11 @@ class LiveRuntimeSupervisor(Node):
         self.timings_stamp_ns = None
         self.timings_rx_monotonic = None
         self.robot_feasibility = {}
+        self.robot_feasibility_rx_monotonic = None
+        self.dynamic_obstacle = {}
+        self.dynamic_obstacle_rx_monotonic = None
+        self.planner_rx_monotonic = None
+        self.planner_traj_id = None
         self.last_health = {}
 
         latched = QoSProfile(
@@ -59,6 +65,11 @@ class LiveRuntimeSupervisor(Node):
             self.on_timings, 10)
         self.create_subscription(
             String, "/n01/live_navigation/hive2_feasibility", self.on_robot_feasibility, 10)
+        self.create_subscription(
+            String, "/n01/live_navigation/dynamic_obstacle_status",
+            self.on_dynamic_obstacle_status, 10)
+        self.create_subscription(
+            Bspline, "/planning/bspline", self.on_planner_trajectory, 10)
         self.ready_pub = self.create_publisher(
             Bool, "/n01/live_navigation/navigation_ready", 10)
         self.health_pub = self.create_publisher(
@@ -103,6 +114,18 @@ class LiveRuntimeSupervisor(Node):
             self.robot_feasibility = json.loads(msg.data)
         except (ValueError, TypeError):
             self.robot_feasibility = {"status": "INVALID_ROBOT_FEASIBILITY"}
+        self.robot_feasibility_rx_monotonic = time.monotonic()
+
+    def on_dynamic_obstacle_status(self, msg):
+        try:
+            self.dynamic_obstacle = json.loads(msg.data)
+        except (ValueError, TypeError):
+            self.dynamic_obstacle = {"status": "INVALID_DYNAMIC_OBSTACLE_STATUS"}
+        self.dynamic_obstacle_rx_monotonic = time.monotonic()
+
+    def on_planner_trajectory(self, msg):
+        self.planner_rx_monotonic = time.monotonic()
+        self.planner_traj_id = int(msg.traj_id)
 
     def publish_health(self):
         now_ns = self.get_clock().now().nanoseconds
@@ -133,6 +156,15 @@ class LiveRuntimeSupervisor(Node):
             and -0.2 <= body_stamp_age <= self.max_body_age
             and 0.0 <= body_rx_age <= self.max_body_rx_age
         )
+        dynamic_age = (
+            now_mono - self.dynamic_obstacle_rx_monotonic
+            if self.dynamic_obstacle_rx_monotonic is not None else None)
+        feasibility_age = (
+            now_mono - self.robot_feasibility_rx_monotonic
+            if self.robot_feasibility_rx_monotonic is not None else None)
+        planner_age = (
+            now_mono - self.planner_rx_monotonic
+            if self.planner_rx_monotonic is not None else None)
         tf_seen = self.map_tf_stamp_ns is not None
         blockers = []
         if not bridge_ready:
@@ -146,8 +178,64 @@ class LiveRuntimeSupervisor(Node):
         # itself ready after odometry-assisted scan-time pose compensation and
         # body<-LiDAR extrinsic lookup both succeed.
         navigation_ready = not blockers
+        stage_b_ready = bool(navigation_ready and self.static_ready)
+        feasibility_fresh = feasibility_age is not None and 0.0 <= feasibility_age <= 1.0
+        stage_c_ready = bool(
+            feasibility_fresh
+            and self.robot_feasibility.get("status") == "NECESSARY_CONDITIONS_PASS"
+            and self.robot_feasibility.get("candidate_review_ready") is True
+        )
+        stages = {
+            "A_localization_and_goal_gate": {
+                "status": "READY" if navigation_ready else "BLOCKED",
+                "ready": bool(navigation_ready),
+                "navigation_ready": bool(navigation_ready),
+                "blockers": list(blockers),
+            },
+            "B_static_dynamic_map_and_scan_planning": {
+                "status": "READY_FOR_PLANNING" if stage_b_ready else "BLOCKED",
+                "ready": stage_b_ready,
+                "static_overlay_ready": bool(self.static_ready),
+                "native_scan_cloud_input": "/cloud",
+                "dynamic_tracker_status": self.dynamic_obstacle.get("status", "WAITING"),
+                "dynamic_tracker_age_s": dynamic_age,
+                "dynamic_tracker_role": "VISUALIZATION_ONLY",
+                "planner_candidate_received": bool(planner_age is not None and planner_age <= 1.0),
+                "planner_candidate_age_s": planner_age,
+                "planner_trajectory_id": self.planner_traj_id,
+                "planner_is_native_scan": True,
+            },
+            "C_hive2_candidate_kinematics": {
+                "status": (
+                    "CANDIDATE_REVIEW_READY" if stage_c_ready
+                    else self.robot_feasibility.get("status", "WAITING_FOR_TRAJECTORY")
+                ),
+                "ready_for_review": stage_c_ready,
+                "candidate_only": True,
+                "feasibility_age_s": feasibility_age,
+                "feasibility": self.robot_feasibility,
+                "execution_authorized": False,
+            },
+            "D_physical_safety_acceptance": {
+                "status": "NOT_AUTHORIZED",
+                "execution_authorized": False,
+                "actuator_output": "DISABLED",
+                "safety_authorization": "NEVER",
+                "required_physical_acceptance": [
+                    "emergency_stop_chain_verified",
+                    "communication_loss_stop_verified",
+                    "localization_loss_stop_verified",
+                    "dynamic_obstacle_stop_verified",
+                    "manual_takeover_verified",
+                    "wheel_controller_mapping_verified",
+                    "wheel_contact_geometry_verified",
+                    "collision_envelope_verified",
+                    "braking_distance_verified",
+                ],
+            },
+        }
         health = {
-            "schema": "n01.live_system_health.v1",
+            "schema": "n01.live_system_health.v2",
             "status": "READY_FOR_GOAL_PLANNING" if navigation_ready else "BLOCKED",
             "navigation_ready": bool(navigation_ready),
             "blockers": blockers,
@@ -172,6 +260,8 @@ class LiveRuntimeSupervisor(Node):
             "vendor_processing_timings_semantics": (
                 "vendor-defined Vector3Stamped; raw x/y/z only, no guessed units or labels"),
             "robot_feasibility": self.robot_feasibility,
+            "dynamic_obstacle_status": self.dynamic_obstacle,
+            "stages": stages,
             "actuator_output": "DISABLED",
             "safety_authorization": "NEVER",
         }

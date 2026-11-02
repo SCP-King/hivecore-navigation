@@ -33,6 +33,7 @@ from .core import (
     compose_transform,
     interpolate_pose,
     motion_compensated_pose,
+    scan_output_is_fresh,
 )
 
 
@@ -60,6 +61,9 @@ class LiveScanBridge(Node):
             "odom_interpolation_max_gap_s": 0.08,
             "odom_cache_size": 512,
             "max_cloud_age_s": 0.6,
+            "max_latest_scan_lag_s": 0.45,
+            "body_pose_publish_period_s": 0.05,
+            "max_live_body_pose_age_s": 0.25,
             "max_tf_wait_s": 0.45,
             "tf_retry_period_s": 0.02,
             "max_pending_clouds": 1,
@@ -88,6 +92,9 @@ class LiveScanBridge(Node):
         self.odom_interpolation_max_gap = float(get("odom_interpolation_max_gap_s"))
         self.odom_cache_size = int(get("odom_cache_size"))
         self.max_cloud_age = float(get("max_cloud_age_s"))
+        self.max_latest_scan_lag = float(get("max_latest_scan_lag_s"))
+        self.body_pose_publish_period = float(get("body_pose_publish_period_s"))
+        self.max_live_body_pose_age = float(get("max_live_body_pose_age_s"))
         self.max_tf_wait = float(get("max_tf_wait_s"))
         self.tf_retry_period = float(get("tf_retry_period_s"))
         self.max_pending_clouds = int(get("max_pending_clouds"))
@@ -104,6 +111,9 @@ class LiveScanBridge(Node):
             and 0.02 <= self.odom_interpolation_max_gap <= 0.2
             and 16 <= self.odom_cache_size <= 2048
             and 0.1 <= self.max_cloud_age <= 2.0
+            and 0.05 <= self.max_latest_scan_lag <= 1.0
+            and 0.02 <= self.body_pose_publish_period <= 0.2
+            and 0.1 <= self.max_live_body_pose_age <= 1.0
             and 0.01 <= self.max_tf_wait <= 1.0
             and 0.005 <= self.tf_retry_period <= 0.1
             and 1 <= self.max_pending_clouds <= 32
@@ -133,6 +143,10 @@ class LiveScanBridge(Node):
         self.last_pose_stamp_ns = None
         self.last_body = None
         self.last_velocity_valid = False
+        self.last_live_body = None
+        self.last_live_body_pose_stamp_ns = 0
+        self.last_live_body_pose_monotonic = 0.0
+        self.last_live_body_velocity_valid = False
 
         # High-rate local odometry cache; poses are odom<-base_link.
         # At query time TF converts base_link to the global-pose body frame.
@@ -168,7 +182,7 @@ class LiveScanBridge(Node):
             "drop_status": 0, "drop_frame": 0, "drop_stamp": 0,
             "drop_stale_after_wait": 0, "drop_queue_overflow": 0,
             "drop_superseded": 0, "drop_out_of_order": 0,
-            "drop_cloud": 0,
+            "drop_cloud": 0, "body_pose_live_out": 0,
         }
 
         self.tf_buffer = Buffer(cache_time=Duration(seconds=30.0))
@@ -184,8 +198,12 @@ class LiveScanBridge(Node):
         self.cloud_pub = self.create_publisher(PointCloud2, "/cloud", qos_profile_sensor_data)
         self.sensor_pose_pub = self.create_publisher(
             Odometry, "/sensor_pose", qos_profile_sensor_data)
+        # /body_pose is the high-rate current body pose used to slide SCAN's map.
+        # The exact scan-time body pose is retained on a separate diagnostic topic.
         self.body_pose_pub = self.create_publisher(
             Odometry, "/body_pose", qos_profile_sensor_data)
+        self.scan_body_pose_pub = self.create_publisher(
+            Odometry, "/n01/live_navigation/scan_body_pose", qos_profile_sensor_data)
         self.diag_pub = self.create_publisher(
             String, "/n01/live_navigation/readiness", 10)
 
@@ -298,6 +316,7 @@ class LiveScanBridge(Node):
         self.odom_stamp_age_s = (
             self.get_clock().now().nanoseconds - self.last_odom_stamp_ns) / 1e9
         self.counts["odom_accepted"] += 1
+        self._publish_live_body_pose()
 
     def on_robot_pose(self, msg):
         self.counts["pose_in"] += 1
@@ -408,6 +427,46 @@ class LiveScanBridge(Node):
             self.counts["drop_odom_tf"] += 1
             self.last_odom_error = "odom_body_frame_tf_unavailable: %s" % exc
             return None
+
+    def _publish_live_body_pose(self):
+        """Publish current map<-body using a recent SLAM anchor and timestamped odometry."""
+        now_mono = time.monotonic()
+        if now_mono - self.last_live_body_pose_monotonic < self.body_pose_publish_period:
+            return
+        if not self.pose_samples or not self.odom_samples:
+            return
+        if not self._pose_rx_is_fresh() or not self._odom_rx_is_fresh():
+            return
+        stamp_ns = int(self.odom_samples[-1][0])
+        if stamp_ns <= self.last_live_body_pose_stamp_ns:
+            return
+        anchor = self._pose_anchor_at(stamp_ns)
+        if anchor is None:
+            return
+        odom_anchor = self._odom_body_pose_at(anchor[0])
+        if odom_anchor is None:
+            return
+        odom_current = self._odom_body_pose_at(stamp_ns)
+        if odom_current is None:
+            return
+        try:
+            map_body = motion_compensated_pose(
+                (anchor[1], anchor[2]), odom_anchor, odom_current)
+        except ValueError:
+            return
+        velocity, velocity_valid = estimate_velocity(
+            self.last_live_body, (map_body[0], stamp_ns / 1e9))
+        if not velocity_valid:
+            velocity = (0.0, 0.0, 0.0)
+        body_msg = self._odom(
+            Time(nanoseconds=stamp_ns).to_msg(), self.map_frame, self.body_frame,
+            map_body[0], map_body[1], velocity)
+        self.body_pose_pub.publish(body_msg)
+        self.last_live_body = (map_body[0], stamp_ns / 1e9)
+        self.last_live_body_pose_stamp_ns = stamp_ns
+        self.last_live_body_pose_monotonic = now_mono
+        self.last_live_body_velocity_valid = velocity_valid
+        self.counts["body_pose_live_out"] += 1
 
     def _pose_at(self, stamp_ns):
         if not self._pose_rx_is_fresh():
@@ -520,8 +579,7 @@ class LiveScanBridge(Node):
                 return
         self.last_cloud_input_stamp_ns = stamp_ns
         self.last_cloud_input_rx_monotonic = time.monotonic()
-        # A newer input invalidates readiness until that exact scan is processed.
-        self.motion_compensation_ready = False
+        # Keep the last completed scan eligible only while its age and lag stay bounded.
         if not self._status_is_fresh():
             self.counts["drop_status"] += 1
             return
@@ -627,7 +685,7 @@ class LiveScanBridge(Node):
 
             # All outputs retain the exact original LiDAR scan timestamp.
             self.sensor_pose_pub.publish(sensor_odom)
-            self.body_pose_pub.publish(body_odom)
+            self.scan_body_pose_pub.publish(body_odom)
             self.cloud_pub.publish(cloud_map)
             self.pending_clouds.popleft()
 
@@ -704,11 +762,28 @@ class LiveScanBridge(Node):
                 odom_scan_bracket_available = (
                     odom_scan_bracket_gap <= self.odom_interpolation_max_gap)
 
-        compensation_for_latest_scan = (
+        compensation_for_processed_scan = (
             self.last_motion_compensation
-            if self.last_motion_compensation.get("scan_stamp_ns") == self.last_cloud_input_stamp_ns
+            if self.last_motion_compensation.get("scan_stamp_ns") == self.last_processed_scan_stamp_ns
             else {})
-
+        live_body_pose_age = (
+            (now_ns - self.last_live_body_pose_stamp_ns) / 1e9
+            if self.last_live_body_pose_stamp_ns > 0 else None)
+        live_body_pose_rx_age = (
+            now_mono - self.last_live_body_pose_monotonic
+            if self.last_live_body_pose_monotonic > 0.0 else None)
+        live_body_pose_fresh = (
+            live_body_pose_age is not None and live_body_pose_rx_age is not None
+            and -0.2 <= live_body_pose_age <= self.max_live_body_pose_age
+            and 0.0 <= live_body_pose_rx_age <= self.max_live_body_pose_age * 1.5)
+        scan_output_current, latest_scan_lag_s = scan_output_is_fresh(
+            self.last_processed_scan_stamp_ns or None,
+            self.last_cloud_input_stamp_ns,
+            output_age,
+            cloud_input_age,
+            self.max_cloud_age,
+            self.max_latest_scan_lag,
+        )
         if pose_scan_skew is None:
             pose_scan_alignment = "unknown"
         elif pose_scan_skew > 0.05:
@@ -720,9 +795,9 @@ class LiveScanBridge(Node):
 
         ready = (
             status_fresh and pose_fresh and odom_fresh and cloud_fresh
+            and scan_output_current and live_body_pose_fresh
             and self.sensor_extrinsic_ready and self.motion_compensation_ready
-            and bool(compensation_for_latest_scan)
-            and self.last_processed_scan_stamp_ns == self.last_cloud_input_stamp_ns
+            and bool(compensation_for_processed_scan)
         )
         data = {
             "schema": "n01.live_scan_readiness.v6",
@@ -763,7 +838,10 @@ class LiveScanBridge(Node):
                 self.motion_compensation_ready and bool(compensation_for_latest_scan)),
             "motion_compensation_error": self.last_motion_compensation_error or self.last_pose_error,
             "motion_compensation_anchor_stamp_ns": compensation_for_latest_scan.get("anchor_stamp_ns"),
-            "motion_compensation_anchor_delta_s": compensation_for_latest_scan.get("anchor_delta_s"),
+            "motion_compensation_anchor_delta_s": compensation_for_processed_scan.get("anchor_delta_s"),
+            "latest_scan_lag_s": latest_scan_lag_s,
+            "latest_scan_within_lag": bool(scan_output_current),
+            "max_latest_scan_lag_s": self.max_latest_scan_lag,
             "cloud_input_stamp_ns": self.last_cloud_input_stamp_ns,
             "cloud_input_age_s": cloud_input_age,
             "cloud_input_receive_age_s": cloud_input_rx_age,
@@ -777,6 +855,11 @@ class LiveScanBridge(Node):
             "sensor_extrinsic_parent_frame": self.body_frame,
             "sensor_extrinsic_child_frame": self.cloud_frame,
             "sensor_extrinsic_ready": bool(self.sensor_extrinsic_ready),
+            "body_pose_live_fresh": bool(live_body_pose_fresh),
+            "body_pose_live_stamp_age_s": live_body_pose_age,
+            "body_pose_live_receive_age_s": live_body_pose_rx_age,
+            "body_pose_live_velocity_valid": bool(self.last_live_body_velocity_valid),
+            "body_pose_publish_period_s": self.body_pose_publish_period,
             "cloud_output_fresh": bool(cloud_fresh),
             "cloud_output_age_s": output_age,
             "cloud_output_stamp_ns": self.last_processed_scan_stamp_ns or None,
@@ -786,7 +869,7 @@ class LiveScanBridge(Node):
             "input_cloud_topic": self.cloud_topic,
             "input_cloud_frame": self.cloud_frame,
             "output_cloud_frame": self.map_frame,
-            "outputs": ["/cloud", "/sensor_pose", "/body_pose"],
+            "outputs": ["/cloud", "/sensor_pose", "/body_pose", "/n01/live_navigation/scan_body_pose"],
             "queue_policy": "latest_only_exact_scan_stamp",
             "pending_clouds": len(self.pending_clouds),
             "pending_cloud_limit": 1,

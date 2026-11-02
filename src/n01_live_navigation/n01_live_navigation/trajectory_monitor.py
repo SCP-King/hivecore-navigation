@@ -56,9 +56,11 @@ class Hive2TrajectoryMonitor(Node):
         self.pitch_tol = float(get("pitch_reference_tolerance_rad"))
         self.body_pose = None
         self.body_pose_rx = None
+        self.body_pose_stamp_ns = None
         self.joint_positions = {}
         self.joint_rx = None
         self.last_error = ""
+        self.last_bspline_rx = None
 
         self.path_pub = self.create_publisher(
             Path, "/n01/live_navigation/hive2_candidate_path", 10)
@@ -76,6 +78,8 @@ class Hive2TrajectoryMonitor(Node):
     def on_body_pose(self, msg):
         self.body_pose = msg
         self.body_pose_rx = time.monotonic()
+        self.body_pose_stamp_ns = (
+            int(msg.header.stamp.sec) * 1000000000 + int(msg.header.stamp.nanosec))
 
     def on_joint_states(self, msg):
         self.joint_positions = {
@@ -136,6 +140,7 @@ class Hive2TrajectoryMonitor(Node):
         self.wheel_marker_pub.publish(array)
 
     def on_bspline(self, msg):
+        self.last_bspline_rx = time.monotonic()
         try:
             # scan_planner_msgs/Bspline has no Header; its coordinate frame is
             # supplied by the live launch contract (map), not inferred from a field.
@@ -183,6 +188,23 @@ class Hive2TrajectoryMonitor(Node):
         self._publish_wheel_markers(path.header.stamp, screen)
 
         pitch_match = self._pitch_reference_match()
+        now_mono = time.monotonic()
+        now_ns = self.get_clock().now().nanoseconds
+        body_stamp_age = (
+            (now_ns - self.body_pose_stamp_ns) / 1e9
+            if self.body_pose_stamp_ns is not None else None)
+        body_rx_age = (
+            now_mono - self.body_pose_rx if self.body_pose_rx is not None else None)
+        joint_rx_age = (
+            now_mono - self.joint_rx if self.joint_rx is not None else None)
+        body_feedback_fresh = (
+            body_stamp_age is not None and body_rx_age is not None
+            and -0.2 <= body_stamp_age <= 0.35 and 0.0 <= body_rx_age <= 0.4)
+        joint_feedback_fresh = (
+            joint_rx_age is not None and 0.0 <= joint_rx_age <= 0.5)
+        candidate_review_ready = bool(
+            screen["necessary_conditions_pass"] and body_feedback_fresh
+            and joint_feedback_fresh and pitch_match is True)
         data = {
             "schema": "n01.hive2_candidate_feasibility.v1",
             "status": (
@@ -202,6 +224,16 @@ class Hive2TrajectoryMonitor(Node):
             **screen,
             "pitch_feedback_matches_home_reference": pitch_match,
             "pitch_reference_is_home_target_only": True,
+            "body_pose_feedback_fresh": bool(body_feedback_fresh),
+            "body_pose_stamp_age_s": body_stamp_age,
+            "body_pose_receive_age_s": body_rx_age,
+            "joint_feedback_fresh": bool(joint_feedback_fresh),
+            "joint_feedback_receive_age_s": joint_rx_age,
+            "candidate_review_ready": candidate_review_ready,
+            "candidate_review_status": (
+                "CANDIDATE_REVIEW_READY" if candidate_review_ready
+                else "WAITING_FOR_FRESH_BODY_JOINT_FEEDBACK_OR_PITCH_MATCH"
+            ),
             "pitch_hold_feedback_verified": False,
             "wheel_controller_mapping_verified": False,
             "wheel_contact_geometry_verified": False,

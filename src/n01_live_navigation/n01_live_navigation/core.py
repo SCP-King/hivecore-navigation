@@ -433,3 +433,85 @@ def goal_is_valid(goal, *, live_ready, static_ready):
     if float(p.z) < -0.1:
         return False, "goal_z_below_scan_ground_guard"
     return True, "accepted"
+
+
+def scan_output_is_fresh(last_processed_stamp_ns, latest_input_stamp_ns,
+                         output_age_s, input_age_s, max_cloud_age_s,
+                         max_scan_lag_s):
+    """Accept bounded scan-processing lag while rejecting stale data."""
+    if last_processed_stamp_ns is None or latest_input_stamp_ns is None:
+        return False, None
+    try:
+        processed = int(last_processed_stamp_ns)
+        latest = int(latest_input_stamp_ns)
+        output_age = float(output_age_s)
+        input_age = float(input_age_s)
+        max_age = float(max_cloud_age_s)
+        max_lag = float(max_scan_lag_s)
+    except (TypeError, ValueError, OverflowError):
+        return False, None
+    values = (output_age, input_age, max_age, max_lag)
+    if not all(math.isfinite(v) for v in values) or max_age <= 0.0 or max_lag <= 0.0:
+        return False, None
+    lag_s = (latest - processed) / 1e9
+    fresh = (
+        processed > 0 and latest >= processed
+        and -0.2 <= output_age <= max_age
+        and -0.2 <= input_age <= max_age
+        and 0.0 <= lag_s <= max_lag
+    )
+    return bool(fresh), float(lag_s)
+
+
+def evaluate_safety_gate(*, health_fresh, navigation_ready,
+                         feasibility_fresh, feasibility_status,
+                         candidate_review_ready, operator_hold,
+                         physical_checks):
+    """Report a review-only safety state; never authorize robot motion."""
+    blockers = []
+    if bool(operator_hold):
+        blockers.append("operator_hold_active")
+    if not bool(health_fresh):
+        blockers.append("system_health_missing_or_stale")
+    if not bool(navigation_ready):
+        blockers.append("navigation_not_ready")
+    if not bool(feasibility_fresh):
+        blockers.append("candidate_feasibility_missing_or_stale")
+    elif str(feasibility_status) != "NECESSARY_CONDITIONS_PASS":
+        blockers.append("candidate_kinematic_screen_not_passed")
+    if not bool(candidate_review_ready):
+        blockers.append("candidate_review_feedback_incomplete")
+    required = (
+        "emergency_stop_chain_verified",
+        "communication_loss_stop_verified",
+        "localization_loss_stop_verified",
+        "dynamic_obstacle_stop_verified",
+        "manual_takeover_verified",
+        "wheel_controller_mapping_verified",
+        "wheel_contact_geometry_verified",
+        "collision_envelope_verified",
+        "braking_distance_verified",
+    )
+    checks = physical_checks if isinstance(physical_checks, dict) else {}
+    missing = [name for name in required if checks.get(name) is not True]
+    blockers.extend("physical_acceptance_missing:" + name for name in missing)
+    if bool(operator_hold):
+        status = "OPERATOR_HOLD"
+    elif not bool(health_fresh) or not bool(navigation_ready):
+        status = "NAVIGATION_BLOCKED"
+    elif not bool(feasibility_fresh) or str(feasibility_status) != "NECESSARY_CONDITIONS_PASS":
+        status = "CANDIDATE_NOT_READY"
+    elif not bool(candidate_review_ready):
+        status = "CANDIDATE_REVIEW_INCOMPLETE"
+    elif missing:
+        status = "PHYSICAL_ACCEPTANCE_INCOMPLETE"
+    else:
+        status = "REVIEW_ONLY_NOT_AUTHORIZED"
+    return {
+        "status": status,
+        "blockers": blockers,
+        "physical_acceptance_missing": missing,
+        "execution_authorized": False,
+        "actuator_output": "DISABLED",
+        "safety_authorization": "NEVER",
+    }
