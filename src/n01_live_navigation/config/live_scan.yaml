@@ -1,0 +1,17 @@
+# Live vendor SLAM -> SCAN adapter defaults.
+# The launch file owns the full SCAN geometry and requires an explicit PCD
+# map-frame assertion. use_sim_time must remain false for live sensors.
+n01_live_scan_bridge:
+  ros__parameters:
+    use_sim_time: false
+    status_topic: /localization_status
+    status_type: hivecore_slam3d/msg/LocalizationStatus
+    cloud_topic: /livox/lidar/geo_filtered
+    expected_cloud_frame: lidar_link
+    map_frame: map
+    body_frame: base_link
+    max_status_age_s: 1.0
+    max_cloud_age_s: 0.6
+    tf_timeout_s: 0.08
+    max_points: 100000
+    max_point_range_m: 12.0
