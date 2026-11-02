@@ -21,6 +21,7 @@ import numpy as np
 import rclpy
 from rcl_interfaces.msg import SetParametersResult
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from sensor_msgs.msg import PointCloud2, PointField
 from std_msgs.msg import Header
 
@@ -82,17 +83,22 @@ class StaticMapNode(Node):
         # ---- parameters ----
         self.declare_parameter("pcd_path", "")
         self.declare_parameter("resolution", 0.05)      # m/体素
-        self.declare_parameter("publish_rate", 2.0)     # Hz
+        self.declare_parameter("publish_rate", 2.0)     # legacy compatibility; one-shot retained map
         self.declare_parameter("frame_id", "map")
         self.declare_parameter("min_z", -1.5)           # 参与代表的 z 下限(世界系)
         self.declare_parameter("max_z", 3.0)            # 上限
-        self.declare_parameter("seed", 0)               # 随机取样种子(确定性可复现)
+        self.declare_parameter("seed", 0)               # legacy compatibility; 3D voxelization is deterministic
 
         self._pcd_path = ""
         self._apply_params()
         self.add_on_set_parameters_callback(self._on_param_change)
 
-        self.pub = self.create_publisher(PointCloud2, PUBLISH_TOPIC, 10)
+        static_qos = QoSProfile(
+            depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        self.pub = self.create_publisher(PointCloud2, PUBLISH_TOPIC, static_qos)
 
         if not self._pcd_path:
             self.get_logger().warning(
@@ -100,7 +106,9 @@ class StaticMapNode(Node):
                 "仅用于检查静态地图供给链。请配置 pcd_path=<绝对路径>。")
             return
         self.load_and_publish()
-        self._timer = self.create_timer(1.0 / self._publish_rate, self._publish)
+        # The PCD is immutable. Publish once with TRANSIENT_LOCAL durability;
+        # late-joining SCAN, tracker and RViz subscribers receive the retained map.
+        self._publish()
 
     def _apply_params(self):
         path = self.get_parameter("pcd_path").value
