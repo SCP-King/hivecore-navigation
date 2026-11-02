@@ -4,7 +4,7 @@
 
 - 上游与版本：[`hku-mars/FAST_LIO` ROS2 branch](https://github.com/hku-mars/FAST_LIO/tree/ROS2)，commit `cc3c9e8b1469b33b8072764d6db2348ed6dc597f)，ikd-Tree 子模块固定提交见 [集成说明](docs/n01_fast_lio2_integration.md)。
 - 导入/构建：`bash scripts/build_n01_fast_lio2.sh`；若 Livox ROS Driver2 位于已有 overlay，设置 `LIVOX_SETUP=/path/to/install/setup.bash`。
-- 运行前先用 `python3 scripts/n01_fast_lio_bag_preflight.py --bag /home/demo/lyy/slam_data/bags/bag_20261027_225100` 检查原始 Livox CustomMsg 与 IMU 类型。
+- 运行前先用 `python3 scripts/n01_fast_lio_bag_preflight.py --bag /home/demo/lyy/slam_data/bags/bag_20261027_225100` 检查原始 Livox CustomMsg 与 IMU 类型。 一键隔离回放并保存 PCD：`bash scripts/run_n01_fast_lio2_bag.sh /home/demo/lyy/slam_data/bags/bag_20261027_225100`。
 - 启动：`ros2 launch n01_fast_lio fast_lio_mapping.launch.py`。地图保存服务：`/n01/fast_lio/map_save`。
 
 **边界**：当前接入 FAST-LIO2 mapping/LIO odometry，不等于已有地图定位、重定位或回环闭合；其私有 map 不会自动与甲方旧 PCD/map 对齐，也没有接入 G4/SCAN 作为在线定位源。上游 LICENSE 为 GPL-2.0（其 package.xml 标注 BSD 与 LICENSE 冲突），商业分发前需解决许可问题。详见 [N-01 FAST-LIO2 集成设计与操作](docs/n01_fast_lio2_integration.md)。
