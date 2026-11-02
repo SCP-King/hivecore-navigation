@@ -27,10 +27,26 @@ if ! command -v colcon >/dev/null 2>&1; then
   echo "[N01-FAST-LIO2] colcon is missing; install ROS 2 build tools first." >&2
   exit 2
 fi
+# Some Hive2 deployments expose Livox through the motion-stack install
+# prefix. Prefer its local_setup.bash: setup.bash may chain a build-time
+# underlay that no longer exists (for example an old FROZEN workspace).
 if ! ros2 pkg prefix livox_ros_driver2 >/dev/null 2>&1; then
-  echo "[N01-FAST-LIO2] livox_ros_driver2 is not in the current ROS environment." >&2
-  echo "Source the already-installed Livox ROS Driver2 overlay, or set:" >&2
-  echo "  LIVOX_SETUP=/path/to/livox_workspace/install/setup.bash" >&2
+  HIVE2_LIVOX_LOCAL_SETUP="${HIVE2_LIVOX_LOCAL_SETUP:-/opt/hivecore/hive2-motion/1.0.0/install/local_setup.bash}"
+  if [[ -f "$HIVE2_LIVOX_LOCAL_SETUP" ]]; then
+    echo "[N01-FAST-LIO2] Livox not visible yet; sourcing existing Hive2 overlay:"
+    echo "  $HIVE2_LIVOX_LOCAL_SETUP"
+    source "$HIVE2_LIVOX_LOCAL_SETUP"
+  fi
+fi
+
+if ! ros2 pkg prefix livox_ros_driver2 >/dev/null 2>&1; then
+  echo "[N01-FAST-LIO2] livox_ros_driver2 is installed but not discoverable in this build process." >&2
+  echo "  ROS_DISTRO=${ROS_DISTRO:-unset}" >&2
+  echo "  ros2=$(command -v ros2 || echo missing)" >&2
+  echo "  AMENT_PREFIX_PATH=${AMENT_PREFIX_PATH:-unset}" >&2
+  echo "If needed, run with the existing Hive2 local overlay:" >&2
+  echo "  LIVOX_SETUP=/opt/hivecore/hive2-motion/1.0.0/install/local_setup.bash \\" >&2
+  echo "    bash scripts/build_n01_fast_lio2.sh" >&2
   echo "No second Livox driver will be cloned or installed by this script." >&2
   exit 2
 fi
