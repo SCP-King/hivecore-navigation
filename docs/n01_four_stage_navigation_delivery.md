@@ -8,7 +8,7 @@
 
 - `/cloud` 与 `/sensor_pose` 仍使用原始 Livox 扫描时间戳，供 native SCAN 的 ExactTime 同步器使用。
 - `/n01/live_navigation/scan_body_pose` 保留每帧扫描时刻的机体位姿。
-- `/body_pose` 改为高频当前机体位姿：以新鲜的 `/robot_pose` 全局锚点为基准，使用 `/odom` 中锚点时刻与当前时刻的时间戳插值结果传播；目标发布周期 50 ms。若 SLAM 锚点、里程计插值或机体外参不满足时间约束，则停止发布，不使用 latest TF 或伪造位姿。
+- `/body_pose` 改为高频当前机体位姿：以新鲜的 `/robot_pose` 全局锚点为基准，使用 `/odom` 中锚点时刻与当前时刻的时间戳插值结果传播；目标发布周期 50 ms。当前位姿传播的 SLAM 锚点年龄单独限制为 0.7 s（且不得大于 `/robot_pose` 最大时间戳年龄），扫描时刻补偿仍严格使用 0.5 s；两者不可混用。若锚点、里程计插值或机体外参不满足对应时间约束，则停止发布，不使用 latest TF 或伪造位姿。
 - 最新输入扫描与最近完成输出之间允许最多 450 ms 的有界处理滞后；输出和输入各自仍必须满足 600 ms 最大年龄。超过任一门限时 readiness 关闭。
 - `navigation_ready` 仅表示可以向原生规划器提交目标，不表示可以驱动底盘。
 
@@ -65,6 +65,9 @@ ros2 launch n01_live_navigation live_scan.launch.py \
 
 ```bash
 ros2 run n01_live_navigation n01_navigation_acceptance
+
+# 只读采集 10 秒：话题频率、时间戳年龄、ExactTime 配对、TF 发布者和四阶段状态
+python3 scripts/n01_live_stack_preflight.py --duration 10
 ```
 
 安全监视器的软件保持默认开启。若只需在静态规划测试中解除软件保持，可发送：
@@ -77,7 +80,7 @@ ros2 topic pub --once /n01/live_navigation/operator_hold std_msgs/msg/Bool "{dat
 
 ## 调试顺序
 
-1. A 阶段：确认桥接状态 `LIVE_SCAN_INPUTS_READY`、`navigation_ready=true`、`/body_pose` 稳定接近 20 Hz，且 scan lag 不超过 450 ms。
+1. A 阶段：确认桥接状态 `LIVE_SCAN_INPUTS_READY`、`navigation_ready=true`、`/body_pose` 稳定接近 20 Hz，且 scan lag 不超过 450 ms；同时核对 `body_pose_live_anchor_delta_s` 不超过 700 ms，扫描时刻 `motion_compensation_anchor_delta_s` 不超过 500 ms。
 2. B 阶段：确认静态地图 READY、实时 `/cloud` 连续进入 SCAN、RViz 中 occupancy/inflation 与动态候选可视化正确；再发送短距离、位于已知空旷区域的 map-frame 目标。
 3. C 阶段：检查 B-spline、候选 Path、四轮转向向量、joint feedback 和 pitch reference；不把 necessary-condition pass 当作可执行许可。
 4. D 阶段：逐项进行物理安全测试并留存证据。任何急停/失联/定位丢失/障碍物测试都应在机器人被机械支撑、驱动禁止或受控测试场地内执行，按现场安全规程进行。
