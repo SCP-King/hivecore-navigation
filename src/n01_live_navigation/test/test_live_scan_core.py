@@ -2,10 +2,10 @@ import math
 import unittest
 from types import SimpleNamespace
 
-from n01_live_navigation.goal_gate import goal_is_valid
-from geometry_msgs.msg import PoseStamped
+from types import SimpleNamespace
 
 from n01_live_navigation.core import (
+    goal_is_valid,
     estimate_velocity, localization_is_tracking, rotate_translate,
 )
 
@@ -50,11 +50,9 @@ class LiveScanCoreTests(unittest.TestCase):
             rotate_translate((0, 0, 0), (0, 0, 0), (0, 0, 0, 0))
 
     def test_goal_gate_requires_live_and_static_readiness(self):
-        goal = PoseStamped()
-        goal.header.frame_id = "map"
-        goal.pose.position.x = 1.0
-        goal.pose.position.y = 2.0
-        goal.pose.position.z = 0.0
+        goal = SimpleNamespace(
+            header=SimpleNamespace(frame_id="map"),
+            pose=SimpleNamespace(position=SimpleNamespace(x=1.0, y=2.0, z=0.0)))
         self.assertEqual(goal_is_valid(goal, live_ready=False, static_ready=True),
                          (False, "live_localization_or_cloud_not_ready"))
         self.assertEqual(goal_is_valid(goal, live_ready=True, static_ready=False),
