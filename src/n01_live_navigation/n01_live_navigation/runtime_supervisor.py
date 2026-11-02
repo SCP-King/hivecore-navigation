@@ -122,6 +122,8 @@ class LiveRuntimeSupervisor(Node):
         bridge_ready = (
             self.bridge.get("status") == "LIVE_SCAN_INPUTS_READY"
             and self.bridge.get("localization_status_fresh") is True
+            and self.bridge.get("robot_pose_receive_fresh") is True
+            and self.bridge.get("sensor_extrinsic_ready") is True
             and self.bridge.get("cloud_output_fresh") is True
         )
         body_fresh = (
@@ -137,9 +139,10 @@ class LiveRuntimeSupervisor(Node):
             blockers.append("static_pcd_overlay_not_ready_in_current_window")
         if not body_fresh:
             blockers.append("body_pose_missing_or_stale")
-        if not tf_seen:
-            blockers.append("map_to_base_footprint_tf_not_observed")
-
+        # A direct map->base_footprint TF edge is optional: the vendor's
+        # /robot_pose Odometry is the global pose source. The bridge only marks
+        # itself ready after exact-stamp pose interpolation and body<-LiDAR
+        # extrinsic lookup both succeed.
         navigation_ready = not blockers
         health = {
             "schema": "n01.live_system_health.v1",
@@ -150,8 +153,14 @@ class LiveRuntimeSupervisor(Node):
             "static_overlay_ready": bool(self.static_ready),
             "body_pose_stamp_age_s": body_stamp_age,
             "body_pose_receive_age_s": body_rx_age,
+            "map_base_tf_observed": bool(tf_seen),
             "map_base_tf_stamp_age_s": tf_age,
             "map_base_tf_rate_hz": tf_rate,
+            "global_pose_source": self.bridge.get("robot_pose_topic"),
+            "global_pose_interpolation_ready": (
+                self.bridge.get("robot_pose_receive_fresh") is True),
+            "sensor_extrinsic_ready": (
+                self.bridge.get("sensor_extrinsic_ready") is True),
             "vendor_processing_timings_raw_xyz": self.timings,
             "vendor_processing_timings_age_s": timings_age,
             "vendor_processing_timings_semantics": (
