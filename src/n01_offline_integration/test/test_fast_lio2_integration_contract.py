@@ -54,6 +54,14 @@ class FastLio2IntegrationContract(unittest.TestCase):
         self.assertIn("common.map_frame_id", patcher)
         self.assertIn("common.imu_frame_id", patcher)
 
+    def test_build_reuses_hive2_livox_overlay_without_stale_setup_chain(self):
+        build = self.read("scripts/build_n01_fast_lio2.sh")
+        self.assertIn("/opt/hivecore/hive2-motion/1.0.0/install/local_setup.bash", build)
+        self.assertIn("HIVE2_LIVOX_LOCAL_SETUP", build)
+        self.assertIn("AMENT_PREFIX_PATH", build)
+        self.assertNotIn("apt install", build)
+        self.assertNotIn("livox_ros_driver2.git", build)
+
     def test_vendor_slam_contract_is_retained(self):
         bridge = self.read("src/n01_offline_integration/config/offline_bridge.yaml")
         sensor = self.read("src/n01_bringup/config/n01_sensor.yaml")
