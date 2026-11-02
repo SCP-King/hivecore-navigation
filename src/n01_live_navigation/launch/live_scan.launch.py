@@ -9,6 +9,7 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
+from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -29,6 +30,7 @@ def _nodes(context):
 
     planner_config = os.path.join(
         get_package_share_directory("scan_planner"), "config", "planner.yaml")
+    rviz_config = LaunchConfiguration("rviz_config").perform(context)
     return [
         Node(
             package="n01_static_map", executable="static_map_node",
@@ -56,8 +58,53 @@ def _nodes(context):
             output="screen",
         ),
         Node(
+            package="n01_live_navigation", executable="n01_live_runtime_supervisor",
+            name="n01_live_runtime_supervisor",
+            parameters=[{
+                "max_body_pose_age_s": 0.6,
+                "max_body_pose_rx_age_s": 0.8,
+            }],
+            output="screen",
+        ),
+        Node(
+            package="n01_live_navigation", executable="n01_live_dynamic_obstacle_tracker",
+            name="n01_live_dynamic_obstacle_tracker",
+            parameters=[{
+                "cloud_topic": "/cloud",
+                "static_topic": "/grid_map/static_occupancy",
+                "map_frame": "map",
+                "ground_z_map_m": ground_z,
+                "body_height_m": body_height,
+                "voxel_size_m": 0.30,
+                "cluster_cell_m": 0.35,
+                "min_cluster_points": 6,
+                "max_points": 100000,
+            }],
+            output="screen",
+        ),
+        Node(
+            package="n01_live_navigation", executable="n01_hive2_trajectory_monitor",
+            name="n01_hive2_trajectory_monitor",
+            parameters=[{
+                "map_frame": "map",
+                "max_speed_mps": 0.25,
+                "max_accel_mps2": 0.25,
+                "wheel_base_x_m": 0.56,
+                "track_y_m": 0.27,
+                "wheel_radius_m": 0.095,
+                "steering_limit_rad": 1.5708,
+            }],
+            output="screen",
+        ),
+        Node(
             package="n01_live_navigation", executable="n01_live_goal_gate",
             name="n01_live_scan_goal_gate", output="screen",
+        ),
+        Node(
+            package="rviz2", executable="rviz2", name="n01_live_navigation_rviz",
+            condition=IfCondition(LaunchConfiguration("rviz")),
+            arguments=["-d", rviz_config],
+            output="screen",
         ),
         Node(
             package="scan_planner", executable="scan_planner_node",
@@ -130,5 +177,11 @@ def generate_launch_description():
         DeclareLaunchArgument("pcd_map_frame_asserted", default_value="false"),
         DeclareLaunchArgument("ground_z_map_m", default_value="-0.55"),
         DeclareLaunchArgument("body_height_m", default_value="0.90"),
+        DeclareLaunchArgument("rviz", default_value="false"),
+        DeclareLaunchArgument(
+            "rviz_config",
+            default_value=os.path.join(
+                get_package_share_directory("n01_live_navigation"),
+                "rviz", "n01_live_navigation.rviz")),
         OpaqueFunction(function=_nodes),
     ])
