@@ -1,0 +1,5 @@
+repositories:
+  src/third_party/FAST_LIO:
+    type: git
+    url: https://github.com/hku-mars/FAST_LIO.git
+    version: cc3c9e8b1469b33b8072764d6db2348ed6dc597f
