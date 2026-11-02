@@ -55,6 +55,10 @@ def _nodes(context):
             output="screen",
         ),
         Node(
+            package="n01_live_navigation", executable="n01_live_goal_gate",
+            name="n01_live_scan_goal_gate", output="screen",
+        ),
+        Node(
             package="scan_planner", executable="scan_planner_node",
             name="scan_planner_node",
             parameters=[planner_config, {
@@ -113,6 +117,7 @@ def _nodes(context):
                 "optimization.max_acc": 0.25,
                 "optimization.order": 3,
             }],
+            remappings=[("move_base_simple/goal", "/n01/live_navigation/goal_gated")],
             output="screen",
         ),
     ]
