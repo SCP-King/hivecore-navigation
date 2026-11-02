@@ -28,7 +28,7 @@ The TF retry queue is bounded:
 - queue capacity: 8 scans
 - maximum cloud age: 600 ms
 - maximum completed-scan lag behind newest input: 450 ms
-- current `/body_pose` publication target: 20 Hz, using a recent SLAM anchor and timestamp-bracketed odometry; no latest-TF substitution
+- current `/body_pose` publication target: 20 Hz, using a recent SLAM anchor and timestamp-bracketed odometry; its independent anchor-age bound is 0.7 s and cannot exceed the `/robot_pose` stamp-age limit. Scan-time compensation retains the stricter 0.5 s anchor bound; no latest-TF substitution
 - pose extrapolation / latest-pose substitution: prohibited
 - latest TF substitution: prohibited
 - timestamp rewriting: prohibited
@@ -105,6 +105,7 @@ ros2 launch n01_live_navigation live_scan.launch.py \
 - `/n01/live_navigation/scan_body_pose` — exact scan-time body pose for diagnostics.
 - `/n01/live_navigation/safety_status` — fail-closed review state; never an actuator authorization.
 - `ros2 run n01_live_navigation n01_navigation_acceptance` — one-shot read-only A-D topic snapshot.
+- `python3 scripts/n01_live_stack_preflight.py --duration 10` — read-only 10-second topic-rate, timestamp-age, exact cloud/pose pairing, TF publisher and stage-health audit.
 - `/mapping_processing_timings` — raw vendor Vector3Stamped, captured by the supervisor; after the full launch, its subscription count should include `n01_live_runtime_supervisor`.
 - `/robot_pose` — vendor map-frame Odometry used for exact-scan-time pose interpolation.
 
