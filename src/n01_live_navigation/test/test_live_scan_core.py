@@ -22,6 +22,7 @@ from n01_live_navigation.core import (
     stamped_data_is_fresh,
     trajectory_window_is_active,
     select_pose_anchor,
+    pose_samples_equivalent,
 )
 
 
@@ -145,6 +146,26 @@ class LiveScanCoreTests(unittest.TestCase):
         self.assertIsNone(interpolate_pose(samples, 500_000_000, max_gap_s=0.5))
         self.assertIsNone(interpolate_pose(samples, 3_500_000_000, max_gap_s=0.5))
         self.assertIsNone(interpolate_pose(samples, 2_000_000_000, max_gap_s=0.5))
+
+    def test_stale_global_anchor_is_usable_only_with_explicit_odom_budget(self):
+        samples = [
+            (1_000_000_000, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)),
+        ]
+        self.assertEqual(
+            select_pose_anchor(samples, 2_100_000_000, 1.25)[0],
+            1_000_000_000,
+        )
+        self.assertIsNone(select_pose_anchor(samples, 2_300_000_000, 1.25))
+
+    def test_duplicate_pose_samples_treat_quaternion_sign_as_equivalent(self):
+        existing = (1_000_000_000, (1.0, 2.0, 3.0), (0.0, 0.0, 0.0, 1.0))
+        self.assertTrue(pose_samples_equivalent(
+            existing, (1.01, 2.0, 3.0), (0.0, 0.0, 0.0, -1.0)))
+        self.assertFalse(pose_samples_equivalent(
+            existing, (1.1, 2.0, 3.0), (0.0, 0.0, 0.0, 1.0)))
+        yaw = math.sin(0.1 / 2.0)
+        self.assertFalse(pose_samples_equivalent(
+            existing, (1.0, 2.0, 3.0), (0.0, 0.0, yaw, math.cos(0.1 / 2.0))))
 
     def test_live_body_pose_uses_separate_anchor_bound_from_scan_compensation(self):
         samples = [
