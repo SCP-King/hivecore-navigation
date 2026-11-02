@@ -34,6 +34,7 @@ from .core import (
     interpolate_pose,
     motion_compensated_pose,
     scan_output_is_fresh,
+    select_pose_anchor,
 )
 
 
@@ -55,6 +56,7 @@ class LiveScanBridge(Node):
             "max_pose_rx_age_s": 0.7,
             "max_pose_stamp_age_s": 0.7,
             "max_pose_anchor_delta_s": 0.5,
+            "max_live_body_pose_anchor_delta_s": 0.7,
             "pose_cache_size": 64,
             "max_odom_rx_age_s": 0.2,
             "max_odom_stamp_age_s": 0.4,
@@ -86,6 +88,7 @@ class LiveScanBridge(Node):
         self.max_pose_rx_age = float(get("max_pose_rx_age_s"))
         self.max_pose_stamp_age = float(get("max_pose_stamp_age_s"))
         self.max_pose_anchor_delta = float(get("max_pose_anchor_delta_s"))
+        self.max_live_body_pose_anchor_delta = float(get("max_live_body_pose_anchor_delta_s"))
         self.pose_cache_size = int(get("pose_cache_size"))
         self.max_odom_rx_age = float(get("max_odom_rx_age_s"))
         self.max_odom_stamp_age = float(get("max_odom_stamp_age_s"))
@@ -105,6 +108,7 @@ class LiveScanBridge(Node):
             and 0.1 <= self.max_pose_rx_age <= 2.0
             and 0.1 <= self.max_pose_stamp_age <= 2.0
             and 0.1 <= self.max_pose_anchor_delta <= 1.0
+            and 0.1 <= self.max_live_body_pose_anchor_delta <= self.max_pose_stamp_age
             and 2 <= self.pose_cache_size <= 256
             and 0.05 <= self.max_odom_rx_age <= 1.0
             and 0.1 <= self.max_odom_stamp_age <= 2.0
@@ -146,6 +150,9 @@ class LiveScanBridge(Node):
         self.last_live_body = None
         self.last_live_body_pose_stamp_ns = 0
         self.last_live_body_pose_monotonic = 0.0
+        self.last_live_body_pose_anchor_stamp_ns = None
+        self.last_live_body_pose_anchor_delta_s = None
+        self.last_live_body_pose_error = "waiting_global_anchor"
         self.last_live_body_velocity_valid = False
 
         # High-rate local odometry cache; poses are odom<-base_link.
@@ -372,24 +379,10 @@ class LiveScanBridge(Node):
         q = transform.transform.rotation
         return (t.x, t.y, t.z), (q.x, q.y, q.z, q.w)
 
-    def _pose_anchor_at(self, stamp_ns):
-        if not self.pose_samples:
-            return None
-        stamps = [sample[0] for sample in self.pose_samples]
-        index = bisect_left(stamps, int(stamp_ns))
-        if index < len(self.pose_samples) and stamps[index] == int(stamp_ns):
-            return self.pose_samples[index]
-        # Use the newest causal SLAM anchor when it is close enough. Only use
-        # a future anchor when no acceptable preceding anchor exists.
-        if index > 0:
-            previous = self.pose_samples[index - 1]
-            if (int(stamp_ns) - previous[0]) / 1e9 <= self.max_pose_anchor_delta:
-                return previous
-        if index < len(self.pose_samples):
-            following = self.pose_samples[index]
-            if (following[0] - int(stamp_ns)) / 1e9 <= self.max_pose_anchor_delta:
-                return following
-        return None
+    def _pose_anchor_at(self, stamp_ns, max_delta_s=None):
+        if max_delta_s is None:
+            max_delta_s = self.max_pose_anchor_delta
+        return select_pose_anchor(self.pose_samples, stamp_ns, max_delta_s)
 
     def _odom_at(self, stamp_ns):
         if not self._odom_rx_is_fresh():
@@ -429,30 +422,43 @@ class LiveScanBridge(Node):
             return None
 
     def _publish_live_body_pose(self):
-        """Publish current map<-body using a recent SLAM anchor and timestamped odometry."""
+        """Publish current map<-body from a bounded SLAM anchor and timestamped odometry."""
         now_mono = time.monotonic()
         if now_mono - self.last_live_body_pose_monotonic < self.body_pose_publish_period:
             return
         if not self.pose_samples or not self.odom_samples:
+            self.last_live_body_pose_error = "waiting_robot_pose_or_odom_samples"
             return
-        if not self._pose_rx_is_fresh() or not self._odom_rx_is_fresh():
+        if not self._pose_rx_is_fresh():
+            self.last_live_body_pose_error = "robot_pose_receive_or_stamp_stale"
+            return
+        if not self._odom_rx_is_fresh():
+            self.last_live_body_pose_error = "odom_receive_or_stamp_stale"
             return
         stamp_ns = int(self.odom_samples[-1][0])
         if stamp_ns <= self.last_live_body_pose_stamp_ns:
             return
-        anchor = self._pose_anchor_at(stamp_ns)
+        # This tolerance is intentionally separate from the stricter scan-time
+        # anchor bound. Current body pose is propagated with timestamped odometry;
+        # scan-time cloud compensation continues to use max_pose_anchor_delta_s.
+        anchor = self._pose_anchor_at(
+            stamp_ns, self.max_live_body_pose_anchor_delta)
         if anchor is None:
+            self.last_live_body_pose_error = "robot_pose_anchor_outside_live_body_delta"
             return
         odom_anchor = self._odom_body_pose_at(anchor[0])
         if odom_anchor is None:
+            self.last_live_body_pose_error = self.last_odom_error or "odom_anchor_unavailable"
             return
         odom_current = self._odom_body_pose_at(stamp_ns)
         if odom_current is None:
+            self.last_live_body_pose_error = self.last_odom_error or "odom_current_unavailable"
             return
         try:
             map_body = motion_compensated_pose(
                 (anchor[1], anchor[2]), odom_anchor, odom_current)
-        except ValueError:
+        except ValueError as exc:
+            self.last_live_body_pose_error = "motion_compensation_invalid: %s" % exc
             return
         velocity, velocity_valid = estimate_velocity(
             self.last_live_body, (map_body[0], stamp_ns / 1e9))
@@ -465,6 +471,9 @@ class LiveScanBridge(Node):
         self.last_live_body = (map_body[0], stamp_ns / 1e9)
         self.last_live_body_pose_stamp_ns = stamp_ns
         self.last_live_body_pose_monotonic = now_mono
+        self.last_live_body_pose_anchor_stamp_ns = int(anchor[0])
+        self.last_live_body_pose_anchor_delta_s = abs(stamp_ns - int(anchor[0])) / 1e9
+        self.last_live_body_pose_error = ""
         self.last_live_body_velocity_valid = velocity_valid
         self.counts["body_pose_live_out"] += 1
 
@@ -772,10 +781,14 @@ class LiveScanBridge(Node):
         live_body_pose_rx_age = (
             now_mono - self.last_live_body_pose_monotonic
             if self.last_live_body_pose_monotonic > 0.0 else None)
+        live_body_anchor_fresh = (
+            self.last_live_body_pose_anchor_delta_s is not None
+            and self.last_live_body_pose_anchor_delta_s <= self.max_live_body_pose_anchor_delta)
         live_body_pose_fresh = (
             live_body_pose_age is not None and live_body_pose_rx_age is not None
             and -0.2 <= live_body_pose_age <= self.max_live_body_pose_age
-            and 0.0 <= live_body_pose_rx_age <= self.max_live_body_pose_age * 1.5)
+            and 0.0 <= live_body_pose_rx_age <= self.max_live_body_pose_age * 1.5
+            and live_body_anchor_fresh)
         scan_output_current, latest_scan_lag_s = scan_output_is_fresh(
             self.last_processed_scan_stamp_ns or None,
             self.last_cloud_input_stamp_ns,
@@ -817,6 +830,7 @@ class LiveScanBridge(Node):
             "robot_pose_last_stamp_ns": self.last_pose_stamp_ns,
             "robot_pose_max_stamp_age_s": self.max_pose_stamp_age,
             "robot_pose_anchor_max_delta_s": self.max_pose_anchor_delta,
+            "robot_pose_live_anchor_max_delta_s": self.max_live_body_pose_anchor_delta,
             "robot_pose_last_error": self.last_pose_error,
             "odom_topic": self.odom_topic,
             "odom_contract": self.odom_contract_error or "%s<- %s" % (self.odom_frame, self.odom_child_frame),
@@ -859,6 +873,11 @@ class LiveScanBridge(Node):
             "body_pose_live_stamp_age_s": live_body_pose_age,
             "body_pose_live_receive_age_s": live_body_pose_rx_age,
             "body_pose_live_velocity_valid": bool(self.last_live_body_velocity_valid),
+            "body_pose_live_anchor_stamp_ns": self.last_live_body_pose_anchor_stamp_ns,
+            "body_pose_live_anchor_delta_s": self.last_live_body_pose_anchor_delta_s,
+            "body_pose_live_anchor_fresh": bool(live_body_anchor_fresh),
+            "body_pose_live_anchor_max_delta_s": self.max_live_body_pose_anchor_delta,
+            "body_pose_live_error": self.last_live_body_pose_error,
             "body_pose_publish_period_s": self.body_pose_publish_period,
             "cloud_output_fresh": bool(cloud_fresh),
             "cloud_output_age_s": output_age,
