@@ -1,9 +1,10 @@
-"""Pure helpers for the read-only live Hive2 -> SCAN adapter."""
+"""Pure, testable geometry and data contracts for the N-01 live stack."""
 import math
+import numpy as np
 
 
 def localization_is_tracking(msg):
-    """Check the real Hivecore LocalizationStatus contract, not node-name heuristics."""
+    """Validate the vendor LocalizationStatus wire contract."""
     required = (
         "config_context_map_loaded",
         "control_signal_outer_role",
@@ -29,8 +30,8 @@ def localization_is_tracking(msg):
         return False, "localization_fitness_not_accepted"
     if not bool(msg.registration_output_tracking_compose_ok):
         return False, "localization_tracking_compose_not_ok"
-    # IMU sync is reported independently. It is deliberately not a hard gate:
-    # the vendor currently publishes tracking poses with this flag false.
+    # Vendor IMU synchronization remains an independent diagnostic, not silently
+    # converted into a successful synchronization flag.
     return True, "tracking_ready"
 
 
@@ -43,7 +44,6 @@ def rotate_translate(point, translation, quaternion):
     if not math.isfinite(qn) or qn < 1e-9:
         raise ValueError("invalid_transform_quaternion")
     qx, qy, qz, qw = qx/qn, qy/qn, qz/qn, qw/qn
-    # q * p * conjugate(q), expanded to avoid temporary quaternion objects.
     ix = qw*x + qy*z - qz*y
     iy = qw*y + qz*x - qx*z
     iz = qw*z + qx*y - qy*x
@@ -57,8 +57,96 @@ def rotate_translate(point, translation, quaternion):
     return out
 
 
+def decode_pointcloud_xyz(msg, max_points=100000, max_range_m=None):
+    """Decode x/y/z FLOAT32 or FLOAT64 fields, honoring offsets, endian and row padding."""
+    width, height = int(msg.width), int(msg.height)
+    point_step, row_step = int(msg.point_step), int(msg.row_step)
+    total = width * height
+    if width <= 0 or height <= 0 or point_step <= 0 or total <= 0:
+        raise ValueError("cloud_empty_or_invalid_dimensions")
+    if total > int(max_points):
+        raise ValueError("cloud_point_count_out_of_bounds")
+    if row_step < width * point_step:
+        raise ValueError("cloud_row_step_invalid")
+    data = memoryview(msg.data)
+    if len(data) < row_step * height:
+        raise ValueError("cloud_data_layout_invalid")
+
+    fields = {str(f.name): f for f in msg.fields}
+    names, formats, offsets = [], [], []
+    endian = ">" if bool(msg.is_bigendian) else "<"
+    for name in ("x", "y", "z"):
+        if name not in fields:
+            raise ValueError("cloud_missing_xyz")
+        field = fields[name]
+        datatype = int(field.datatype)
+        if int(field.count) != 1 or datatype not in (7, 8):
+            raise ValueError("cloud_xyz_must_be_float")
+        size = 4 if datatype == 7 else 8
+        offset = int(field.offset)
+        if offset < 0 or offset + size > point_step:
+            raise ValueError("cloud_xyz_offset_out_of_record")
+        names.append(name)
+        formats.append(np.dtype(endian + ("f4" if size == 4 else "f8")))
+        offsets.append(offset)
+
+    dtype = np.dtype({
+        "names": names,
+        "formats": formats,
+        "offsets": offsets,
+        "itemsize": point_step,
+    })
+    try:
+        records = np.ndarray(
+            shape=(height, width),
+            dtype=dtype,
+            buffer=data,
+            strides=(row_step, point_step),
+        )
+    except (TypeError, ValueError, BufferError) as exc:
+        raise ValueError("cloud_record_layout_invalid") from exc
+
+    points = np.column_stack((
+        records["x"].reshape(-1),
+        records["y"].reshape(-1),
+        records["z"].reshape(-1),
+    ))
+    mask = np.isfinite(points).all(axis=1)
+    if max_range_m is not None:
+        max_range = float(max_range_m)
+        if not math.isfinite(max_range) or max_range <= 0:
+            raise ValueError("invalid_max_range")
+        mask &= np.einsum("ij,ij->i", points, points) <= max_range * max_range
+    points = np.asarray(points[mask], dtype=np.float32)
+    if points.shape[0] == 0:
+        raise ValueError("cloud_has_no_usable_points")
+    return np.ascontiguousarray(points)
+
+
+def transform_points(points, translation, quaternion):
+    """Vectorized rigid transform for an N x 3 float array."""
+    pts = np.asarray(points, dtype=np.float64)
+    if pts.ndim != 2 or pts.shape[1] != 3 or not np.isfinite(pts).all():
+        raise ValueError("invalid_xyz_array")
+    t = np.asarray(translation, dtype=np.float64)
+    q = np.asarray(quaternion, dtype=np.float64)
+    if t.shape != (3,) or q.shape != (4,) or not np.isfinite(t).all():
+        raise ValueError("invalid_transform")
+    qn = float(np.linalg.norm(q))
+    if not math.isfinite(qn) or qn < 1e-9:
+        raise ValueError("invalid_transform_quaternion")
+    q = q / qn
+    qv, qw = q[:3], q[3]
+    uv = np.cross(qv, pts)
+    uuv = np.cross(qv, uv)
+    out = pts + 2.0 * (qw * uv + uuv) + t
+    if not np.isfinite(out).all():
+        raise ValueError("nonfinite_transformed_points")
+    return np.ascontiguousarray(out, dtype=np.float32)
+
+
 def estimate_velocity(previous, current, max_speed=3.0):
-    """Finite-difference map-frame velocity; return zero and invalid on bad dt."""
+    """Finite-difference map-frame velocity; zero and invalid on bad dt."""
     if previous is None:
         return (0.0, 0.0, 0.0), False
     p_xyz, p_stamp = previous
@@ -73,8 +161,135 @@ def estimate_velocity(previous, current, max_speed=3.0):
     return vel, True
 
 
+def cluster_xy_points(points, cell_size=0.30, min_points=6, max_clusters=64):
+    """Connected components over occupied XY cells; returns arrays of real points."""
+    pts = np.asarray(points, dtype=np.float32)
+    if pts.ndim != 2 or pts.shape[1] != 3 or pts.size == 0:
+        return []
+    cell = float(cell_size)
+    if not math.isfinite(cell) or cell <= 0:
+        raise ValueError("invalid_cluster_cell_size")
+    cells = {}
+    keys = np.floor(pts[:, :2] / cell).astype(np.int64)
+    for index, key in enumerate(keys):
+        cells.setdefault((int(key[0]), int(key[1])), []).append(index)
+
+    visited = set()
+    clusters = []
+    for seed in cells:
+        if seed in visited:
+            continue
+        stack = [seed]
+        visited.add(seed)
+        component = []
+        while stack:
+            current = stack.pop()
+            component.extend(cells[current])
+            cx, cy = current
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    neighbor = (cx + dx, cy + dy)
+                    if neighbor in cells and neighbor not in visited:
+                        visited.add(neighbor)
+                        stack.append(neighbor)
+        if len(component) >= int(min_points):
+            clusters.append(pts[np.asarray(component, dtype=np.int64)])
+            if len(clusters) >= int(max_clusters):
+                break
+    return clusters
+
+
+def four_wheel_steer_screen(path_xyz, max_speed=0.25, max_accel=0.25,
+                            wheel_base_x=0.56, track_y=0.27,
+                            wheel_radius=0.095, steering_limit=1.5708):
+    """Necessary-condition screen using nominal hip-pivot geometry, never a controller model."""
+    pts = np.asarray(path_xyz, dtype=np.float64)
+    if pts.ndim != 2 or pts.shape[1] != 3 or pts.shape[0] < 3:
+        raise ValueError("path_requires_at_least_three_xyz_points")
+    if not np.isfinite(pts).all():
+        raise ValueError("path_contains_nonfinite_points")
+    params = (max_speed, max_accel, wheel_base_x, track_y, wheel_radius, steering_limit)
+    if not all(math.isfinite(float(v)) and float(v) > 0 for v in params):
+        raise ValueError("invalid_wheel_screen_parameters")
+
+    step = np.linalg.norm(np.diff(pts[:, :2], axis=0), axis=1)
+    keep = np.concatenate(([True], step > 1e-5))
+    pts = pts[keep]
+    if pts.shape[0] < 3:
+        raise ValueError("path_has_insufficient_distinct_points")
+    ds = np.linalg.norm(np.diff(pts[:, :2], axis=0), axis=1)
+    arc = np.concatenate(([0.0], np.cumsum(ds)))
+    segment_yaw = np.unwrap(np.arctan2(np.diff(pts[:, 1]), np.diff(pts[:, 0])))
+    yaw = np.empty(pts.shape[0], dtype=np.float64)
+    yaw[0], yaw[-1] = segment_yaw[0], segment_yaw[-1]
+    if pts.shape[0] > 2:
+        yaw[1:-1] = 0.5 * (segment_yaw[:-1] + segment_yaw[1:])
+    curvature = np.gradient(yaw, arc, edge_order=1)
+
+    speed = np.zeros(pts.shape[0], dtype=np.float64)
+    for i in range(1, len(speed)):
+        speed[i] = min(float(max_speed), math.sqrt(
+            speed[i-1] * speed[i-1] + 2.0 * float(max_accel) * ds[i-1]))
+    speed[-1] = 0.0
+    for i in range(len(speed)-2, -1, -1):
+        speed[i] = min(speed[i], math.sqrt(
+            speed[i+1] * speed[i+1] + 2.0 * float(max_accel) * ds[i]))
+
+    accel = np.abs(np.diff(speed * speed) / np.maximum(2.0 * ds, 1e-9))
+    yaw_rate = speed * curvature
+    wheel_positions = {
+        "fl": (wheel_base_x / 2.0, track_y / 2.0),
+        "fr": (wheel_base_x / 2.0, -track_y / 2.0),
+        "rl": (-wheel_base_x / 2.0, track_y / 2.0),
+        "rr": (-wheel_base_x / 2.0, -track_y / 2.0),
+    }
+    steering = {}
+    wheel_linear = {}
+    wheel_angular = {}
+    for name, (wx, wy) in wheel_positions.items():
+        vx = speed - yaw_rate * wy
+        vy = yaw_rate * wx
+        magnitude = np.hypot(vx, vy)
+        angle = np.arctan2(vy, vx)
+        # A wheel may reverse drive direction to keep its steering target inside
+        # the URDF's +/-90 degree joint interval.
+        reverse = angle > math.pi / 2.0
+        angle = np.where(reverse, angle - math.pi, angle)
+        reverse = angle < -math.pi / 2.0
+        angle = np.where(reverse, angle + math.pi, angle)
+        steering[name] = angle
+        wheel_linear[name] = magnitude
+        wheel_angular[name] = magnitude / float(wheel_radius)
+
+    max_steer = max(float(np.max(np.abs(v))) for v in steering.values())
+    max_wheel_linear = max(float(np.max(v)) for v in wheel_linear.values())
+    max_wheel_angular = max(float(np.max(v)) for v in wheel_angular.values())
+    max_path_accel = float(np.max(accel)) if accel.size else 0.0
+    first_idx = next((i for i, v in enumerate(speed) if v >= 0.03), min(1, len(speed)-1))
+    first_angles = {name: float(values[first_idx]) for name, values in steering.items()}
+    return {
+        "necessary_conditions_pass": bool(
+            max_steer <= float(steering_limit) + 1e-6
+            and float(np.max(speed)) <= float(max_speed) + 1e-6
+            and max_path_accel <= float(max_accel) + 1e-3
+        ),
+        "geometry_basis": "nominal_hip_pivot_proxy_not_measured_wheel_contact_geometry",
+        "max_path_speed_mps": float(np.max(speed)),
+        "max_path_acceleration_mps2": max_path_accel,
+        "max_abs_steering_angle_rad": max_steer,
+        "max_wheel_linear_speed_mps": max_wheel_linear,
+        "max_wheel_angular_speed_radps": max_wheel_angular,
+        "wheel_steering_angles_rad": first_angles,
+        "wheel_positions_m": {k: [float(v[0]), float(v[1])] for k, v in wheel_positions.items()},
+        "controller_model_verified": False,
+        "wheel_contact_geometry_verified": False,
+        "collision_envelope_verified": False,
+        "execution_authorized": False,
+    }
+
+
 def goal_is_valid(goal, *, live_ready, static_ready):
-    """Pure fail-closed goal contract; goal is any object with ROS-like fields."""
+    """Pure fail-closed RViz goal contract."""
     if not live_ready:
         return False, "live_localization_or_cloud_not_ready"
     if not static_ready:
