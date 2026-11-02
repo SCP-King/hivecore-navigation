@@ -200,6 +200,38 @@ def normalize_quaternion(quaternion):
     return tuple(float(v) for v in (q / norm))
 
 
+def pose_samples_equivalent(existing, position, orientation,
+                            position_tolerance_m=0.02,
+                            orientation_tolerance_rad=0.035):
+    """Compare same-stamp pose samples, treating q and -q as equivalent."""
+    try:
+        old_position = np.asarray(existing[1], dtype=np.float64)
+        new_position = np.asarray(position, dtype=np.float64)
+        old_orientation = np.asarray(
+            normalize_quaternion(existing[2]), dtype=np.float64)
+        new_orientation = np.asarray(
+            normalize_quaternion(orientation), dtype=np.float64)
+        position_tolerance = float(position_tolerance_m)
+        orientation_tolerance = float(orientation_tolerance_rad)
+    except (IndexError, TypeError, ValueError, OverflowError):
+        return False
+    if (
+        old_position.shape != (3,) or new_position.shape != (3,)
+        or not np.isfinite(old_position).all()
+        or not np.isfinite(new_position).all()
+        or not math.isfinite(position_tolerance) or position_tolerance < 0.0
+        or not math.isfinite(orientation_tolerance) or orientation_tolerance < 0.0
+    ):
+        return False
+    position_delta = float(np.linalg.norm(old_position - new_position))
+    dot = abs(float(np.dot(old_orientation, new_orientation)))
+    orientation_delta = 2.0 * math.acos(min(1.0, max(-1.0, dot)))
+    return bool(
+        position_delta <= position_tolerance
+        and orientation_delta <= orientation_tolerance
+    )
+
+
 def quaternion_multiply(a, b):
     """Compose rotations a * b in xyzw order."""
     ax, ay, az, aw = normalize_quaternion(a)
