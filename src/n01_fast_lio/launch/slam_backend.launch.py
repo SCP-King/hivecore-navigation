@@ -7,7 +7,8 @@ The FAST-LIO private map is never silently aliased to the vendor map.
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, LogInfo, IncludeLaunchDescription
 from launch.conditions import IfCondition
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
@@ -27,16 +28,15 @@ def generate_launch_description():
             "[N-01 SLAM backend selector] vendor mode preserves the vendor launch, ",
             "topics, message types and TF contract; it does not start a second SLAM."
         ], condition=IfCondition(
-            LaunchConfiguration("backend").equals("vendor"))),
+            PythonExpression(["'", LaunchConfiguration("backend"), "' == 'vendor'"]))),
         IncludeLaunchDescription(
-            __import__("launch").launch_description_sources.PythonLaunchDescriptionSource(
-                fast_launch),
+            PythonLaunchDescriptionSource(fast_launch),
             launch_arguments={
                 "use_sim_time": LaunchConfiguration("use_sim_time"),
                 "map_file_path": LaunchConfiguration("map_file_path"),
                 "rviz": LaunchConfiguration("rviz"),
             }.items(),
-            condition=IfCondition(LaunchConfiguration("backend").equals("fast_lio"))),
+            condition=IfCondition(PythonExpression(["'", LaunchConfiguration("backend"), "' == 'fast_lio'"]))),
         Node(
             package="n01_fast_lio",
             executable="n01_fast_lio_odometry_adapter",
