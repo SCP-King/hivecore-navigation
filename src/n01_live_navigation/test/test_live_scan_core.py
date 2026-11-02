@@ -123,9 +123,9 @@ class LiveScanCoreTests(unittest.TestCase):
     def test_robot_pose_interpolates_position_and_orientation_at_scan_time(self):
         samples = [
             (1_000_000_000, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)),
-            (3_000_000_000, (2.0, 0.0, 0.0), (0.0, 0.0, 1.0, 0.0)),
+            (1_200_000_000, (2.0, 0.0, 0.0), (0.0, 0.0, 1.0, 0.0)),
         ]
-        pose = interpolate_pose(samples, 2_000_000_000, max_gap_s=0.5)
+        pose = interpolate_pose(samples, 1_100_000_000, max_gap_s=0.5)
         self.assertIsNotNone(pose)
         np.testing.assert_allclose(pose[0], (1.0, 0.0, 0.0), atol=1e-8)
         np.testing.assert_allclose(
