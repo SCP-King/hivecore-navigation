@@ -382,6 +382,7 @@ class LiveScanBridge(Node):
                 return
             # The same source timestamp carrying materially different poses is
             # ambiguous. Remove that anchor and reject further copies of it.
+            conflict_was_latest = index == len(self.pose_samples) - 1
             self.pose_samples.pop(index)
             self.pose_conflict_stamps.add(stamp_ns)
             if len(self.pose_conflict_stamps) > 64:
@@ -391,6 +392,10 @@ class LiveScanBridge(Node):
             self.last_pose_error = self.pose_contract_error
             self.last_pose_stamp_ns = (
                 self.pose_samples[-1][0] if self.pose_samples else None)
+            if conflict_was_latest:
+                # A conflicting newest anchor invalidates pose freshness until
+                # a strictly newer, unambiguous timestamp arrives.
+                self.pose_rx_monotonic = 0.0
             return
 
         is_newest_stamp = not self.pose_samples or stamp_ns > self.pose_samples[-1][0]
