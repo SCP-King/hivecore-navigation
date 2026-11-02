@@ -1,5 +1,6 @@
 """Pure, testable geometry and data contracts for the N-01 live stack."""
 import math
+from bisect import bisect_left
 import numpy as np
 
 
@@ -34,6 +35,32 @@ def localization_is_tracking(msg):
     # converted into a successful synchronization flag.
     return True, "tracking_ready"
 
+
+
+def select_pose_anchor(samples, stamp_ns, max_delta_s):
+    """Select a nearby SLAM anchor; prefer a causal previous sample."""
+    if not samples:
+        return None
+    try:
+        target = int(stamp_ns)
+        max_delta = float(max_delta_s)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if target <= 0 or not math.isfinite(max_delta) or max_delta < 0.0:
+        return None
+    stamps = [int(sample[0]) for sample in samples]
+    index = bisect_left(stamps, target)
+    if index < len(samples) and stamps[index] == target:
+        return samples[index]
+    if index > 0:
+        previous = samples[index - 1]
+        if 0 <= (target - int(previous[0])) / 1e9 <= max_delta:
+            return previous
+    if index < len(samples):
+        following = samples[index]
+        if 0 <= (int(following[0]) - target) / 1e9 <= max_delta:
+            return following
+    return None
 
 def rotate_translate(point, translation, quaternion):
     """Apply a normalized xyzw rigid transform to one XYZ point."""
