@@ -1,27 +1,13 @@
 """Fail-closed RViz goal relay: require fresh live inputs and SCAN static PCD layer."""
 import json
-import math
-
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from geometry_msgs.msg import PoseStamped
 from std_msgs.msg import Bool, String
 
+from .core import goal_is_valid
 
-def goal_is_valid(goal, *, live_ready, static_ready):
-    if not live_ready:
-        return False, "live_localization_or_cloud_not_ready"
-    if not static_ready:
-        return False, "native_scan_static_pcd_not_ready"
-    if goal.header.frame_id.lstrip("/") != "map":
-        return False, "goal_frame_must_be_map"
-    p = goal.pose.position
-    if not all(math.isfinite(v) for v in (p.x, p.y, p.z)):
-        return False, "goal_nonfinite"
-    if p.z < -0.1:
-        return False, "goal_z_below_scan_ground_guard"
-    return True, "accepted"
 
 
 class LiveGoalGate(Node):
