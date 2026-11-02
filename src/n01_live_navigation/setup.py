@@ -21,6 +21,7 @@ setup(
     entry_points={
         "console_scripts": [
             "n01_live_scan_bridge = n01_live_navigation.live_scan_bridge:main",
+            "n01_live_goal_gate = n01_live_navigation.goal_gate:main",
         ],
     },
 )
