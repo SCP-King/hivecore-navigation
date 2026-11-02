@@ -1,3 +1,14 @@
+## 新增：FAST-LIO2 可选后端，甲方 SLAM 接口保持不变
+
+新增独立 `n01_fast_lio` ROS 2 Humble 包：使用固定版本的 HKU-MARS FAST-LIO2 ROS2 分支，读取原始 Livox `CustomMsg` + Livox 内置 IMU，所有输出隔离到 `/n01/fast_lio/*`，私有地图帧为 `n01_fast_lio_map`，FAST-LIO TF broadcaster 默认关闭。甲方 `/localization_status`、`/robot_pose`、`/tf`、`/livox/lidar/geo_filtered`、原启动方式均不修改。可在开发阶段与甲方 SLAM 同时订阅传感器做 shadow comparison。
+
+- 上游与版本：[`hku-mars/FAST_LIO` ROS2 branch](https://github.com/hku-mars/FAST_LIO/tree/ROS2)，commit `cc3c9e8b1469b33b8072764d6db2348ed6dc597f)，ikd-Tree 子模块固定提交见 [集成说明](docs/n01_fast_lio2_integration.md)。
+- 导入/构建：`bash scripts/build_n01_fast_lio2.sh`；若 Livox ROS Driver2 位于已有 overlay，设置 `LIVOX_SETUP=/path/to/install/setup.bash`。
+- 运行前先用 `python3 scripts/n01_fast_lio_bag_preflight.py --bag /home/demo/lyy/slam_data/bags/bag_20261027_225100` 检查原始 Livox CustomMsg 与 IMU 类型。
+- 启动：`ros2 launch n01_fast_lio fast_lio_mapping.launch.py`。地图保存服务：`/n01/fast_lio/map_save`。
+
+**边界**：当前接入 FAST-LIO2 mapping/LIO odometry，不等于已有地图定位、重定位或回环闭合；其私有 map 不会自动与甲方旧 PCD/map 对齐，也没有接入 G4/SCAN 作为在线定位源。上游 LICENSE 为 GPL-2.0（其 package.xml 标注 BSD 与 LICENSE 冲突），商业分发前需解决许可问题。详见 [N-01 FAST-LIO2 集成设计与操作](docs/n01_fast_lio2_integration.md)。
+
 ## G4.15：静态 PCD 现在真正进入 SCAN 原生碰撞栅格（2026-10-30）
 
 按“少测试、多开发核心功能”的需求，已在原生 SCAN C++ `GridMap` 增加**可选**的历史 PCD 静态占用层，接入 `/grid_map/static_occupancy`，与实时激光更新分离，滚动地图窗口后可恢复；原生碰撞查询与膨胀层同步考虑静态障碍。仅隔离历史 G4 研究模式自动启动 `n01_static_map`，SCAN 的 `/grid_map/static_overlay_ready` 为真后 G4 才发布 `/initial_path`，G4 观察器也追踪此时序。**这是一项实际规划器功能开发**，不是仅改参数或只发布未消费的话题。
