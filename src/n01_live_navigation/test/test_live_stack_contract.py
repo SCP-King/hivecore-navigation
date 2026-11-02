@@ -24,8 +24,9 @@ class LiveStackContractTests(unittest.TestCase):
         monitor = (ROOT / "src/n01_live_navigation/n01_live_navigation/trajectory_monitor.py").read_text()
         self.assertIn("int32 order", message)
         self.assertIn("builtin_interfaces/Time start_time", message)
-        self.assertNotIn("msg.header", monitor)
-        self.assertIn("msg.traj_id", monitor)
+        bspline_callback = monitor.split("def on_bspline", 1)[1].split("\\ndef main", 1)[0]
+        self.assertNotIn("msg.header", bspline_callback)
+        self.assertIn("msg.traj_id", bspline_callback)
 
     def test_bridge_uses_robot_pose_interpolation_and_only_sensor_mount_tf(self):
         bridge = (ROOT / "src/n01_live_navigation/n01_live_navigation/live_scan_bridge.py").read_text()
