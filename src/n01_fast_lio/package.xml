@@ -6,7 +6,7 @@
   <maintainer email="n01@example.com">N-01</maintainer>
   <license>Apache-2.0</license>
   <buildtool_depend>ament_python</buildtool_depend>
-  <exec_depend>launch</exec_depend>
+  <exec_depend>launch</exec_depend>\n  <exec_depend>rclpy</exec_depend>\n  <exec_depend>nav_msgs</exec_depend>\n  <exec_depend>diagnostic_msgs</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>fast_lio</exec_depend>
   <exec_depend>livox_ros_driver2</exec_depend>
