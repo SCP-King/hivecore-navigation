@@ -11,7 +11,6 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
-from launch_ros.parameter_descriptions import ParameterValue
 
 
 def _nodes(context):
@@ -28,7 +27,11 @@ def _nodes(context):
     if not (-1.5 <= ground_z <= 0.5 and 0.5 <= body_height <= 1.5):
         raise RuntimeError("ground/body height outside bounded research interval")
 
-    planner_config = os.path.join(\n        get_package_share_directory("scan_planner"), "config", "planner.yaml")\n    return [\n        Node(\n            package="n01_static_map", executable="static_map_node",
+    planner_config = os.path.join(
+        get_package_share_directory("scan_planner"), "config", "planner.yaml")
+    return [
+        Node(
+            package="n01_static_map", executable="static_map_node",
             name="n01_live_static_pcd",
             parameters=[{
                 "pcd_path": pcd, "resolution": 0.05, "publish_rate": 1.0,
@@ -72,8 +75,8 @@ def _nodes(context):
                 "grid_map.local_update_range_z": 2.5,
                 "grid_map.map_sliding_en": True,
                 "grid_map.map_sliding_thresh": 0.2,
-                # Provisional geometry: candidate ground Z from the supplied
-                # factory map; do not use the resulting trajectory for motion.
+                # Research geometry only: candidate floor level from previous
+                # PCD/Bag evidence, not a measured floor or certified body model.
                 "grid_map.ground_height": ground_z,
                 "grid_map.body_height": body_height,
                 "grid_map.double_cylinder_radius": 0.33,
