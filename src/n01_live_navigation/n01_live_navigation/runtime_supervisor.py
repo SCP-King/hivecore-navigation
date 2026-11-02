@@ -171,6 +171,20 @@ class LiveRuntimeSupervisor(Node):
         blockers = []
         if not bridge_ready:
             blockers.append("live_localization_or_scan_bridge_not_ready")
+        if self.bridge.get("localization_status_fresh") is not True:
+            blockers.append("localization_status_missing_or_stale")
+        if self.bridge.get("robot_pose_receive_fresh") is not True:
+            blockers.append("global_robot_pose_missing_or_stale")
+        if self.bridge.get("pose_scan_anchor_available") is not True:
+            blockers.append("global_robot_pose_anchor_outside_scan_time_budget")
+        if self.bridge.get("odom_receive_fresh") is not True:
+            blockers.append("local_odometry_missing_or_stale")
+        if self.bridge.get("motion_compensation_ready") is not True:
+            blockers.append("scan_motion_compensation_not_ready")
+        if self.bridge.get("sensor_extrinsic_ready") is not True:
+            blockers.append("lidar_body_extrinsic_not_ready")
+        if self.bridge.get("cloud_output_fresh") is not True:
+            blockers.append("map_cloud_output_missing_or_stale")
         if not self.static_ready:
             blockers.append("static_pcd_overlay_not_ready_in_current_window")
         if not body_fresh:
@@ -277,9 +291,15 @@ class LiveRuntimeSupervisor(Node):
             "map_base_tf_rate_hz": tf_rate,
             "global_pose_source": self.bridge.get("robot_pose_topic"),
             "global_pose_interpolation_ready": (
-                self.bridge.get("robot_pose_receive_fresh") is True),
+                self.bridge.get("pose_scan_anchor_available") is True
+                and self.bridge.get("robot_pose_receive_fresh") is True),
             "global_pose_anchor_ready": (
-                self.bridge.get("robot_pose_receive_fresh") is True),
+                self.bridge.get("pose_scan_anchor_available") is True
+                and self.bridge.get("robot_pose_receive_fresh") is True),
+            "global_pose_source_publisher_count": self.bridge.get(
+                "robot_pose_publisher_count"),
+            "global_pose_stamp_progress_age_s": self.bridge.get(
+                "robot_pose_stamp_progress_age_s"),
             "odometry_motion_compensation_ready": (
                 self.bridge.get("motion_compensation_ready") is True),
             "sensor_extrinsic_ready": (
