@@ -4,22 +4,30 @@
 
 This branch keeps the vendor Hivecore SLAM process as the localization authority. It does not patch or replace the vendor ICP/IMU implementation.
 
-1. **Localization adapter** — consumes `/localization_status`, filtered Livox clouds and scan-time TF; publishes exact-stamp map-frame `/cloud`, `/sensor_pose` and `/body_pose`. A bounded FIFO waits for the scan-time transform and drops expired scans.
+1. **Localization adapter** — consumes `/localization_status`, filtered Livox clouds and the vendor's `/robot_pose` Odometry. It interpolates the map-frame `base_footprint` pose at each original LiDAR scan timestamp, then composes it with the robot-description `base_footprint <- lidar_link` extrinsic. It publishes exact-stamp map-frame `/cloud`, `/sensor_pose` and `/body_pose`. A bounded FIFO waits for a bracketing odometry pair and the sensor extrinsic; it never substitutes the latest pose or a latest TF.
 2. **Map system** — `n01_static_map` reads the operator-supplied binary XYZ PCD as a read-only source and publishes one retained `/grid_map/static_occupancy` sample with transient-local QoS; native SCAN retains the static overlay independently from dynamic raycasting and restores it when the sliding window moves.
 3. **Obstacle system** — native SCAN receives the unfiltered map-frame live cloud as its authoritative dynamic occupancy/raycast input. A separate visualization-only tracker compares live returns with coarse static PCD voxels and publishes unmatched candidates and short-lived cluster tracks. Those candidate topics do not replace or filter the SCAN input.
 4. **Path planning** — the repository's native SCAN planner remains the planner. It consumes exact-stamp cloud/pose pairs, maintains the rolling occupancy map, uses the static PCD collision overlay, and accepts goals only through the live readiness gate.
 5. **Hive2 robot adapter** — a non-actuating B-spline monitor screens nominal four-wheel steering necessary conditions using the documented hip-pivot proxy geometry and URDF steering limit. It publishes a candidate Path and wheel-angle visualization only. It does not publish `/cmd_vel`, `/cmd_wheel`, `/chassis_controller/rt_command` or any hardware command.
-6. **Visualization and runtime acceptance** — RViz displays the static PCD, live scan, native SCAN occupancy/inflation, unmatched obstacle candidates, B-spline candidate path and nominal wheel steering vectors. A runtime supervisor reports bridge, map, body pose, TF and vendor timing status.
+6. **Visualization and runtime acceptance** — RViz displays the static PCD, live scan, native SCAN occupancy/inflation, unmatched obstacle candidates, B-spline candidate path and nominal wheel steering vectors. A runtime supervisor reports bridge, map, interpolated body pose, optional direct TF diagnostics and vendor timing status.
 
 ## Critical scan/pose synchronization
 
-The bridge stamps `/cloud`, `/sensor_pose` and `/body_pose` with the original LiDAR scan timestamp. Native SCAN's LiDAR GridMap now uses a ROS 2 `message_filters::ExactTime<PointCloud2, Odometry>` synchronizer for `/cloud` + `/sensor_pose`. It no longer combines a cloud callback with whichever sensor pose happened to arrive most recently. The bridge and native SCAN therefore agree on the same scan timestamp contract.
+The field run exposed that the direct `map -> lidar_link` TF lookup fails because the global map frame and sensor TF tree are disconnected, even though `/robot_pose` publishes `map -> base_footprint` Odometry. The bridge now uses that timestamped Odometry as its global pose source. It performs linear position interpolation and quaternion SLERP between two bracketing `/robot_pose` samples at the original LiDAR scan stamp, then composes the result with the TF sensor mount `base_footprint -> lidar_link`. No pose extrapolation, latest-pose substitution or timestamp rewriting is allowed. This removes the requirement for a direct `map -> lidar_link` TF edge while still requiring a valid robot-description transform from `base_footprint` to `lidar_link`.
+
+Native SCAN's LiDAR GridMap uses a ROS 2 `message_filters::ExactTime<PointCloud2, Odometry>` synchronizer for `/cloud` + `/sensor_pose`. The bridge and native SCAN therefore agree on the same original scan timestamp contract.
 
 The TF retry queue is bounded:
-- TF retry period: 20 ms
+- pose source: vendor `/robot_pose` (`map -> base_footprint`)
+- pose cache: 64 samples
+- maximum interpolation bracket: 500 ms
+- pose receive freshness: 700 ms
+- sensor extrinsic: TF lookup `base_footprint <- lidar_link` at scan time
+- retry period: 20 ms
 - maximum wait: 450 ms
 - queue capacity: 8 scans
 - maximum cloud age: 600 ms
+- pose extrapolation / latest-pose substitution: prohibited
 - latest TF substitution: prohibited
 - timestamp rewriting: prohibited
 
@@ -83,6 +91,7 @@ ros2 launch n01_live_navigation live_scan.launch.py \
 - `/n01/live_navigation/hive2_feasibility` — non-actuating necessary-condition JSON.
 - `/n01/live_navigation/goal_gate_status` — accepted/rejected RViz goal reason.
 - `/mapping_processing_timings` — raw vendor Vector3Stamped, captured by the supervisor.
+- `/robot_pose` — vendor map-frame Odometry used for exact-scan-time pose interpolation.
 
 ## Acceptance boundary
 
