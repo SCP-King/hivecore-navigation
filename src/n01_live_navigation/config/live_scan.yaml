@@ -1,6 +1,7 @@
 # Live vendor SLAM -> SCAN adapter defaults.
-# The launch file owns the full SCAN geometry and requires an explicit PCD
-# map-frame assertion. use_sim_time must remain false for live sensors.
+# The bridge waits briefly for scan-time TF but never substitutes latest TF.
+# The original scan timestamp and max_cloud_age_s remain strict freshness gates.
+# use_sim_time must remain false for live sensors.
 n01_live_scan_bridge:
   ros__parameters:
     use_sim_time: false
@@ -12,6 +13,8 @@ n01_live_scan_bridge:
     body_frame: base_link
     max_status_age_s: 1.0
     max_cloud_age_s: 0.6
-    tf_timeout_s: 0.25
+    max_tf_wait_s: 0.45
+    tf_retry_period_s: 0.02
+    max_pending_clouds: 8
     max_points: 100000
     max_point_range_m: 12.0
