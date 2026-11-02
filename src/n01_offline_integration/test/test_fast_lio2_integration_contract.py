@@ -42,6 +42,8 @@ class FastLio2IntegrationContract(unittest.TestCase):
         self.assertIn('PIN = "cc3c9e8b1469b33b8072764d6db2348ed6dc597f"', patcher)
         self.assertIn("n01_publish_tf = false", patcher)
         self.assertIn("if (n01_publish_tf) tf_br->sendTransform(trans);", patcher)
+        self.assertIn("if (n01_publish_tf) {", patcher)
+        self.assertIn("tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);", patcher)
         self.assertIn("common.map_frame_id", patcher)
         self.assertIn("common.imu_frame_id", patcher)
 
