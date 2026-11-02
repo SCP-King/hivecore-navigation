@@ -43,29 +43,56 @@ if ! command -v colcon >/dev/null 2>&1; then
   echo "[N01-FAST-LIO2] colcon is missing; install ROS 2 build tools first." >&2
   exit 2
 fi
-# Some Hive2 deployments expose Livox through the motion-stack install
-# prefix. Prefer its local_setup.bash: setup.bash may chain a build-time
-# underlay that no longer exists (for example an old FROZEN workspace).
-if ! ros2 pkg prefix livox_ros_driver2 >/dev/null 2>&1; then
+# Validate the installed ROS package through the ament resource index.
+# ros2 pkg prefix is not used as the build gate: it can fail in a mixed
+# overlay environment even when the indexed package and CMake config exist.
+ament_package_prefix() {
+  local package_name="$1"
+  local prefix
+  local -a prefixes=()
+  local IFS=:
+  read -r -a prefixes <<< "${AMENT_PREFIX_PATH:-}"
+  for prefix in "${prefixes[@]}"; do
+    if [[ -n "$prefix" && -f "$prefix/share/ament_index/resource_index/packages/$package_name" ]]; then
+      printf '%s\n' "$prefix"
+      return 0
+    fi
+  done
+  return 1
+}
+
+LIVOX_PREFIX=""
+if ! LIVOX_PREFIX="$(ament_package_prefix livox_ros_driver2)"; then
   HIVE2_LIVOX_LOCAL_SETUP="${HIVE2_LIVOX_LOCAL_SETUP:-/opt/hivecore/hive2-motion/1.0.0/install/local_setup.bash}"
   if [[ -f "$HIVE2_LIVOX_LOCAL_SETUP" ]]; then
-    echo "[N01-FAST-LIO2] Livox not visible yet; sourcing existing Hive2 overlay:"
+    echo "[N01-FAST-LIO2] Livox ament index not in current prefixes; sourcing:"
     echo "  $HIVE2_LIVOX_LOCAL_SETUP"
     source_overlay_compat "$HIVE2_LIVOX_LOCAL_SETUP"
   fi
+  LIVOX_PREFIX="$(ament_package_prefix livox_ros_driver2 || true)"
 fi
 
-if ! ros2 pkg prefix livox_ros_driver2 >/dev/null 2>&1; then
-  echo "[N01-FAST-LIO2] livox_ros_driver2 is installed but not discoverable in this build process." >&2
-  echo "  ROS_DISTRO=${ROS_DISTRO:-unset}" >&2
-  echo "  ros2=$(command -v ros2 || echo missing)" >&2
+if [[ -z "$LIVOX_PREFIX" ]]; then
+  echo "[N01-FAST-LIO2] Livox ament resource index not found in AMENT_PREFIX_PATH." >&2
   echo "  AMENT_PREFIX_PATH=${AMENT_PREFIX_PATH:-unset}" >&2
-  echo "If needed, run with the existing Hive2 local overlay:" >&2
-  echo "  LIVOX_SETUP=/opt/hivecore/hive2-motion/1.0.0/install/local_setup.bash \\" >&2
-  echo "    bash scripts/build_n01_fast_lio2.sh" >&2
+  echo "Expected index: <prefix>/share/ament_index/resource_index/packages/livox_ros_driver2" >&2
   echo "No second Livox driver will be cloned or installed by this script." >&2
   exit 2
 fi
+
+LIVOX_CMAKE_CONFIG="$LIVOX_PREFIX/share/livox_ros_driver2/cmake/livox_ros_driver2Config.cmake"
+if [[ ! -f "$LIVOX_CMAKE_CONFIG" ]]; then
+  echo "[N01-FAST-LIO2] Livox ament index exists but CMake config is missing:" >&2
+  echo "  $LIVOX_CMAKE_CONFIG" >&2
+  exit 2
+fi
+
+# Make the already-installed Hive2 package discoverable to CMake as well.
+case ":$${CMAKE_PREFIX_PATH:-}:" in
+  *":$LIVOX_PREFIX:"*) ;;
+  *) export CMAKE_PREFIX_PATH="$LIVOX_PREFIX:${CMAKE_PREFIX_PATH:-}" ;;
+esac
+echo "[N01-FAST-LIO2] Reusing installed Livox package: $LIVOX_PREFIX"
 
 cd "$ROOT"
 bash scripts/import_n01_fast_lio2.sh
