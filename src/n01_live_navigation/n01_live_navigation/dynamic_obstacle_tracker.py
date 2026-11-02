@@ -6,7 +6,8 @@ import time
 import numpy as np
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
+from rclpy.qos import (
+    QoSProfile, ReliabilityPolicy, DurabilityPolicy, qos_profile_sensor_data)
 from sensor_msgs.msg import PointCloud2, PointField
 from std_msgs.msg import String
 from visualization_msgs.msg import Marker, MarkerArray
@@ -60,8 +61,11 @@ class DynamicObstacleTracker(Node):
         self.last_static_match_count = 0
         self.last_error = ""
 
+        static_qos = QoSProfile(
+            depth=1, reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.create_subscription(
-            PointCloud2, str(get("static_topic")), self.on_static, qos_profile_sensor_data)
+            PointCloud2, str(get("static_topic")), self.on_static, static_qos)
         self.create_subscription(
             PointCloud2, str(get("cloud_topic")), self.on_cloud, qos_profile_sensor_data)
         self.candidate_pub = self.create_publisher(
@@ -77,6 +81,8 @@ class DynamicObstacleTracker(Node):
         return [tuple(int(v) for v in row) for row in keys]
 
     def on_static(self, msg):
+        if self.static_ready:
+            return
         if msg.header.frame_id.lstrip("/") != self.map_frame:
             self.last_error = "static_map_frame_mismatch"
             return
