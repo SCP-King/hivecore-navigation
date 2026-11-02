@@ -1,0 +1,37 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+Visualization Manager:
+  Class: ""
+  Global Options:
+    Fixed Frame: n01_fast_lio_map
+    Background Color: 48; 48; 48
+  Displays:
+    - Class: rviz_default_plugins/TF
+      Enabled: true
+      Name: TF
+    - Class: rviz_default_plugins/PointCloud2
+      Enabled: true
+      Name: Registered Cloud
+      Topic:
+        Value: /n01/fast_lio/cloud_registered
+      Size (Pixels): 2
+    - Class: rviz_default_plugins/PointCloud2
+      Enabled: true
+      Name: Accumulated Map
+      Topic:
+        Value: /n01/fast_lio/map
+      Size (Pixels): 2
+    - Class: rviz_default_plugins/Path
+      Enabled: true
+      Name: FAST-LIO Path
+      Topic:
+        Value: /n01/fast_lio/path
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/Measure
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 20
+      Focal Point: {X: 0, Y: 0, Z: 0}
