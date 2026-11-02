@@ -166,13 +166,15 @@ class DynamicObstacleTracker(Node):
 
     def _publish_markers(self, stamp, expired):
         array = MarkerArray()
-        now_ids = set(self.tracks)
         for track_id in sorted(expired):
-            for marker_id in (track_id, track_id + 100000):
+            for marker_id, namespace in (
+                (track_id, "n01_dynamic_candidates"),
+                (track_id + 100000, "n01_dynamic_candidates_labels"),
+            ):
                 marker = Marker()
                 marker.header.frame_id = self.map_frame
                 marker.header.stamp = stamp
-                marker.ns = "n01_dynamic_candidates"
+                marker.ns = namespace
                 marker.id = marker_id
                 marker.action = Marker.DELETE
                 array.markers.append(marker)
