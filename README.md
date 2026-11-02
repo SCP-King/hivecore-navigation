@@ -1,4 +1,4 @@
-# Live vendor localization -> native SCAN integration (development, read-only)
+## Live vendor localization -> native SCAN integration (development, read-only)
 
 A new `n01_live_navigation` package connects the already-running Hivecore localization output and filtered Livox cloud to the repository's **native SCAN** inputs. It performs scan-stamp TF lookups and publishes map-frame `/cloud`, `/sensor_pose`, and `/body_pose`; it never publishes `/cmd_vel`, `/cmd_wheel`, or chassis commands. SCAN uses `/move_base_simple/goal` and publishes `/planning/bspline`.
 
