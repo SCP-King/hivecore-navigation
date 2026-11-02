@@ -1,5 +1,6 @@
 """Lean source-contract check for the optional FAST-LIO2 backend."""
 import ast
+import xml.etree.ElementTree as ET
 from pathlib import Path
 import unittest
 
@@ -59,11 +60,15 @@ class FastLio2IntegrationContract(unittest.TestCase):
         self.assertIn("/opt/hivecore/hive2-motion/1.0.0/install/local_setup.bash", build)
         self.assertIn("HIVE2_LIVOX_LOCAL_SETUP", build)
         self.assertIn("source_overlay_compat", build)
-        self.assertIn("set +u", build)
-        self.assertIn("set -u", build)
+        self.assertIn("ament_package_prefix livox_ros_driver2", build)
+        self.assertIn("resource_index/packages/$package_name", build)
+        self.assertIn("CMAKE_PREFIX_PATH", build)
         self.assertIn("AMENT_PREFIX_PATH", build)
         self.assertNotIn("apt install", build)
         self.assertNotIn("livox_ros_driver2.git", build)
+
+    def test_package_manifest_is_valid_xml(self):
+        ET.parse(ROOT / "src/n01_fast_lio/package.xml")
 
     def test_vendor_slam_contract_is_retained(self):
         bridge = self.read("src/n01_offline_integration/config/offline_bridge.yaml")
