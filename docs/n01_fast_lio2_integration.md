@@ -177,3 +177,5 @@ ros2 launch n01_fast_lio slam_backend.launch.py backend:=fast_lio use_sim_time:=
 6. 将统一定位接口接入 G4/SCAN 并处理地图 frame 对齐。
 
 因此开发策略为：先并行 shadow mapping 对比；之后补 saved-map localization/relocalization；最终再提供后端选择，不会删除甲方 SLAM。实机启用 FAST-LIO 前还需要确认传感器输入资源唯一、时间同步与外参、CPU 负载及 TF 权威配置。
+
+构建预检使用 `share/ament_index/resource_index/packages/livox_ros_driver2` 与 `livox_ros_driver2Config.cmake` 直接验证已安装包，并将其前缀加入 `CMAKE_PREFIX_PATH`；不再仅依赖 `ros2 pkg prefix` 的 CLI 返回码。FAST-LIO ROS 包清单同时经过 XML 解析检查。
