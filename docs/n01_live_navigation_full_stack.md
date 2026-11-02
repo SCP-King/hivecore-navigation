@@ -4,7 +4,7 @@
 
 This branch keeps the vendor Hivecore SLAM process as the localization authority. It does not patch or replace the vendor ICP/IMU implementation.
 
-1. **Localization adapter** — consumes `/localization_status`, filtered Livox clouds and the vendor's `/robot_pose` Odometry. It interpolates the map-frame `base_footprint` pose at each original LiDAR scan timestamp, then composes it with the robot-description `base_footprint <- lidar_link` extrinsic. It publishes exact-stamp map-frame `/cloud`, `/sensor_pose` and `/body_pose`. A bounded FIFO waits for a bracketing odometry pair and the sensor extrinsic; it never substitutes the latest pose or a latest TF.
+1. **Localization adapter** — consumes `/localization_status`, filtered Livox clouds and the vendor's `/robot_pose` Odometry. It interpolates the map-frame `base_footprint` pose at each original LiDAR scan timestamp, then composes it with the robot-description `base_footprint <- lidar_link` extrinsic. It publishes exact-stamp map-frame `/cloud`, `/sensor_pose` and `/n01/live_navigation/scan_body_pose`; `/body_pose` is a separate high-rate current body estimate propagated from a recent SLAM anchor using timestamped `/odom`. A bounded FIFO waits for a bracketing odometry pair and the sensor extrinsic; it never substitutes the latest pose or a latest TF.
 2. **Map system** — `n01_static_map` reads the operator-supplied binary XYZ PCD as a read-only source and publishes one retained `/grid_map/static_occupancy` sample with transient-local QoS; native SCAN retains the static overlay independently from dynamic raycasting and restores it when the sliding window moves.
 3. **Obstacle system** — native SCAN receives the unfiltered map-frame live cloud as its authoritative dynamic occupancy/raycast input. A separate visualization-only tracker compares live returns with coarse static PCD voxels and publishes unmatched candidates and short-lived cluster tracks. Those candidate topics do not replace or filter the SCAN input.
 4. **Path planning** — the repository's native SCAN planner remains the planner. It consumes exact-stamp cloud/pose pairs, maintains the rolling occupancy map, uses the static PCD collision overlay, and accepts goals only through the live readiness gate.
@@ -15,7 +15,7 @@ This branch keeps the vendor Hivecore SLAM process as the localization authority
 
 The field run exposed that the direct `map -> lidar_link` TF lookup fails because the global map frame and sensor TF tree are disconnected, even though `/robot_pose` publishes `map -> base_footprint` Odometry. The bridge now uses that timestamped Odometry as its global pose source. It performs linear position interpolation and quaternion SLERP between two bracketing `/robot_pose` samples at the original LiDAR scan stamp, then composes the result with the TF sensor mount `base_footprint -> lidar_link`. No pose extrapolation, latest-pose substitution or timestamp rewriting is allowed. This removes the requirement for a direct `map -> lidar_link` TF edge while still requiring a valid robot-description transform from `base_footprint` to `lidar_link`.
 
-Native SCAN's LiDAR GridMap uses a ROS 2 `message_filters::ExactTime<PointCloud2, Odometry>` synchronizer for `/cloud` + `/sensor_pose`. The bridge and native SCAN therefore agree on the same original scan timestamp contract.
+Native SCAN's LiDAR GridMap uses a ROS 2 `message_filters::ExactTime<PointCloud2, Odometry>` synchronizer for `/cloud` + `/sensor_pose`. The bridge and native SCAN therefore agree on the same original scan timestamp contract for `/cloud` + `/sensor_pose`. The exact scan-time body pose is retained on `/n01/live_navigation/scan_body_pose`; native SCAN's rolling-window center consumes the high-rate `/body_pose` stream instead.
 
 The TF retry queue is bounded:
 - pose source: vendor `/robot_pose` (`map -> base_footprint`)
@@ -27,6 +27,8 @@ The TF retry queue is bounded:
 - maximum wait: 450 ms
 - queue capacity: 8 scans
 - maximum cloud age: 600 ms
+- maximum completed-scan lag behind newest input: 450 ms
+- current `/body_pose` publication target: 20 Hz, using a recent SLAM anchor and timestamp-bracketed odometry; no latest-TF substitution
 - pose extrapolation / latest-pose substitution: prohibited
 - latest TF substitution: prohibited
 - timestamp rewriting: prohibited
@@ -100,6 +102,8 @@ ros2 launch n01_live_navigation live_scan.launch.py \
 - `/n01/live_navigation/hive2_wheel_kinematics` — nominal wheel steering arrows.
 - `/n01/live_navigation/hive2_feasibility` — non-actuating necessary-condition JSON.
 - `/n01/live_navigation/goal_gate_status` — accepted/rejected RViz goal reason.
+- `/n01/live_navigation/scan_body_pose` — exact scan-time body pose for diagnostics.
+- `/n01/live_navigation/safety_status` — fail-closed review state; never an actuator authorization.
 - `/mapping_processing_timings` — raw vendor Vector3Stamped, captured by the supervisor; after the full launch, its subscription count should include `n01_live_runtime_supervisor`.
 - `/robot_pose` — vendor map-frame Odometry used for exact-scan-time pose interpolation.
 
