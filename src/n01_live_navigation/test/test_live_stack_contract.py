@@ -19,6 +19,14 @@ class LiveStackContractTests(unittest.TestCase):
             source,
         )
 
+    def test_bspline_visualizer_uses_actual_headerless_message_contract(self):
+        message = (ROOT / "src/scan_planner/scan_planner_msgs/msg/Bspline.msg").read_text()
+        monitor = (ROOT / "src/n01_live_navigation/n01_live_navigation/trajectory_monitor.py").read_text()
+        self.assertIn("int32 order", message)
+        self.assertIn("builtin_interfaces/Time start_time", message)
+        self.assertNotIn("msg.header", monitor)
+        self.assertIn("msg.traj_id", monitor)
+
     def test_live_navigation_remains_non_actuating(self):
         package = ROOT / "src/n01_live_navigation/n01_live_navigation"
         combined = "\n".join(path.read_text() for path in package.glob("*.py"))
