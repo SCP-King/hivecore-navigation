@@ -48,6 +48,7 @@ class LiveScanBridge(Node):
             "body_frame": "base_footprint",
             "max_status_age_s": 1.0,
             "max_pose_rx_age_s": 0.7,
+            "max_pose_stamp_age_s": 0.7,
             "pose_interpolation_max_gap_s": 0.5,
             "pose_cache_size": 64,
             "max_cloud_age_s": 0.6,
@@ -68,6 +69,7 @@ class LiveScanBridge(Node):
         self.body_frame = str(get("body_frame")).lstrip("/")
         self.max_status_age = float(get("max_status_age_s"))
         self.max_pose_rx_age = float(get("max_pose_rx_age_s"))
+        self.max_pose_stamp_age = float(get("max_pose_stamp_age_s"))
         self.pose_interpolation_max_gap = float(get("pose_interpolation_max_gap_s"))
         self.pose_cache_size = int(get("pose_cache_size"))
         self.max_cloud_age = float(get("max_cloud_age_s"))
@@ -79,6 +81,7 @@ class LiveScanBridge(Node):
         if not (
             0.1 <= self.max_status_age <= 3.0
             and 0.1 <= self.max_pose_rx_age <= 2.0
+            and 0.1 <= self.max_pose_stamp_age <= 2.0
             and 0.1 <= self.pose_interpolation_max_gap <= 1.0
             and 2 <= self.pose_cache_size <= 256
             and 0.1 <= self.max_cloud_age <= 2.0
@@ -95,6 +98,8 @@ class LiveScanBridge(Node):
         self.status_ok = False
         self.status_reason = "waiting_localization_status"
         self.status_rx_monotonic = 0.0
+        self.status_stamp_ns = 0
+        self.status_stamp_age_s = None
         self.status_imu_sync = False
         self.status_fitness = float("nan")
 
@@ -102,6 +107,7 @@ class LiveScanBridge(Node):
         # A bounded sorted cache permits interpolation without latest-pose reuse.
         self.pose_samples = []
         self.pose_rx_monotonic = 0.0
+        self.pose_stamp_age_s = None
         self.pose_contract_error = "waiting_robot_pose"
         self.last_pose_error = ""
         self.last_pose_stamp_ns = None
@@ -111,6 +117,9 @@ class LiveScanBridge(Node):
         self.pending_clouds = deque()
         self.last_cloud_out_monotonic = 0.0
         self.last_cloud_age_s = None
+        self.last_cloud_input_stamp_ns = None
+        self.last_cloud_input_rx_monotonic = 0.0
+        self.last_processed_scan_stamp_ns = 0
         self.last_tf_wait_s = 0.0
         self.max_tf_wait_observed_s = 0.0
         self.last_tf_error = ""
@@ -124,6 +133,7 @@ class LiveScanBridge(Node):
             "drop_tf": 0, "drop_tf_timeout": 0,
             "drop_status": 0, "drop_frame": 0, "drop_stamp": 0,
             "drop_stale_after_wait": 0, "drop_queue_overflow": 0,
+            "drop_superseded": 0, "drop_out_of_order": 0,
             "drop_cloud": 0,
         }
 
@@ -149,26 +159,47 @@ class LiveScanBridge(Node):
             "READ-ONLY bridge: interpolated /robot_pose + body-to-LiDAR extrinsic; "
             "no latest-pose substitution and no actuator publishers")
 
+    @staticmethod
+    def _stamp_ns(stamp):
+        return int(stamp.sec) * 1000000000 + int(stamp.nanosec)
+
     def on_status(self, msg):
         ok, reason = localization_is_tracking(msg)
         self.status_ok = ok
         self.status_reason = reason
         self.status_rx_monotonic = time.monotonic()
+        self.status_stamp_ns = self._stamp_ns(msg.header.stamp)
+        if self.status_stamp_ns > 0:
+            self.status_stamp_age_s = (
+                self.get_clock().now().nanoseconds - self.status_stamp_ns) / 1e9
+        else:
+            self.status_stamp_age_s = None
         self.status_imu_sync = bool(getattr(msg, "fusion_path_imu_sync_ok", False))
         self.status_fitness = float(
             getattr(msg, "registration_output_fitness_mse", float("nan")))
 
     def _status_is_fresh(self):
-        return (
+        if not (
             self.status_ok and self.status_rx_monotonic > 0.0
             and time.monotonic() - self.status_rx_monotonic <= self.max_status_age
-        )
+            and self.status_stamp_ns > 0
+        ):
+            return False
+        self.status_stamp_age_s = (
+            self.get_clock().now().nanoseconds - self.status_stamp_ns) / 1e9
+        return -0.2 <= self.status_stamp_age_s <= self.max_status_age
 
     def _pose_rx_is_fresh(self):
-        return (
+        if not (
             self.pose_rx_monotonic > 0.0
             and time.monotonic() - self.pose_rx_monotonic <= self.max_pose_rx_age
-        )
+            and self.pose_samples
+        ):
+            return False
+        latest_pose_stamp_ns = self.pose_samples[-1][0]
+        self.pose_stamp_age_s = (
+            self.get_clock().now().nanoseconds - latest_pose_stamp_ns) / 1e9
+        return -0.2 <= self.pose_stamp_age_s <= self.max_pose_stamp_age
 
     def on_robot_pose(self, msg):
         self.counts["pose_in"] += 1
@@ -215,7 +246,7 @@ class LiveScanBridge(Node):
             del self.pose_samples[:len(self.pose_samples) - self.pose_cache_size]
         self.pose_rx_monotonic = time.monotonic()
         self.pose_contract_error = ""
-        self.last_pose_stamp_ns = stamp_ns
+        self.last_pose_stamp_ns = self.pose_samples[-1][0]
         self.counts["pose_accepted"] += 1
 
     @staticmethod
@@ -281,20 +312,31 @@ class LiveScanBridge(Node):
 
     def on_cloud(self, msg):
         self.counts["cloud_in"] += 1
-        if not self._status_is_fresh():
-            self.counts["drop_status"] += 1
-            return
         if msg.header.frame_id.lstrip("/") != self.cloud_frame:
             self.counts["drop_frame"] += 1
             return
-        stamp_ns = int(msg.header.stamp.sec) * 1000000000 + int(msg.header.stamp.nanosec)
+        stamp_ns = self._stamp_ns(msg.header.stamp)
         age_s = (self.get_clock().now().nanoseconds - stamp_ns) / 1e9
         if stamp_ns <= 0 or age_s > self.max_cloud_age or age_s < -0.2:
             self.counts["drop_stamp"] += 1
             return
-        if len(self.pending_clouds) >= self.max_pending_clouds:
-            self.pending_clouds.popleft()
-            self.counts["drop_queue_overflow"] += 1
+        self.last_cloud_input_stamp_ns = stamp_ns
+        self.last_cloud_input_rx_monotonic = time.monotonic()
+        if not self._status_is_fresh():
+            self.counts["drop_status"] += 1
+            return
+        if stamp_ns <= self.last_processed_scan_stamp_ns:
+            self.counts["drop_out_of_order"] += 1
+            return
+        if self.pending_clouds:
+            pending_stamp_ns = self._stamp_ns(self.pending_clouds[-1][0].header.stamp)
+            if stamp_ns <= pending_stamp_ns:
+                self.counts["drop_out_of_order"] += 1
+                return
+            # Do not let a blocked old scan hold up a newer scan. SCAN needs
+            # the freshest obstacle observation, not a FIFO backlog.
+            self.counts["drop_superseded"] += len(self.pending_clouds)
+            self.pending_clouds.clear()
         self.pending_clouds.append((msg, time.monotonic(), False))
         self.counts["cloud_queued"] += 1
 
@@ -403,6 +445,7 @@ class LiveScanBridge(Node):
 
     def publish_diagnostics(self):
         now_mono = time.monotonic()
+        now_ns = self.get_clock().now().nanoseconds
         status_fresh = self._status_is_fresh()
         pose_fresh = self._pose_rx_is_fresh()
         output_age = None
@@ -411,24 +454,79 @@ class LiveScanBridge(Node):
                 0.0, self.last_cloud_age_s + now_mono - self.last_cloud_out_monotonic)
         cloud_fresh = output_age is not None and output_age <= self.max_cloud_age
         pending_age = now_mono - self.pending_clouds[0][1] if self.pending_clouds else 0.0
+
+        cloud_input_age = None
+        if self.last_cloud_input_stamp_ns is not None:
+            cloud_input_age = (now_ns - self.last_cloud_input_stamp_ns) / 1e9
+        cloud_input_rx_age = None
+        if self.last_cloud_input_rx_monotonic > 0.0:
+            cloud_input_rx_age = now_mono - self.last_cloud_input_rx_monotonic
+
+        latest_pose_stamp_ns = self.pose_samples[-1][0] if self.pose_samples else None
+        oldest_pose_stamp_ns = self.pose_samples[0][0] if self.pose_samples else None
+        pose_scan_skew = None
+        pose_scan_before = None
+        pose_scan_after = None
+        pose_scan_bracket_gap = None
+        pose_scan_bracket_available = False
+        if self.last_cloud_input_stamp_ns is not None and self.pose_samples:
+            scan_ns = self.last_cloud_input_stamp_ns
+            pose_scan_skew = (scan_ns - latest_pose_stamp_ns) / 1e9
+            before = [sample[0] for sample in self.pose_samples if sample[0] <= scan_ns]
+            after = [sample[0] for sample in self.pose_samples if sample[0] >= scan_ns]
+            if before:
+                pose_scan_before = (scan_ns - before[-1]) / 1e9
+            if after:
+                pose_scan_after = (after[0] - scan_ns) / 1e9
+            if before and after:
+                pose_scan_bracket_gap = (after[0] - before[-1]) / 1e9
+                pose_scan_bracket_available = (
+                    pose_scan_bracket_gap <= self.pose_interpolation_max_gap)
+
+        if pose_scan_skew is None:
+            pose_scan_alignment = "unknown"
+        elif pose_scan_skew > 0.05:
+            pose_scan_alignment = "pose_behind_scan"
+        elif pose_scan_skew < -0.05:
+            pose_scan_alignment = "pose_ahead_of_scan"
+        else:
+            pose_scan_alignment = "aligned"
+
         ready = status_fresh and pose_fresh and cloud_fresh and self.sensor_extrinsic_ready
         data = {
-            "schema": "n01.live_scan_readiness.v4",
+            "schema": "n01.live_scan_readiness.v5",
             "status": "LIVE_SCAN_INPUTS_READY" if ready else "WAITING_OR_BLOCKED",
             "localization_status": self.status_reason,
             "localization_status_fresh": bool(status_fresh),
+            "localization_status_stamp_age_s": self.status_stamp_age_s,
             "robot_pose_topic": self.pose_topic,
             "robot_pose_contract": self.pose_contract_error or "map_to_base_footprint",
             "robot_pose_receive_fresh": bool(pose_fresh),
+            "robot_pose_receive_age_s": (
+                now_mono - self.pose_rx_monotonic if self.pose_rx_monotonic > 0.0 else None),
+            "robot_pose_stamp_age_s": self.pose_stamp_age_s,
             "robot_pose_cache_samples": len(self.pose_samples),
+            "robot_pose_oldest_stamp_ns": oldest_pose_stamp_ns,
+            "robot_pose_newest_stamp_ns": latest_pose_stamp_ns,
             "robot_pose_last_stamp_ns": self.last_pose_stamp_ns,
             "robot_pose_interpolation_max_gap_s": self.pose_interpolation_max_gap,
+            "robot_pose_max_stamp_age_s": self.max_pose_stamp_age,
             "robot_pose_last_error": self.last_pose_error,
+            "cloud_input_stamp_ns": self.last_cloud_input_stamp_ns,
+            "cloud_input_age_s": cloud_input_age,
+            "cloud_input_receive_age_s": cloud_input_rx_age,
+            "pose_scan_skew_s": pose_scan_skew,
+            "pose_scan_alignment": pose_scan_alignment,
+            "pose_scan_before_delta_s": pose_scan_before,
+            "pose_scan_after_delta_s": pose_scan_after,
+            "pose_scan_bracket_gap_s": pose_scan_bracket_gap,
+            "pose_scan_bracket_available": pose_scan_bracket_available,
             "sensor_extrinsic_parent_frame": self.body_frame,
             "sensor_extrinsic_child_frame": self.cloud_frame,
             "sensor_extrinsic_ready": bool(self.sensor_extrinsic_ready),
             "cloud_output_fresh": bool(cloud_fresh),
             "cloud_output_age_s": output_age,
+            "cloud_output_stamp_ns": self.last_processed_scan_stamp_ns or None,
             "vendor_imu_sync_ok": bool(self.status_imu_sync),
             "fitness_mse": self.status_fitness if math.isfinite(self.status_fitness) else None,
             "velocity_estimate_valid": bool(self.last_velocity_valid),
@@ -436,7 +534,9 @@ class LiveScanBridge(Node):
             "input_cloud_frame": self.cloud_frame,
             "output_cloud_frame": self.map_frame,
             "outputs": ["/cloud", "/sensor_pose", "/body_pose"],
+            "queue_policy": "latest_only_exact_scan_stamp",
             "pending_clouds": len(self.pending_clouds),
+            "pending_cloud_limit": 1,
             "oldest_pending_wait_s": pending_age,
             "last_cloud_age_s": self.last_cloud_age_s,
             "last_tf_wait_s": self.last_tf_wait_s,
