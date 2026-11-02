@@ -233,7 +233,9 @@ class DynamicObstacleTracker(Node):
             }, sort_keys=True)))
             return
         try:
-            points = decode_pointcloud_xyz(msg, self.max_points, 20.0)
+            # Coordinates are already in the global map frame; a radial
+            # sensor-range filter around (0,0,0) would incorrectly clip distant map areas.
+            points = decode_pointcloud_xyz(msg, self.max_points, None)
         except (ValueError, OverflowError) as exc:
             self.last_error = str(exc)
             return
