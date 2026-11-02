@@ -57,13 +57,23 @@ Stop only the previous `live_scan.launch.py` instance with Ctrl+C. Keep the vend
 ```bash
 cd /home/demo/lyy/hivecore-navigation
 source /opt/ros/humble/setup.bash
-git fetch origin feat/live-localization-scan-bridge
+git fetch origin
+git branch --set-upstream-to=origin/feat/live-localization-scan-bridge
 git pull --ff-only
 colcon build --packages-up-to n01_live_navigation scan_planner n01_static_map n01_scan_dynacbf_bridge --event-handlers console_direct+
 source install/setup.bash
 colcon test --packages-select n01_live_navigation
 colcon test-result --verbose
 ```
+
+Before launching the full planner, verify that the robot-description contains the rigid sensor mount required by the bridge:
+
+```bash
+ros2 run tf2_ros tf2_monitor base_footprint lidar_link
+ros2 run tf2_ros tf2_echo base_footprint lidar_link
+```
+
+This body-to-sensor transform must exist. A direct `map -> lidar_link` TF edge is no longer required because the bridge obtains the global `map -> base_footprint` pose from timestamped `/robot_pose` and interpolates it at each scan. Do not invent or manually guess the sensor mount if the body-to-LiDAR transform is absent; inspect the active URDF/robot_description and correct its frame contract.
 
 Launch the same PCD/map integration with RViz enabled:
 
@@ -90,7 +100,7 @@ ros2 launch n01_live_navigation live_scan.launch.py \
 - `/n01/live_navigation/hive2_wheel_kinematics` — nominal wheel steering arrows.
 - `/n01/live_navigation/hive2_feasibility` — non-actuating necessary-condition JSON.
 - `/n01/live_navigation/goal_gate_status` — accepted/rejected RViz goal reason.
-- `/mapping_processing_timings` — raw vendor Vector3Stamped, captured by the supervisor.
+- `/mapping_processing_timings` — raw vendor Vector3Stamped, captured by the supervisor; after the full launch, its subscription count should include `n01_live_runtime_supervisor`.
 - `/robot_pose` — vendor map-frame Odometry used for exact-scan-time pose interpolation.
 
 ## Acceptance boundary
