@@ -78,6 +78,8 @@ class FourStageDeliveryTests(unittest.TestCase):
         self.assertIn("robot_pose_publisher_count", bridge)
         self.assertIn("robot_pose_stamp_progress_age_s", bridge)
         self.assertIn("drop_pose_duplicate_conflict", bridge)
+        self.assertIn("if conflict_was_latest:", bridge)
+        self.assertIn("self.pose_rx_monotonic = 0.0", bridge)
         self.assertIn('"global_robot_pose_missing_or_stale"', source)
         self.assertIn('"global_robot_pose_anchor_outside_scan_time_budget"', source)
 
