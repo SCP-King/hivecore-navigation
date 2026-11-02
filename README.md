@@ -255,3 +255,10 @@ env -u N01_G4_GROUND_Z_MAP_M -u N01_G4_FLOOR_Z_VERIFIED bash scripts/run_n01_g4_
 ```
 
 输出 `.../runs/n01_g4_research/run_*/bag_start_preflight/g48_preflight.json` 和 G4.3 XY 研究线路/冲突 SVG。**这一步不运行 ROS 节点，不触发 SCAN，也不允许运动。** 若真实 Bag 起点处在 UNKNOWN，按证据阻断，不偷挪起点。详情：[G4.8 原始 Bag 起点和未知地面 Z 说明](docs/n01_g48_real_bag_anchored_preflight.md)。新版尚待用户 Ubuntu 端实际验证。
+
+
+## N-01 live six-module stack (vendor SLAM preserved)
+
+The `feat/live-localization-scan-bridge` branch integrates the vendor's existing localization with native SCAN: scan-time TF FIFO, exact-stamp `/cloud` + `/sensor_pose` pairing inside SCAN, static PCD overlay, dynamic occupancy plus visualization-only unmatched obstacle tracks, native SCAN B-spline planning, a non-actuating Hive2 four-wheel steering necessary-condition screen, runtime readiness and RViz visualization.
+
+Build/launch and limitations: [N-01 live six-module stack](docs/n01_live_navigation_full_stack.md). The launch remains planning-only; the Hive2 controller allocation, physical wheel-contact geometry, pitch-hold feedback, full-body collision envelope and braking distance are not verified. No actuator command publisher is included.
