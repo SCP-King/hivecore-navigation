@@ -56,7 +56,7 @@ python3 scripts/n01_fast_lio_bag_preflight.py \
 - FAST-LIO odometry、path、registered cloud、map 等输出 remap 到 `/n01/fast_lio/*`；
 - 私有地图帧设为 `n01_fast_lio_map`；
 - 里程计 child frame 设为 `imu_link`；
-- FAST-LIO TF broadcaster 默认禁用，且 launch 再次显式传 `common.publish_tf=false`；
+- FAST-LIO TF broadcaster 默认禁用，且 launch 再次显式传 `common.publish_tf=false`；上游 broadcaster 对象也仅在该参数为 true 时才创建，因此默认不会额外注册 `/tf` publisher endpoint；
 - 输入仍只订阅已有 `/livox/lidar` 和 `/livox/imu`；
 - 不触碰甲方 `/localization_status`、`/robot_pose`、`/tf`、`/livox/lidar/geo_filtered`，也不发布 `/cmd_vel`、`/chassis_controller/rt_command`。
 
