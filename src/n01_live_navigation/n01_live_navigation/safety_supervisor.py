@@ -6,7 +6,7 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Bool, String
 
-from .core import evaluate_safety_gate
+from .core import evaluate_safety_gate, stamped_data_is_fresh
 
 
 class LiveSafetySupervisor(Node):
@@ -112,8 +112,14 @@ class LiveSafetySupervisor(Node):
             health_age is not None and 0.0 <= health_age <= self.max_health_age)
         feasibility_fresh = (
             feasibility_age is not None and 0.0 <= feasibility_age <= self.max_feasibility_age)
-        dynamic_fresh = (
+        dynamic_receive_fresh = (
             dynamic_age is not None and 0.0 <= dynamic_age <= self.max_dynamic_age)
+        dynamic_stamp_fresh, dynamic_stamp_age = stamped_data_is_fresh(
+            self.dynamic_status.get("cloud_stamp_ns"),
+            self.get_clock().now().nanoseconds,
+            self.max_dynamic_age,
+        )
+        dynamic_fresh = bool(dynamic_receive_fresh and dynamic_stamp_fresh)
         status = evaluate_safety_gate(
             health_fresh=health_fresh,
             navigation_ready=self.health.get("navigation_ready") is True,
@@ -131,6 +137,8 @@ class LiveSafetySupervisor(Node):
             "system_health_age_s": health_age,
             "feasibility_age_s": feasibility_age,
             "dynamic_obstacle_status_age_s": dynamic_age,
+            "dynamic_obstacle_receive_fresh": bool(dynamic_receive_fresh),
+            "dynamic_obstacle_cloud_stamp_age_s": dynamic_stamp_age,
             "dynamic_obstacle_status_fresh": bool(dynamic_fresh),
             "dynamic_obstacle_status": self.dynamic_status,
             "physical_checks": self.physical_checks,

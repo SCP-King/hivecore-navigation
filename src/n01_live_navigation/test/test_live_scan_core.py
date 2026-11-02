@@ -19,6 +19,7 @@ from n01_live_navigation.core import (
     motion_compensated_pose,
     scan_output_is_fresh,
     evaluate_safety_gate,
+    stamped_data_is_fresh,
     select_pose_anchor,
 )
 
@@ -203,6 +204,16 @@ class LiveScanCoreTests(unittest.TestCase):
             1_000_000_000, 1_100_000_000, 0.70, 0.10, 0.60, 0.45)[0])
         self.assertFalse(scan_output_is_fresh(
             None, 1_100_000_000, 0.10, 0.10, 0.60, 0.45)[0])
+
+    def test_sensor_stamp_freshness_rejects_stale_future_and_zero_stamps(self):
+        now_ns = 2_000_000_000
+        fresh, age = stamped_data_is_fresh(1_800_000_000, now_ns, 0.5)
+        self.assertTrue(fresh)
+        self.assertAlmostEqual(age, 0.2)
+        self.assertFalse(stamped_data_is_fresh(1_000_000_000, now_ns, 0.5)[0])
+        self.assertFalse(stamped_data_is_fresh(2_300_000_000, now_ns, 0.5)[0])
+        self.assertEqual(stamped_data_is_fresh(0, now_ns, 0.5), (False, None))
+        self.assertEqual(stamped_data_is_fresh(None, now_ns, 0.5), (False, None))
 
     def test_safety_gate_never_authorizes_motion(self):
         result = evaluate_safety_gate(

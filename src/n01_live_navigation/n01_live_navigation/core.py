@@ -490,6 +490,27 @@ def scan_output_is_fresh(last_processed_stamp_ns, latest_input_stamp_ns,
     return bool(fresh), float(lag_s)
 
 
+def stamped_data_is_fresh(stamp_ns, now_ns, max_age_s, future_tolerance_s=0.2):
+    """Validate a sensor/source timestamp against the node's ROS clock."""
+    try:
+        stamp = int(stamp_ns)
+        now = int(now_ns)
+        max_age = float(max_age_s)
+        future_tolerance = float(future_tolerance_s)
+    except (TypeError, ValueError, OverflowError):
+        return False, None
+    if (
+        stamp <= 0 or now <= 0
+        or not math.isfinite(max_age) or max_age <= 0.0
+        or not math.isfinite(future_tolerance) or future_tolerance < 0.0
+    ):
+        return False, None
+    age_s = (now - stamp) / 1e9
+    if not math.isfinite(age_s):
+        return False, None
+    return bool(-future_tolerance <= age_s <= max_age), float(age_s)
+
+
 def evaluate_safety_gate(*, health_fresh, navigation_ready,
                          feasibility_fresh, feasibility_status,
                          candidate_review_ready, operator_hold,

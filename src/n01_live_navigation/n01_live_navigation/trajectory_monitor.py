@@ -158,6 +158,10 @@ class Hive2TrajectoryMonitor(Node):
                 int(msg.order), list(msg.knots),
                 [(p.x, p.y, p.z) for p in msg.pos_pts], table_samples=500)
             points = curve.table_xyz
+            trajectory_start_ns = (
+                int(msg.start_time.sec) * 1000000000
+                + int(msg.start_time.nanosec))
+            trajectory_duration_s = float(curve.end - curve.start)
             screen = four_wheel_steer_screen(
                 points,
                 max_speed=self.max_speed,
@@ -200,6 +204,13 @@ class Hive2TrajectoryMonitor(Node):
         pitch_match = self._pitch_reference_match()
         now_mono = time.monotonic()
         now_ns = self.get_clock().now().nanoseconds
+        trajectory_start_age_s = (
+            (now_ns - trajectory_start_ns) / 1e9
+            if trajectory_start_ns > 0 else None)
+        trajectory_active = bool(
+            trajectory_start_age_s is not None
+            and trajectory_duration_s > 0.0
+            and -0.25 <= trajectory_start_age_s <= trajectory_duration_s + 0.2)
         body_stamp_age = (
             (now_ns - self.body_pose_stamp_ns) / 1e9
             if self.body_pose_stamp_ns is not None else None)
@@ -222,8 +233,8 @@ class Hive2TrajectoryMonitor(Node):
             and joint_stamp_age is not None
             and -0.2 <= joint_stamp_age <= 0.5)
         candidate_review_ready = bool(
-            screen["necessary_conditions_pass"] and body_feedback_fresh
-            and joint_feedback_fresh and pitch_match is True)
+            trajectory_active and screen["necessary_conditions_pass"]
+            and body_feedback_fresh and joint_feedback_fresh and pitch_match is True)
         data = {
             "schema": "n01.hive2_candidate_feasibility.v1",
             "status": (
@@ -238,6 +249,9 @@ class Hive2TrajectoryMonitor(Node):
                 "sec": int(msg.start_time.sec),
                 "nanosec": int(msg.start_time.nanosec),
             },
+            "trajectory_start_age_s": trajectory_start_age_s,
+            "trajectory_duration_s": trajectory_duration_s,
+            "trajectory_active": trajectory_active,
             "max_speed_limit_mps": self.max_speed,
             "max_accel_limit_mps2": self.max_accel,
             **screen,
@@ -252,7 +266,8 @@ class Hive2TrajectoryMonitor(Node):
             "joint_feedback_receive_age_s": joint_rx_age,
             "candidate_review_ready": candidate_review_ready,
             "candidate_review_status": (
-                "CANDIDATE_REVIEW_READY" if candidate_review_ready
+                "TRAJECTORY_NOT_ACTIVE_OR_STALE" if not trajectory_active
+                else "CANDIDATE_REVIEW_READY" if candidate_review_ready
                 else "WAITING_FOR_FRESH_BODY_JOINT_FEEDBACK_OR_PITCH_MATCH"
             ),
             "pitch_hold_feedback_verified": False,

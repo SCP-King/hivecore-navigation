@@ -13,6 +13,8 @@ from tf2_msgs.msg import TFMessage
 from geometry_msgs.msg import Vector3Stamped
 from scan_planner_msgs.msg import Bspline
 
+from .core import stamped_data_is_fresh
+
 
 class LiveRuntimeSupervisor(Node):
     def __init__(self):
@@ -179,7 +181,14 @@ class LiveRuntimeSupervisor(Node):
         # body<-LiDAR extrinsic lookup both succeed.
         navigation_ready = not blockers
         stage_b_ready = bool(navigation_ready and self.static_ready)
-        dynamic_fresh = dynamic_age is not None and 0.0 <= dynamic_age <= 1.0
+        dynamic_receive_fresh = (
+            dynamic_age is not None and 0.0 <= dynamic_age <= 1.0)
+        dynamic_stamp_fresh, dynamic_stamp_age = stamped_data_is_fresh(
+            self.dynamic_obstacle.get("cloud_stamp_ns"),
+            now_ns,
+            1.0,
+        )
+        dynamic_fresh = bool(dynamic_receive_fresh and dynamic_stamp_fresh)
         dynamic_status = self.dynamic_obstacle.get("status", "WAITING")
         dynamic_status_valid = dynamic_status in (
             "NO_UNMATCHED_CLUSTERS", "CANDIDATES_AVAILABLE")
@@ -206,6 +215,8 @@ class LiveRuntimeSupervisor(Node):
                 "dynamic_tracker_status": dynamic_status,
                 "dynamic_tracker_age_s": dynamic_age,
                 "dynamic_tracker_fresh": bool(dynamic_fresh),
+                "dynamic_tracker_receive_fresh": bool(dynamic_receive_fresh),
+                "dynamic_tracker_stamp_age_s": dynamic_stamp_age,
                 "dynamic_tracker_status_valid": bool(dynamic_status_valid),
                 "dynamic_tracker_review_required": bool(
                     dynamic_status == "CANDIDATES_AVAILABLE"),
@@ -280,6 +291,7 @@ class LiveRuntimeSupervisor(Node):
             "robot_feasibility": self.robot_feasibility,
             "dynamic_obstacle_status": self.dynamic_obstacle,
             "dynamic_obstacle_status_fresh": bool(dynamic_fresh),
+            "dynamic_obstacle_cloud_stamp_age_s": dynamic_stamp_age,
             "planner_candidate_fresh": bool(planner_fresh),
             "stages": stages,
             "actuator_output": "DISABLED",
