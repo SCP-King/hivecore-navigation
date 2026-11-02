@@ -2,6 +2,9 @@ import math
 import unittest
 from types import SimpleNamespace
 
+from n01_live_navigation.goal_gate import goal_is_valid
+from geometry_msgs.msg import PoseStamped
+
 from n01_live_navigation.core import (
     estimate_velocity, localization_is_tracking, rotate_translate,
 )
@@ -45,6 +48,21 @@ class LiveScanCoreTests(unittest.TestCase):
     def test_bad_quaternion_rejected(self):
         with self.assertRaises(ValueError):
             rotate_translate((0, 0, 0), (0, 0, 0), (0, 0, 0, 0))
+
+    def test_goal_gate_requires_live_and_static_readiness(self):
+        goal = PoseStamped()
+        goal.header.frame_id = "map"
+        goal.pose.position.x = 1.0
+        goal.pose.position.y = 2.0
+        goal.pose.position.z = 0.0
+        self.assertEqual(goal_is_valid(goal, live_ready=False, static_ready=True),
+                         (False, "live_localization_or_cloud_not_ready"))
+        self.assertEqual(goal_is_valid(goal, live_ready=True, static_ready=False),
+                         (False, "native_scan_static_pcd_not_ready"))
+        self.assertEqual(goal_is_valid(goal, live_ready=True, static_ready=True),
+                         (True, "accepted"))
+        goal.header.frame_id = "odom"
+        self.assertFalse(goal_is_valid(goal, live_ready=True, static_ready=True)[0])
 
     def test_velocity_requires_valid_timestamp_delta(self):
         v, ok = estimate_velocity(((0, 0, 0), 1.0), ((.1, 0, 0), 1.1))
