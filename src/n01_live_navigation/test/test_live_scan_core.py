@@ -17,6 +17,8 @@ from n01_live_navigation.core import (
     interpolate_pose,
     compose_transform,
     motion_compensated_pose,
+    scan_output_is_fresh,
+    evaluate_safety_gate,
 )
 
 
@@ -172,6 +174,33 @@ class LiveScanCoreTests(unittest.TestCase):
         )
         np.testing.assert_allclose(pose[0], (3.0, 4.0, 0.0), atol=1e-7)
         np.testing.assert_allclose(pose[1], yaw90, atol=1e-7)
+
+    def test_scan_output_accepts_only_bounded_fresh_lag(self):
+        fresh, lag = scan_output_is_fresh(
+            1_000_000_000, 1_250_000_000, 0.30, 0.10, 0.60, 0.45)
+        self.assertTrue(fresh)
+        self.assertAlmostEqual(lag, 0.25)
+        self.assertFalse(scan_output_is_fresh(
+            1_000_000_000, 1_600_000_000, 0.30, 0.10, 0.60, 0.45)[0])
+        self.assertFalse(scan_output_is_fresh(
+            1_000_000_000, 1_100_000_000, 0.70, 0.10, 0.60, 0.45)[0])
+        self.assertFalse(scan_output_is_fresh(
+            None, 1_100_000_000, 0.10, 0.10, 0.60, 0.45)[0])
+
+    def test_safety_gate_never_authorizes_motion(self):
+        result = evaluate_safety_gate(
+            health_fresh=True,
+            navigation_ready=True,
+            feasibility_fresh=True,
+            feasibility_status="NECESSARY_CONDITIONS_PASS",
+            candidate_review_ready=True,
+            operator_hold=False,
+            physical_checks={},
+        )
+        self.assertFalse(result["execution_authorized"])
+        self.assertEqual(result["actuator_output"], "DISABLED")
+        self.assertEqual(result["safety_authorization"], "NEVER")
+        self.assertTrue(result["physical_acceptance_missing"])
 
     def test_velocity_requires_valid_timestamp_delta(self):
         v, ok = estimate_velocity(((0, 0, 0), 1.0), ((.1, 0, 0), 1.1))
