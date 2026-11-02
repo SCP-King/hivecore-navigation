@@ -40,7 +40,7 @@ ros2 launch n01_live_navigation live_scan.launch.py \
 
 ## 目标点与输出
 
-SCAN 使用原生 `fsm.navi_mode=1`，目标输入为 `/move_base_simple/goal`，frame 必须是 `map`。RViz 可使用 2D Goal 发布目标。SCAN 结果发布到 `/planning/bspline`，可同时查看 `/grid_map/occupancy`、`/grid_map/occupancy_inflate`、`/grid_map/static_overlay_ready` 与 `/n01/live_navigation/readiness`。
+SCAN 使用原生 `fsm.navi_mode=1`。RViz 仍向 `/move_base_simple/goal` 发布目标，`n01_live_goal_gate` 只在实时定位/点云适配器已就绪且 `/grid_map/static_overlay_ready=true` 后才转发到 SCAN；目标 frame 必须是 `map`。SCAN 结果发布到 `/planning/bspline`，可同时查看 `/grid_map/occupancy`、`/grid_map/occupancy_inflate`、`/grid_map/static_overlay_ready` 与 `/n01/live_navigation/readiness`。
 
 查看输入/结果：
 ```bash
