@@ -1,0 +1,148 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Global Options:
+    Fixed Frame: map
+    Background Color: 24; 29; 38
+    Frame Rate: 25
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Enabled: true
+      Name: Map Grid
+      Cell Size: 1
+      Plane: XY
+      Color: 90; 100; 110
+    - Class: rviz_default_plugins/TF
+      Enabled: true
+      Name: TF
+      Frame Timeout: 5
+      Marker Scale: 0.35
+      Show Arrows: true
+      Show Axes: true
+      Show Names: true
+    - Class: rviz_default_plugins/PointCloud2
+      Enabled: true
+      Name: Live Scan in Map
+      Topic:
+        Value: /cloud
+        Reliability Policy: Best Effort
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 5
+      Style: Points
+      Size (Pixels): 2
+      Color Transformer: FlatColor
+      Color: 210; 225; 245
+    - Class: rviz_default_plugins/PointCloud2
+      Enabled: true
+      Name: Static PCD Map
+      Topic:
+        Value: /grid_map/static_occupancy
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 1
+      Style: Points
+      Size (Pixels): 2
+      Color Transformer: FlatColor
+      Color: 100; 115; 135
+    - Class: rviz_default_plugins/PointCloud2
+      Enabled: true
+      Name: SCAN Occupancy
+      Topic:
+        Value: /grid_map/occupancy
+        Reliability Policy: Best Effort
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 5
+      Style: Points
+      Size (Pixels): 3
+      Color Transformer: FlatColor
+      Color: 70; 190; 120
+    - Class: rviz_default_plugins/PointCloud2
+      Enabled: true
+      Name: SCAN Inflated Collision Layer
+      Topic:
+        Value: /grid_map/occupancy_inflate
+        Reliability Policy: Best Effort
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 5
+      Style: Points
+      Size (Pixels): 4
+      Color Transformer: FlatColor
+      Color: 255; 115; 55
+    - Class: rviz_default_plugins/PointCloud2
+      Enabled: true
+      Name: Unmatched Dynamic Candidates (visual only)
+      Topic:
+        Value: /n01/live_navigation/dynamic_obstacle_candidates
+        Reliability Policy: Best Effort
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 5
+      Style: Points
+      Size (Pixels): 5
+      Color Transformer: FlatColor
+      Color: 255; 40; 20
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Dynamic Candidate Tracks
+      Marker Topic:
+        Value: /n01/live_navigation/dynamic_obstacle_tracks
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 10
+    - Class: rviz_default_plugins/Path
+      Enabled: true
+      Name: Native SCAN B-spline Candidate
+      Topic:
+        Value: /n01/live_navigation/hive2_candidate_path
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 5
+      Color: 30; 230; 150
+      Alpha: 1
+      Line Style: Lines
+      Line Width: 0.12
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Hive2 Nominal Wheel Steering Screen (not commands)
+      Marker Topic:
+        Value: /n01/live_navigation/hive2_wheel_kinematics
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 5
+    - Class: rviz_default_plugins/Marker
+      Enabled: true
+      Name: SCAN Self Inflation
+      Topic:
+        Value: /self_inflation
+        Reliability Policy: Reliable
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Depth: 1
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/Measure
+    - Class: rviz_default_plugins/SetInitialPose
+    - Class: rviz_default_plugins/SetGoal
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 16
+      Focal Point: {X: 0, Y: 0, Z: 0}
+      Pitch: 0.75
+      Yaw: 0.8
+Window Geometry:
+  Width: 1500
+  Height: 900
+  X: 60
+  Y: 40
