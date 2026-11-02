@@ -163,12 +163,17 @@ void GridMap::initMap(rclcpp::Node *node)
   }
   else if (mp_.sensor_type_ == "lidar")
   {
-    lidar_pose_sub_ = node_->create_subscription<nav_msgs::msg::Odometry>(
-        "sensor_pose", rclcpp::SensorDataQoS(),
-        std::bind(&GridMap::sensorPoseCallback, this, std::placeholders::_1));
-    cloud_sub_ = node_->create_subscription<sensor_msgs::msg::PointCloud2>(
-        "cloud", rclcpp::SensorDataQoS(),
-        std::bind(&GridMap::cloudCallback, this, std::placeholders::_1));
+    // The live bridge emits /cloud and /sensor_pose with the exact same scan
+    // stamp. Never pair a cloud with a pose left over from a previous scan.
+    cloud_sub_ = std::make_shared<message_filters::Subscriber<sensor_msgs::msg::PointCloud2>>();
+    lidar_pose_sub_ = std::make_shared<message_filters::Subscriber<nav_msgs::msg::Odometry>>();
+    cloud_sub_->subscribe(node_, "cloud", rmw_qos_profile_sensor_data);
+    lidar_pose_sub_->subscribe(node_, "sensor_pose", rmw_qos_profile_sensor_data);
+    sync_cloud_pose_.reset(new message_filters::Synchronizer<SyncPolicyCloudPose>(
+        SyncPolicyCloudPose(100), *cloud_sub_, *lidar_pose_sub_));
+    sync_cloud_pose_->registerCallback(
+        std::bind(&GridMap::cloudPoseCallback, this,
+                  std::placeholders::_1, std::placeholders::_2));
   }
 
   if (static_cloud_enabled_) {
@@ -891,6 +896,21 @@ void GridMap::sensorPoseCallback(const nav_msgs::msg::Odometry::ConstSharedPtr &
   md_.ray_q_ = ray_q;
   md_.has_ray_pose_ = true;
   updateSlidingMap(md_.ray_pos_);
+}
+
+void GridMap::cloudPoseCallback(
+    const sensor_msgs::msg::PointCloud2::ConstSharedPtr& cloud,
+    const nav_msgs::msg::Odometry::ConstSharedPtr& pose)
+{
+  if (!cloud || !pose) return;
+  if (cloud->header.stamp.sec != pose->header.stamp.sec ||
+      cloud->header.stamp.nanosec != pose->header.stamp.nanosec) {
+    RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 1000,
+                         "[GridMap] reject unsynchronized cloud/sensor_pose pair");
+    return;
+  }
+  sensorPoseCallback(pose);
+  cloudCallback(cloud);
 }
 
 void GridMap::slidingMapFrameCallback(const nav_msgs::msg::Odometry::ConstSharedPtr &pose)
