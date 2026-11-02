@@ -54,7 +54,6 @@ class DynamicObstacleTracker(Node):
         self.static_ready = False
         self.tracks = {}
         self.next_track_id = 1
-        self.last_marker_ids = set()
         self.cloud_count = 0
         self.cluster_count = 0
         self.last_candidate_count = 0
@@ -71,6 +70,7 @@ class DynamicObstacleTracker(Node):
             MarkerArray, "/n01/live_navigation/dynamic_obstacle_tracks", 10)
         self.diag_pub = self.create_publisher(
             String, "/n01/live_navigation/dynamic_obstacle_status", 10)
+        self.create_timer(0.2, self.expire_tracks)
 
     def _voxel_keys(self, points):
         keys = np.floor(np.asarray(points) / self.voxel).astype(np.int64)
@@ -151,6 +151,19 @@ class DynamicObstacleTracker(Node):
         self.tracks = active
         return expired
 
+    def expire_tracks(self):
+        now = time.monotonic()
+        expired = {
+            track_id for track_id, track in self.tracks.items()
+            if now - track["last_seen"] > self.track_timeout
+        }
+        if expired:
+            self.tracks = {
+                track_id: track for track_id, track in self.tracks.items()
+                if track_id not in expired
+            }
+            self._publish_markers(self.get_clock().now().to_msg(), expired)
+
     def _publish_markers(self, stamp, expired):
         array = MarkerArray()
         now_ids = set(self.tracks)
@@ -194,7 +207,6 @@ class DynamicObstacleTracker(Node):
             label.text = "candidate %d" % track_id
             array.markers.append(label)
         self.marker_pub.publish(array)
-        self.last_marker_ids = now_ids
 
     def on_cloud(self, msg):
         self.cloud_count += 1
@@ -202,6 +214,15 @@ class DynamicObstacleTracker(Node):
             self.last_error = "live_cloud_frame_mismatch"
             return
         if not self.static_ready:
+            self.candidate_pub.publish(self._cloud_message(np.empty((0, 3)), msg.header))
+            delete_all = MarkerArray()
+            clear_marker = Marker()
+            clear_marker.header.frame_id = self.map_frame
+            clear_marker.header.stamp = msg.header.stamp
+            clear_marker.action = Marker.DELETEALL
+            delete_all.markers.append(clear_marker)
+            self.marker_pub.publish(delete_all)
+            self.tracks.clear()
             self.diag_pub.publish(String(data=json.dumps({
                 "schema": "n01.dynamic_obstacle_status.v1",
                 "status": "WAITING_STATIC_MAP",
