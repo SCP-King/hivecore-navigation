@@ -33,6 +33,7 @@ class LiveRuntimeSupervisor(Node):
 
         self.bridge = {}
         self.static_ready = False
+        self.static_overlay_status = {"status": "WAITING_FOR_STATIC_OVERLAY_STATUS"}
         self.body_stamp_ns = None
         self.body_rx_monotonic = None
         self.map_tf_stamp_ns = None
@@ -57,6 +58,8 @@ class LiveRuntimeSupervisor(Node):
             String, self.get_parameter("status_topic").value, self.on_bridge, 10)
         self.create_subscription(
             Bool, self.get_parameter("static_ready_topic").value, self.on_static, latched)
+        self.create_subscription(
+            String, "/grid_map/static_overlay_status", self.on_static_overlay_status, latched)
         self.create_subscription(
             Odometry, self.get_parameter("body_pose_topic").value,
             self.on_body_pose, qos_profile_sensor_data)
@@ -86,6 +89,13 @@ class LiveRuntimeSupervisor(Node):
 
     def on_static(self, msg):
         self.static_ready = bool(msg.data)
+
+    def on_static_overlay_status(self, msg):
+        try:
+            self.static_overlay_status = json.loads(msg.data)
+        except (ValueError, TypeError):
+            self.static_overlay_status = {
+                "status": "INVALID_STATIC_OVERLAY_STATUS", "raw": msg.data}
 
     def on_body_pose(self, msg):
         self.body_stamp_ns = (
@@ -225,6 +235,7 @@ class LiveRuntimeSupervisor(Node):
                 "status": "READY_FOR_PLANNING" if stage_b_ready else "BLOCKED",
                 "ready": stage_b_ready,
                 "static_overlay_ready": bool(self.static_ready),
+                "static_overlay_diagnostic": self.static_overlay_status,
                 "native_scan_cloud_input": "/cloud",
                 "dynamic_tracker_status": dynamic_status,
                 "dynamic_tracker_age_s": dynamic_age,
@@ -284,6 +295,7 @@ class LiveRuntimeSupervisor(Node):
             "blockers": blockers,
             "bridge": self.bridge,
             "static_overlay_ready": bool(self.static_ready),
+            "static_overlay_diagnostic": self.static_overlay_status,
             "body_pose_stamp_age_s": body_stamp_age,
             "body_pose_receive_age_s": body_rx_age,
             "map_base_tf_observed": bool(tf_seen),

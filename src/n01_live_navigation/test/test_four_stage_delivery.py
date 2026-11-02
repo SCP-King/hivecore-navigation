@@ -59,6 +59,8 @@ class FourStageDeliveryTests(unittest.TestCase):
     def test_runtime_health_reports_planner_and_scene_diagnostic_freshness(self):
         source = (ROOT / "src/n01_live_navigation/n01_live_navigation/runtime_supervisor.py").read_text()
         self.assertIn('"scene_diagnostics_ready": scene_diagnostics_ready', source)
+        self.assertIn('"/grid_map/static_overlay_status"', source)
+        self.assertIn('"static_overlay_diagnostic"', source)
         self.assertIn('"planner_candidate_status"', source)
         self.assertIn('"dynamic_tracker_review_required"', source)
         self.assertIn("stamped_data_is_fresh(", source)

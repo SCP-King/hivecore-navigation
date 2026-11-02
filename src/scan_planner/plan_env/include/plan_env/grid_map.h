@@ -18,6 +18,7 @@
 #include <sensor_msgs/image_encodings.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <std_msgs/msg/bool.hpp>
+#include <std_msgs/msg/string.hpp>
 #include <tf2_ros/transform_broadcaster.h>
 #include <visualization_msgs/msg/marker.hpp>
 
@@ -215,6 +216,7 @@ private:
   // Optional static PCD map layer; dynamic raycasting cannot clear static obstacles.
   void staticCloudCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr& cloud);
   void rebuildStaticOverlay();
+  void publishStaticOverlayStatus(bool ready, const std::string& reason);
 
   // update occupancy by raycasting
   void updateOccupancyCallback();
@@ -270,7 +272,14 @@ private:
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr sliding_map_frame_sub_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr static_cloud_sub_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr static_ready_pub_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr static_status_pub_;
   sensor_msgs::msg::PointCloud2::ConstSharedPtr static_source_cloud_;
+  Eigen::Vector3d static_source_min_{Eigen::Vector3d::Zero()};
+  Eigen::Vector3d static_source_max_{Eigen::Vector3d::Zero()};
+  size_t static_source_points_{0};
+  size_t static_window_points_{0};
+  bool static_source_valid_{false};
+  bool static_window_intersects_source_bounds_{false};
   std::vector<char> static_occupancy_buffer_;
   std::vector<char> static_inflate_buffer_;
   bool static_cloud_enabled_{false};
