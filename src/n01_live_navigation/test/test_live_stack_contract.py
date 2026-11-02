@@ -40,6 +40,19 @@ class LiveStackContractTests(unittest.TestCase):
         self.assertNotIn("map_to_base_footprint_tf_not_observed", supervisor)
         self.assertIn("sensor_extrinsic_ready", supervisor)
 
+    def test_bridge_is_latest_only_and_reports_scan_pose_timestamp_alignment(self):
+        bridge = (ROOT / "src/n01_live_navigation/n01_live_navigation/live_scan_bridge.py").read_text()
+        launch = (ROOT / "src/n01_live_navigation/launch/live_scan.launch.py").read_text()
+        config = (ROOT / "src/n01_live_navigation/config/live_scan.yaml").read_text()
+        self.assertIn('"queue_policy": "latest_only_exact_scan_stamp"', bridge)
+        self.assertIn('"pose_scan_skew_s"', bridge)
+        self.assertIn('"pose_scan_bracket_available"', bridge)
+        self.assertIn('"max_pose_stamp_age_s": 0.7', launch)
+        self.assertIn('"max_pending_clouds": 1', launch)
+        self.assertIn('max_pose_stamp_age_s: 0.7', config)
+        self.assertIn('max_pending_clouds: 1', config)
+        self.assertIn('self.counts["drop_superseded"] += len(self.pending_clouds)', bridge)
+
     def test_live_navigation_remains_non_actuating(self):
         package = ROOT / "src/n01_live_navigation/n01_live_navigation"
         combined = "\n".join(path.read_text() for path in package.glob("*.py"))
