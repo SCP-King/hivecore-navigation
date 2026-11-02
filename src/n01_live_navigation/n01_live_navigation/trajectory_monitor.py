@@ -212,10 +212,6 @@ class Hive2TrajectoryMonitor(Node):
         self.diag_pub.publish(String(data=json.dumps(data, sort_keys=True)))
         self.last_error = ""
 
-    def main_spin(self):
-        rclpy.spin(self)
-
-
 def main(args=None):
     rclpy.init(args=args)
     node = Hive2TrajectoryMonitor()
