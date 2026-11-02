@@ -36,7 +36,11 @@ class LiveStackContractTests(unittest.TestCase):
         self.assertIn('"odom_child_frame": "base_link"', launch)
         self.assertIn('"body_frame": "base_footprint"', launch)
         self.assertIn("motion_compensated_pose(", bridge)
-        self.assertIn("self.last_processed_scan_stamp_ns == self.last_cloud_input_stamp_ns", bridge)
+        self.assertIn("scan_output_is_fresh(", bridge)
+        self.assertIn("max_latest_scan_lag_s", bridge)
+        self.assertIn("def _publish_live_body_pose(", bridge)
+        self.assertIn("scan_body_pose_pub", bridge)
+        self.assertIn('"/body_pose"', bridge)
         self.assertIn("def on_odometry(", bridge)
         self.assertIn("odom_receive_fresh", supervisor)
         self.assertIn("interpolate_pose(", bridge)
@@ -59,6 +63,8 @@ class LiveStackContractTests(unittest.TestCase):
         self.assertIn('"max_pose_anchor_delta_s": 0.5', launch)
         self.assertIn('"max_pending_clouds": 1', launch)
         self.assertIn('max_pose_stamp_age_s: 0.7', config)
+        self.assertIn('max_latest_scan_lag_s: 0.45', config)
+        self.assertIn('body_pose_publish_period_s: 0.05', config)
         self.assertIn('max_pose_anchor_delta_s: 0.5', config)
         self.assertIn('odom_interpolation_max_gap_s: 0.08', config)
         self.assertIn('odom_cache_size: 512', config)
@@ -72,6 +78,9 @@ class LiveStackContractTests(unittest.TestCase):
         self.assertNotIn('create_publisher(Twist, "/cmd_wheel"', combined)
         self.assertIn('"actuator_output": "DISABLED"', combined)
         self.assertIn('"safety_authorization": "NEVER"', combined)
+        safety = (ROOT / "src/n01_live_navigation/n01_live_navigation/safety_supervisor.py").read_text()
+        self.assertIn("evaluate_safety_gate(", safety)
+        self.assertIn('"/n01/live_navigation/safety_status"', safety)
 
     def test_static_pcd_is_retained_once_for_late_joining_consumers(self):
         provider = (ROOT / "src/n01_static_map/n01_static_map/static_map_node.py").read_text()
@@ -95,6 +104,7 @@ class LiveStackContractTests(unittest.TestCase):
         self.assertIn('"grid_map.static_cloud_enabled": True', launch)
         self.assertIn('"/grid_map/static_occupancy"', launch)
         self.assertIn('n01_live_dynamic_obstacle_tracker', launch)
+        self.assertIn('n01_live_safety_supervisor', launch)
         self.assertIn('n01_hive2_trajectory_monitor', launch)
 
 
