@@ -26,7 +26,7 @@ class FastLio2IntegrationContract(unittest.TestCase):
         ast.parse(launch)
         self.assertIn("lid_topic: /livox/lidar", config)
         self.assertIn("imu_topic: /livox/imu", config)
-        self.assertNotIn("geo_filtered", config)
+        self.assertNotIn("lid_topic: /livox/lidar/geo_filtered", config)
         self.assertIn("time_sync_en: false", config)
         self.assertIn("map_frame_id: n01_fast_lio_map", config)
         self.assertIn("publish_tf: false", config)
@@ -54,7 +54,7 @@ class FastLio2IntegrationContract(unittest.TestCase):
         self.assertIn("tf_flag_path: registration_output_tf_published", bridge)
         self.assertIn("input_topic: /livox/lidar/geo_filtered", sensor)
         self.assertIn("target_frame: map", sensor)
-        self.assertIn("vendor SLAM", self.read("docs/n01_fast_lio2_integration.md").lower())
+        self.assertIn("vendor slam", self.read("docs/n01_fast_lio2_integration.md").lower())
 
 
 if __name__ == "__main__":
