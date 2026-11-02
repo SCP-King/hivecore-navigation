@@ -320,11 +320,6 @@ class LiveScanBridge(Node):
         if stamp_ns <= 0 or age_s > self.max_cloud_age or age_s < -0.2:
             self.counts["drop_stamp"] += 1
             return
-        self.last_cloud_input_stamp_ns = stamp_ns
-        self.last_cloud_input_rx_monotonic = time.monotonic()
-        if not self._status_is_fresh():
-            self.counts["drop_status"] += 1
-            return
         if stamp_ns <= self.last_processed_scan_stamp_ns:
             self.counts["drop_out_of_order"] += 1
             return
@@ -333,6 +328,12 @@ class LiveScanBridge(Node):
             if stamp_ns <= pending_stamp_ns:
                 self.counts["drop_out_of_order"] += 1
                 return
+        self.last_cloud_input_stamp_ns = stamp_ns
+        self.last_cloud_input_rx_monotonic = time.monotonic()
+        if not self._status_is_fresh():
+            self.counts["drop_status"] += 1
+            return
+        if self.pending_clouds:
             # Do not let a blocked old scan hold up a newer scan. SCAN needs
             # the freshest obstacle observation, not a FIFO backlog.
             self.counts["drop_superseded"] += len(self.pending_clouds)
