@@ -2,7 +2,7 @@
 <package format="3">
   <name>n01_live_navigation</name>
   <version>0.1.0</version>
-  <description>Read-only live Hive2 localization and LiDAR adapter into native SCAN; never publishes actuator commands.</description>
+  <description>Read-only live Hive2 navigation planning, candidate kinematics and safety acceptance monitors; never publishes actuator commands.</description>
   <maintainer email="noreply@example.invalid">N-01 contributors</maintainer>
   <license>Apache-2.0</license>
   <buildtool_depend>ament_python</buildtool_depend>

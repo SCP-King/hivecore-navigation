@@ -26,6 +26,8 @@ setup(
             "n01_live_runtime_supervisor = n01_live_navigation.runtime_supervisor:main",
             "n01_live_dynamic_obstacle_tracker = n01_live_navigation.dynamic_obstacle_tracker:main",
             "n01_hive2_trajectory_monitor = n01_live_navigation.trajectory_monitor:main",
+            "n01_live_safety_supervisor = n01_live_navigation.safety_supervisor:main",
+            "n01_navigation_acceptance = n01_live_navigation.acceptance:main",
         ],
     },
 )
