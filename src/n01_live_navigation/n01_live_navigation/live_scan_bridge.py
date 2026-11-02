@@ -36,7 +36,7 @@ class LiveScanBridge(Node):
         self.declare_parameter("body_frame", "base_link")
         self.declare_parameter("max_status_age_s", 1.0)
         self.declare_parameter("max_cloud_age_s", 0.6)
-        self.declare_parameter("tf_timeout_s", 0.08)
+        self.declare_parameter("tf_timeout_s", 0.25)
         self.declare_parameter("max_points", 100000)
         self.declare_parameter("max_point_range_m", 12.0)
 
@@ -52,7 +52,7 @@ class LiveScanBridge(Node):
         self.max_range = float(self.get_parameter("max_point_range_m").value)
         if not (0.1 <= self.max_status_age <= 3.0 and
                 0.1 <= self.max_cloud_age <= 2.0 and
-                0.01 <= self.tf_timeout <= 0.3 and
+                0.01 <= self.tf_timeout <= 0.5 and
                 100 <= self.max_points <= 300000 and
                 1.0 <= self.max_range <= 50.0):
             raise ValueError("live bridge parameters outside bounded limits")
