@@ -36,6 +36,12 @@ class FastLio2IntegrationContract(unittest.TestCase):
         self.assertIn('"common.publish_tf": False', launch)
         self.assertNotIn("/cmd_vel", launch)
         self.assertNotIn("chassis_controller", launch)
+        runner = self.read("scripts/run_n01_fast_lio2_bag.sh")
+        self.assertIn("ROS_DOMAIN_ID=88", runner)
+        self.assertIn("ROS_LOCALHOST_ONLY=1", runner)
+        self.assertIn('--topics "$LIDAR_TOPIC" "$IMU_TOPIC"', runner)
+        self.assertIn("/n01/fast_lio/map_save", runner)
+        self.assertNotIn("/cmd_vel", runner)
 
     def test_upstream_patch_is_pinned_and_tf_opt_in(self):
         patcher = self.read("scripts/patch_n01_fast_lio2.py")
