@@ -40,6 +40,7 @@ class Hive2TrajectoryMonitor(Node):
             "pitch1_home_reference_rad": 0.7853981633974483,
             "pitch2_home_reference_rad": -1.3089969389957472,
             "pitch_reference_tolerance_rad": 0.08,
+            "max_bspline_receive_age_s": 1.0,
         }
         for name, value in defaults.items():
             self.declare_parameter(name, value)
@@ -54,6 +55,9 @@ class Hive2TrajectoryMonitor(Node):
         self.pitch1_ref = float(get("pitch1_home_reference_rad"))
         self.pitch2_ref = float(get("pitch2_home_reference_rad"))
         self.pitch_tol = float(get("pitch_reference_tolerance_rad"))
+        self.max_bspline_receive_age = float(get("max_bspline_receive_age_s"))
+        if not 0.2 <= self.max_bspline_receive_age <= 5.0:
+            raise ValueError("max_bspline_receive_age_s outside bounded limits")
         self.body_pose = None
         self.body_pose_rx = None
         self.body_pose_stamp_ns = None
@@ -62,6 +66,7 @@ class Hive2TrajectoryMonitor(Node):
         self.joint_stamp_ns = None
         self.last_error = ""
         self.last_bspline_rx = None
+        self.last_watchdog_status = None
 
         self.path_pub = self.create_publisher(
             Path, "/n01/live_navigation/hive2_candidate_path", 10)
@@ -75,6 +80,54 @@ class Hive2TrajectoryMonitor(Node):
             Odometry, str(get("body_pose_topic")), self.on_body_pose, qos_profile_sensor_data)
         self.create_subscription(
             JointState, str(get("joint_states_topic")), self.on_joint_states, qos_profile_sensor_data)
+        self.create_timer(0.25, self.publish_missing_or_stale_status)
+
+    def _clear_wheel_markers(self, stamp):
+        markers = MarkerArray()
+        marker = Marker()
+        marker.header.frame_id = self.frame
+        marker.header.stamp = stamp
+        marker.action = Marker.DELETEALL
+        markers.markers.append(marker)
+        self.wheel_marker_pub.publish(markers)
+
+    def _clear_candidate_visualization(self):
+        stamp = self.get_clock().now().to_msg()
+        path = Path()
+        path.header.frame_id = self.frame
+        path.header.stamp = stamp
+        self.path_pub.publish(path)
+        self._clear_wheel_markers(stamp)
+
+    def publish_missing_or_stale_status(self):
+        now_mono = time.monotonic()
+        if self.last_bspline_rx is not None:
+            receive_age = max(0.0, now_mono - self.last_bspline_rx)
+            if receive_age <= self.max_bspline_receive_age:
+                return
+            status = "STALE_BSPLINE"
+            reason = "bspline_receive_timeout"
+        else:
+            receive_age = None
+            status = "WAITING_FOR_BSPLINE"
+            reason = "no_bspline_received"
+
+        if self.last_watchdog_status != status:
+            self._clear_candidate_visualization()
+            self.last_watchdog_status = status
+        self.diag_pub.publish(String(data=json.dumps({
+            "schema": "n01.hive2_candidate_feasibility.v1",
+            "status": status,
+            "reason": reason,
+            "trajectory_active": False,
+            "trajectory_receive_age_s": receive_age,
+            "max_bspline_receive_age_s": self.max_bspline_receive_age,
+            "candidate_review_ready": False,
+            "candidate_review_status": status,
+            "candidate_only": True,
+            "actuator_output": "DISABLED",
+            "safety_authorization": "NEVER",
+        }, sort_keys=True)))
 
     def on_body_pose(self, msg):
         self.body_pose = msg
@@ -122,7 +175,7 @@ class Hive2TrajectoryMonitor(Node):
     def _publish_wheel_markers(self, stamp, screen):
         array = MarkerArray()
         if self.body_pose is None or self.body_pose.header.frame_id.lstrip("/") != self.frame:
-            self.wheel_marker_pub.publish(array)
+            self._clear_wheel_markers(stamp)
             return
         pose = self.body_pose.pose.pose
         yaw = self._yaw_from_quaternion(pose.orientation)
@@ -173,12 +226,13 @@ class Hive2TrajectoryMonitor(Node):
             )
         except (CurveError, ValueError, TypeError, OverflowError) as exc:
             self.last_error = str(exc)
-            self.path_pub.publish(Path())
-            self.wheel_marker_pub.publish(MarkerArray())
+            self._clear_candidate_visualization()
             self.diag_pub.publish(String(data=json.dumps({
                 "schema": "n01.hive2_candidate_feasibility.v1",
                 "status": "INVALID_OR_UNSUPPORTED_BSPLINE",
                 "reason": self.last_error,
+                "trajectory_active": False,
+                "candidate_review_ready": False,
                 "candidate_only": True,
                 "actuator_output": "DISABLED",
                 "safety_authorization": "NEVER",
@@ -198,14 +252,18 @@ class Hive2TrajectoryMonitor(Node):
             pose.pose.orientation.z = math.sin(yaw / 2.0)
             pose.pose.orientation.w = math.cos(yaw / 2.0)
             path.poses.append(pose)
-        self.path_pub.publish(path)
-        self._publish_wheel_markers(path.header.stamp, screen)
-
         pitch_match = self._pitch_reference_match()
         now_mono = time.monotonic()
         now_ns = self.get_clock().now().nanoseconds
         trajectory_active, trajectory_start_age_s = trajectory_window_is_active(
             trajectory_start_ns, now_ns, trajectory_duration_s)
+        if trajectory_active:
+            self.path_pub.publish(path)
+            self._publish_wheel_markers(path.header.stamp, screen)
+            self.last_watchdog_status = None
+        else:
+            self._clear_candidate_visualization()
+            self.last_watchdog_status = "TRAJECTORY_NOT_ACTIVE_OR_STALE"
         body_stamp_age = (
             (now_ns - self.body_pose_stamp_ns) / 1e9
             if self.body_pose_stamp_ns is not None else None)
@@ -233,12 +291,13 @@ class Hive2TrajectoryMonitor(Node):
         data = {
             "schema": "n01.hive2_candidate_feasibility.v1",
             "status": (
-                "NECESSARY_CONDITIONS_PASS" if screen["necessary_conditions_pass"]
+                "TRAJECTORY_NOT_ACTIVE_OR_STALE" if not trajectory_active
+                else "NECESSARY_CONDITIONS_PASS" if screen["necessary_conditions_pass"]
                 else "NECESSARY_CONDITIONS_FAIL"
             ),
             "candidate_only": True,
             "path_frame": self.frame,
-            "path_points": len(path.poses),
+            "path_points": len(path.poses) if trajectory_active else 0,
             "trajectory_id": int(msg.traj_id),
             "trajectory_start_time": {
                 "sec": int(msg.start_time.sec),
