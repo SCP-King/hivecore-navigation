@@ -20,6 +20,7 @@ from n01_live_navigation.core import (
     scan_output_is_fresh,
     evaluate_safety_gate,
     stamped_data_is_fresh,
+    trajectory_window_is_active,
     select_pose_anchor,
 )
 
@@ -204,6 +205,20 @@ class LiveScanCoreTests(unittest.TestCase):
             1_000_000_000, 1_100_000_000, 0.70, 0.10, 0.60, 0.45)[0])
         self.assertFalse(scan_output_is_fresh(
             None, 1_100_000_000, 0.10, 0.10, 0.60, 0.45)[0])
+
+    def test_trajectory_window_rejects_future_and_expired_bspline(self):
+        active, age = trajectory_window_is_active(
+            1_000_000_000, 2_000_000_000, 3.0)
+        self.assertTrue(active)
+        self.assertAlmostEqual(age, 1.0)
+        self.assertFalse(trajectory_window_is_active(
+            2_500_000_000, 2_000_000_000, 3.0)[0])
+        self.assertFalse(trajectory_window_is_active(
+            1_000_000_000, 5_000_000_000, 3.0)[0])
+        self.assertEqual(trajectory_window_is_active(0, 2_000_000_000, 3.0),
+                         (False, None))
+        self.assertEqual(trajectory_window_is_active(
+            1_000_000_000, 2_000_000_000, 0.0), (False, None))
 
     def test_sensor_stamp_freshness_rejects_stale_future_and_zero_stamps(self):
         now_ns = 2_000_000_000

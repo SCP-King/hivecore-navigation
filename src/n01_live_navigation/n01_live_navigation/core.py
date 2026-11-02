@@ -490,6 +490,31 @@ def scan_output_is_fresh(last_processed_stamp_ns, latest_input_stamp_ns,
     return bool(fresh), float(lag_s)
 
 
+def trajectory_window_is_active(start_stamp_ns, now_ns, duration_s,
+                                future_tolerance_s=0.25, end_grace_s=0.2):
+    """Check whether a stamped B-spline is within its active time domain."""
+    try:
+        start = int(start_stamp_ns)
+        now = int(now_ns)
+        duration = float(duration_s)
+        future_tolerance = float(future_tolerance_s)
+        end_grace = float(end_grace_s)
+    except (TypeError, ValueError, OverflowError):
+        return False, None
+    if (
+        start <= 0 or now <= 0
+        or not math.isfinite(duration) or duration <= 0.0
+        or not math.isfinite(future_tolerance) or future_tolerance < 0.0
+        or not math.isfinite(end_grace) or end_grace < 0.0
+    ):
+        return False, None
+    age_s = (now - start) / 1e9
+    if not math.isfinite(age_s):
+        return False, None
+    active = -future_tolerance <= age_s <= duration + end_grace
+    return bool(active), float(age_s)
+
+
 def stamped_data_is_fresh(stamp_ns, now_ns, max_age_s, future_tolerance_s=0.2):
     """Validate a sensor/source timestamp against the node's ROS clock."""
     try:
