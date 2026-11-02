@@ -8,7 +8,8 @@
 
 - `/cloud` 与 `/sensor_pose` 仍使用原始 Livox 扫描时间戳，供 native SCAN 的 ExactTime 同步器使用。
 - `/n01/live_navigation/scan_body_pose` 保留每帧扫描时刻的机体位姿。
-- `/body_pose` 改为高频当前机体位姿：以新鲜的 `/robot_pose` 全局锚点为基准，使用 `/odom` 中锚点时刻与当前时刻的时间戳插值结果传播；目标发布周期 50 ms。当前位姿传播的 SLAM 锚点年龄单独限制为 0.7 s（且不得大于 `/robot_pose` 最大时间戳年龄），扫描时刻补偿仍严格使用 0.5 s；两者不可混用。若锚点、里程计插值或机体外参不满足对应时间约束，则停止发布，不使用 latest TF 或伪造位姿。
+- `/body_pose` 改为高频当前机体位姿：以带时间戳的 `/robot_pose` 全局锚点为基准，使用 `/odom` 在锚点与目标时刻的插值结果传播；目标发布周期 50 ms。针对现场已观测到的 SLAM 位姿时间戳落后（约 1.1 s 扫描锚点偏差、约 1.3 s 最新位姿年龄），当前配置采用明确的有界补偿预算：`max_pose_stamp_age_s=1.5`、扫描锚点最大偏差 `1.25 s`、当前机体位姿锚点最大偏差 `1.4 s`。每次传播仍必须有新鲜的定位状态、新鲜的 `/odom`、两端严格插值且相邻里程计样本间隔不超过 80 ms；任一条件不满足就停止发布并保持 readiness 关闭。这是有界的时间戳里程计传播，不是 latest TF 替代、无界外推或伪造位姿。若后续现场验收发现该预算仍不能满足误差要求，应修复上游 SLAM 位姿发布链路，而不是继续放宽阈值。
+- `/robot_pose` 和 `/tf` 的发布端点数量单独审计：同一 ROS 节点名下出现多个 publisher endpoint 不等同于启动了多个进程。预检会分别报告重复节点名、同节点多发布端点及端点 GID；相同时间戳但位姿明显冲突的 `/robot_pose` 样本会被剔除并记录，不允许后到消息覆盖先到消息。
 - 最新输入扫描与最近完成输出之间允许最多 450 ms 的有界处理滞后；输出和输入各自仍必须满足 600 ms 最大年龄。超过任一门限时 readiness 关闭。
 - `navigation_ready` 仅表示可以向原生规划器提交目标，不表示可以驱动底盘。
 
@@ -19,7 +20,7 @@
 - 动态候选速度使用点云传感器时间戳计算，不使用 ROS 回调到达时间；无效时间差会把速度标记为无效，不伪造速度。无效坐标系、点云解码失败和静态地图未就绪都会发布明确诊断状态。
 - 系统健康分别报告 B 阶段规划入口是否就绪、动态场景诊断是否同时满足接收新鲜度和传感器时间戳新鲜度、规划器轨迹是否新鲜；等待目标导致尚无 B-spline 不会被误报成 A 阶段定位故障。
 - RViz 目标经 Goal Gate 后才进入 native SCAN；目标必须使用 `map` frame，且定位/扫描/静态地图 readiness 必须成立。
-- `/planning/bspline` 表示规划器候选轨迹；未收到轨迹时属于等待目标或规划器输出，不代表传感器链路故障。
+- `/planning/bspline` 表示规划器候选轨迹；未收到轨迹时属于等待目标或规划器输出，不代表传感器链路故障。轨迹监控器会周期性发布 `WAITING_FOR_BSPLINE` / `STALE_BSPLINE` 状态；轨迹缺失、超时或时间域过期时会清空候选 Path 和轮向 Marker，避免 RViz 保留过期轨迹造成误判。
 
 ## C. Hive2 候选运动学
 
@@ -76,7 +77,7 @@ ros2 launch n01_live_navigation live_scan.launch.py \
 ```bash
 ros2 run n01_live_navigation n01_navigation_acceptance
 
-# 只读采集 10 秒：话题频率、时间戳年龄、ExactTime 配对、TF 发布者和四阶段状态
+# 只读采集 10 秒：话题频率、时间戳年龄、ExactTime 配对、publisher endpoint 拓扑和四阶段状态
 python3 scripts/n01_live_stack_preflight.py --duration 10
 ```
 
@@ -90,7 +91,7 @@ ros2 topic pub --once /n01/live_navigation/operator_hold std_msgs/msg/Bool "{dat
 
 ## 调试顺序
 
-1. A 阶段：确认桥接状态 `LIVE_SCAN_INPUTS_READY`、`navigation_ready=true`、`/body_pose` 稳定接近 20 Hz，且 scan lag 不超过 450 ms；同时核对 `body_pose_live_anchor_delta_s` 不超过 700 ms，扫描时刻 `motion_compensation_anchor_delta_s` 不超过 500 ms。
+1. A 阶段：确认桥接状态 `LIVE_SCAN_INPUTS_READY`、`navigation_ready=true`、`/body_pose` 稳定接近 20 Hz，且 scan lag 不超过 450 ms；同时核对 `body_pose_live_anchor_delta_s` 不超过 1.4 s，扫描时刻 `motion_compensation_anchor_delta_s` 不超过 1.25 s，且所有传播都具有新鲜的定位状态和完整的 `/odom` 时间插值。检查预检中的 `multiple_publisher_endpoints`，不要把同名节点的多个 DDS publisher endpoint 误判成多个 SLAM 进程。
 2. B 阶段：确认静态地图 READY、实时 `/cloud` 连续进入 SCAN、RViz 中 occupancy/inflation 与动态候选可视化正确；再发送短距离、位于已知空旷区域的 map-frame 目标。
 3. C 阶段：检查 B-spline、候选 Path、四轮转向向量、joint feedback 和 pitch reference；不把 necessary-condition pass 当作可执行许可。
 4. D 阶段：确认动态障碍诊断的接收时间与点云源时间戳均持续新鲜；出现候选簇时核对 RViz 标记与实际场景，并确认 D 阶段进入 `DYNAMIC_OBSTACLE_REVIEW_REQUIRED`。随后逐项进行物理安全测试并留存证据。任何急停/失联/定位丢失/障碍物测试都应在机器人被机械支撑、驱动禁止或受控测试场地内执行，按现场安全规程进行。
