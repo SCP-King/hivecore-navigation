@@ -18,6 +18,7 @@ class FastLio2IntegrationContract(unittest.TestCase):
         self.assertIn("e2e3f4e9d3b95a9e66b1ba83dc98d4a05ed8a3c4", self.read(
             "docs/n01_fast_lio2_integration.md"))
         self.assertIn("patch_n01_fast_lio2.py", importer)
+        self.assertIn("IKD_PIN=\"e2e3f4e9d3b95a9e66b1ba83dc98d4a05ed8a3c4\"", importer)
         self.assertTrue((ROOT / "src/n01_fast_lio/package.xml").is_file())
 
     def test_fast_lio_uses_raw_livox_and_private_outputs(self):
