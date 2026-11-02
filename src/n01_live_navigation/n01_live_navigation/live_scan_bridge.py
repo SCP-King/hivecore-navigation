@@ -358,21 +358,19 @@ class LiveScanBridge(Node):
             return None
         stamps = [sample[0] for sample in self.pose_samples]
         index = bisect_left(stamps, int(stamp_ns))
-        candidates = []
+        if index < len(self.pose_samples) and stamps[index] == int(stamp_ns):
+            return self.pose_samples[index]
+        # Use the newest causal SLAM anchor when it is close enough. Only use
+        # a future anchor when no acceptable preceding anchor exists.
         if index > 0:
-            candidates.append(self.pose_samples[index - 1])
+            previous = self.pose_samples[index - 1]
+            if (int(stamp_ns) - previous[0]) / 1e9 <= self.max_pose_anchor_delta:
+                return previous
         if index < len(self.pose_samples):
-            candidates.append(self.pose_samples[index])
-        if not candidates:
-            return None
-        # Prefer the closest SLAM anchor; ties prefer the earlier anchor so
-        # future localization corrections are not propagated backwards.
-        anchor = min(
-            candidates,
-            key=lambda sample: (abs(sample[0] - stamp_ns), sample[0] > stamp_ns))
-        if abs(anchor[0] - stamp_ns) / 1e9 > self.max_pose_anchor_delta:
-            return None
-        return anchor
+            following = self.pose_samples[index]
+            if (following[0] - int(stamp_ns)) / 1e9 <= self.max_pose_anchor_delta:
+                return following
+        return None
 
     def _odom_at(self, stamp_ns):
         if not self._odom_rx_is_fresh():
@@ -570,7 +568,7 @@ class LiveScanBridge(Node):
             try:
                 scan_time = Time.from_msg(msg.header.stamp)
                 # Only the rigid sensor mount is taken from TF. The global
-                # map<-body pose is sourced from /robot_pose and interpolated.
+                # map<-body pose is a SLAM anchor propagated by relative /odom motion.
                 body_from_lidar = self.tf_buffer.lookup_transform(
                     self.body_frame, self.cloud_frame, scan_time,
                     timeout=Duration(seconds=0.0))
@@ -601,6 +599,8 @@ class LiveScanBridge(Node):
                     msg, map_lidar_translation, map_lidar_quaternion)
             except (ValueError, OverflowError) as exc:
                 self.pending_clouds.popleft()
+                self.motion_compensation_ready = False
+                self.last_motion_compensation_error = "cloud_conversion_failed: %s" % exc
                 self.counts["drop_cloud"] += 1
                 self.get_logger().warning("drop cloud: invalid XYZ payload: %s" % exc)
                 continue
@@ -608,6 +608,8 @@ class LiveScanBridge(Node):
             output_age_s = (self.get_clock().now().nanoseconds - stamp_ns) / 1e9
             if output_age_s > self.max_cloud_age:
                 self.pending_clouds.popleft()
+                self.motion_compensation_ready = False
+                self.last_motion_compensation_error = "scan_stale_after_motion_compensation"
                 self.counts["drop_stale_after_wait"] += 1
                 continue
 
@@ -682,7 +684,11 @@ class LiveScanBridge(Node):
             if before and after:
                 pose_scan_bracket_gap = (after[0] - before[-1]) / 1e9
                 pose_scan_bracket_available = (
-                    pose_scan_bracket_gap <= self.pose_interpolation_max_gap)
+                    pose_scan_bracket_gap <= self.max_pose_anchor_delta)
+
+        pose_scan_anchor_available = (
+            self._pose_anchor_at(self.last_cloud_input_stamp_ns) is not None
+            if self.last_cloud_input_stamp_ns is not None else False)
 
         odom_scan_skew = None
         odom_scan_bracket_gap = None
@@ -764,6 +770,7 @@ class LiveScanBridge(Node):
             "pose_scan_after_delta_s": pose_scan_after,
             "pose_scan_bracket_gap_s": pose_scan_bracket_gap,
             "pose_scan_bracket_available": pose_scan_bracket_available,
+            "pose_scan_anchor_available": pose_scan_anchor_available,
             "sensor_extrinsic_parent_frame": self.body_frame,
             "sensor_extrinsic_child_frame": self.cloud_frame,
             "sensor_extrinsic_ready": bool(self.sensor_extrinsic_ready),

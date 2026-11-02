@@ -52,6 +52,8 @@ class LiveStackContractTests(unittest.TestCase):
         self.assertIn('"queue_policy": "latest_only_exact_scan_stamp"', bridge)
         self.assertIn('"pose_scan_skew_s"', bridge)
         self.assertIn('"pose_scan_bracket_available"', bridge)
+        self.assertIn('"pose_scan_anchor_available"', bridge)
+        self.assertNotIn("pose_interpolation_max_gap_s", bridge)
         self.assertIn('"max_pose_stamp_age_s": 0.7', launch)
         self.assertIn('"max_pose_anchor_delta_s": 0.5', launch)
         self.assertIn('"max_pending_clouds": 1', launch)

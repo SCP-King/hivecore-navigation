@@ -143,8 +143,8 @@ class LiveRuntimeSupervisor(Node):
             blockers.append("body_pose_missing_or_stale")
         # A direct map->base_footprint TF edge is optional: the vendor's
         # /robot_pose Odometry is the global pose source. The bridge only marks
-        # itself ready after exact-stamp pose interpolation and body<-LiDAR
-        # extrinsic lookup both succeed.
+        # itself ready after odometry-assisted scan-time pose compensation and
+        # body<-LiDAR extrinsic lookup both succeed.
         navigation_ready = not blockers
         health = {
             "schema": "n01.live_system_health.v1",
@@ -160,6 +160,8 @@ class LiveRuntimeSupervisor(Node):
             "map_base_tf_rate_hz": tf_rate,
             "global_pose_source": self.bridge.get("robot_pose_topic"),
             "global_pose_interpolation_ready": (
+                self.bridge.get("robot_pose_receive_fresh") is True),
+            "global_pose_anchor_ready": (
                 self.bridge.get("robot_pose_receive_fresh") is True),
             "odometry_motion_compensation_ready": (
                 self.bridge.get("motion_compensation_ready") is True),

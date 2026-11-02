@@ -253,7 +253,7 @@ def motion_compensated_pose(map_anchor, odom_anchor, odom_target):
     return compose_transform(map_t, map_q, relative_motion[0], relative_motion[1])
 
 def interpolate_pose(samples, stamp_ns, max_gap_s=0.5):
-    """Interpolate a map-frame pose at a sensor timestamp; never extrapolate.
+    """Interpolate a stamped pose at a requested timestamp; never extrapolate.
 
     Each sample is (stamp_ns, xyz_tuple, quaternion_xyzw_tuple). A single exact
     timestamp is accepted; otherwise two bracketing samples are required.
