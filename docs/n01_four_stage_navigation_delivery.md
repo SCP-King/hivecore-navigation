@@ -39,9 +39,15 @@
 ```bash
 cd /home/demo/lyy/hivecore-navigation
 source /opt/ros/humble/setup.bash
+git status --short
+# 先确认上一步没有未提交改动；若有输出，先备份/提交后再切分支。
 git fetch origin
-git checkout feat/n01-four-stage-navigation
-git pull --ff-only
+if git show-ref --verify --quiet refs/heads/feat/n01-four-stage-navigation; then
+  git switch feat/n01-four-stage-navigation
+  git pull --ff-only origin feat/n01-four-stage-navigation
+else
+  git switch --track -c feat/n01-four-stage-navigation origin/feat/n01-four-stage-navigation
+fi
 colcon build --packages-up-to n01_live_navigation scan_planner n01_static_map n01_scan_dynacbf_bridge --event-handlers console_direct+
 source install/setup.bash
 colcon test --packages-select n01_live_navigation
