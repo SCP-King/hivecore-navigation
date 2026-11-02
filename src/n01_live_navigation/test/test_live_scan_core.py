@@ -2,8 +2,6 @@ import math
 import unittest
 from types import SimpleNamespace
 
-from types import SimpleNamespace
-
 from n01_live_navigation.core import (
     goal_is_valid,
     estimate_velocity, localization_is_tracking, rotate_translate,
