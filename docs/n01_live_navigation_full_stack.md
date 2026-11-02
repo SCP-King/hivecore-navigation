@@ -104,6 +104,7 @@ ros2 launch n01_live_navigation live_scan.launch.py \
 - `/n01/live_navigation/goal_gate_status` — accepted/rejected RViz goal reason.
 - `/n01/live_navigation/scan_body_pose` — exact scan-time body pose for diagnostics.
 - `/n01/live_navigation/safety_status` — fail-closed review state; never an actuator authorization.
+- `ros2 run n01_live_navigation n01_navigation_acceptance` — one-shot read-only A-D topic snapshot.
 - `/mapping_processing_timings` — raw vendor Vector3Stamped, captured by the supervisor; after the full launch, its subscription count should include `n01_live_runtime_supervisor`.
 - `/robot_pose` — vendor map-frame Odometry used for exact-scan-time pose interpolation.
 

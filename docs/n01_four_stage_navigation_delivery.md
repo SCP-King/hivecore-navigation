@@ -61,6 +61,20 @@ ros2 launch n01_live_navigation live_scan.launch.py \
 
 `pcd_map_frame_asserted:=true` 仍是操作者对 PCD 与当前 vendor map 坐标系一致的显式断言，不是自动配准结果。
 
+## 一次性采集状态
+
+```bash
+ros2 run n01_live_navigation n01_navigation_acceptance
+```
+
+安全监视器的软件保持默认开启。若只需在静态规划测试中解除软件保持，可发送：
+
+```bash
+ros2 topic pub --once /n01/live_navigation/operator_hold std_msgs/msg/Bool "{data: false}"
+```
+
+重新保持时发送 `{data: true}`。这只是安全状态监视输入，不会启用或停止底盘硬件，也不代表获得运动授权。
+
 ## 调试顺序
 
 1. A 阶段：确认桥接状态 `LIVE_SCAN_INPUTS_READY`、`navigation_ready=true`、`/body_pose` 稳定接近 20 Hz，且 scan lag 不超过 450 ms。
