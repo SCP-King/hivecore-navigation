@@ -21,7 +21,7 @@ def generate_launch_description():
         DeclareLaunchArgument("resolution", default_value="0.05"),
         LogInfo(msg=[
             "[n01_static_map] 只读静态地图供给层启动。"
-            "加载甲方 SLAM PCD 为 map 帧静态占用 PointCloud2 -> /grid_map/static_occupancy。"
+            "加载甲方 SLAM PCD 并以 TRANSIENT_LOCAL QoS 发布一次 -> /grid_map/static_occupancy。"
             "注意:动态险情(车辆/行人)不在本层,仍需 /livox/lidar/geo_filtered "
             "实时链路 + /local_pcd(乙方不接管动态感知)。"
             "PCD 坐标系与甲方 map 帧一致性需甲方定位确认(不臆造 TF)。",
