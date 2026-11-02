@@ -54,7 +54,7 @@ class LiveScanBridge(Node):
             "max_cloud_age_s": 0.6,
             "max_tf_wait_s": 0.45,
             "tf_retry_period_s": 0.02,
-            "max_pending_clouds": 8,
+            "max_pending_clouds": 1,
             "max_points": 100000,
             "max_point_range_m": 12.0,
         }
@@ -342,7 +342,7 @@ class LiveScanBridge(Node):
         self.counts["cloud_queued"] += 1
 
     def process_pending_clouds(self):
-        # FIFO is intentional: a newer scan may not overtake an older pending scan.
+        # on_cloud maintains a latest-only queue; no stale FIFO backlog is retained.
         while self.pending_clouds:
             msg, enqueued, wait_counted = self.pending_clouds[0]
             stamp_ns = int(msg.header.stamp.sec) * 1000000000 + int(msg.header.stamp.nanosec)
