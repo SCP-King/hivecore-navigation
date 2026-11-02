@@ -12,6 +12,6 @@ n01_live_scan_bridge:
     body_frame: base_link
     max_status_age_s: 1.0
     max_cloud_age_s: 0.6
-    tf_timeout_s: 0.08
+    tf_timeout_s: 0.25
     max_points: 100000
     max_point_range_m: 12.0
