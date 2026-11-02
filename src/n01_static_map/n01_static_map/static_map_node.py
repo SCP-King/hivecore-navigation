@@ -12,9 +12,8 @@
 #    本节点不替代实时险情感知。
 #
 # PCD 解析:仅支持 header 中 FIELDS=SIZE=4 TYPE=F COUNT=1 的纯 xyz binary。
-# 占用格 = 把点归入以 resolution 为边长的体素列(忽略 z),每列只发一个
-# 随机 z(在该列点云 z 范围内)的代表点。这样既保留 2D 占用语义(N-01 滑窗
-# 栅格 3D 是 2D 膨胀),又把地面/墙面/顶部压缩成稀疏代表点。
+# 占用格 = 把点归入 resolution 立方体体素,每个 3D 体素发布一个中心点。
+# 地面/墙面/顶部保持各自高度层,供 SCAN 静态占用层和可视化使用。
 import math
 import struct
 
@@ -181,7 +180,7 @@ class StaticMapNode(Node):
         self._payload[:, 2] = self._out_z
         dt = (self.get_clock().now() - t0).nanoseconds / 1e9
         self.get_logger().info(
-            f"体素化完成: 独立2D占位列={n}  @res={self._resolution}  "
+            f"体素化完成: 独立3D体素={n}  @res={self._resolution}  "
             f"耗时{dt:.1f}s 发布到 {PUBLISH_TOPIC} (frame={self._frame_id}, "
             f"z窗口[{self._min_z},{self._max_z}])")
 
