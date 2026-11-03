@@ -177,12 +177,18 @@ if [ -f /opt/ros/humble/setup.bash ]; then
 else
   printf 'ERROR: /opt/ros/humble/setup.bash missing\n'
 fi
-if [ -f "$WS_ROOT/install/local_setup.bash" ]; then
+if [ -f "$WS_ROOT/install/setup.bash" ]; then
+  # Use setup.bash so the workspace's vendor underlay chain (including Hivecore
+  # generated message libraries) is sourced as well as this workspace overlay.
+  # shellcheck disable=SC1090
+  source "$WS_ROOT/install/setup.bash"
+  printf 'SOURCED: %s/install/setup.bash (underlays + overlay)\n' "$WS_ROOT"
+elif [ -f "$WS_ROOT/install/local_setup.bash" ]; then
   # shellcheck disable=SC1090
   source "$WS_ROOT/install/local_setup.bash"
-  printf 'SOURCED: %s/install/local_setup.bash\n' "$WS_ROOT"
+  printf 'SOURCED_FALLBACK: %s/install/local_setup.bash (overlay only)\n' "$WS_ROOT"
 else
-  printf 'WARNING: install/local_setup.bash missing\n'
+  printf 'WARNING: install/setup.bash and install/local_setup.bash missing\n'
 fi
 printf 'ROS_DISTRO(after source)=%s\n' "$(printenv ROS_DISTRO 2>/dev/null || echo unset)"
 printf 'ROS_DOMAIN_ID(after source)=%s\n' "$(printenv ROS_DOMAIN_ID 2>/dev/null || echo unset)"
