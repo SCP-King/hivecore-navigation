@@ -43,6 +43,9 @@ if [[ ! -f /opt/ros/humble/setup.bash ]]; then
   echo "ERROR: /opt/ros/humble/setup.bash is missing."
   exit 10
 fi
+# Remove stale prefixes from this workspace only; preserve vendor underlays
+# already loaded by the operator (including Hivecore/Livox message libraries).
+n01_strip_workspace_prefixes "$WS_ROOT"
 # Intentionally source with nounset disabled (the script does not enable it):
 # ROS Humble setup uses optional variables such as AMENT_TRACE_SETUP_FILES.
 n01_source_setup /opt/ros/humble/setup.bash
