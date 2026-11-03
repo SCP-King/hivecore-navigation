@@ -96,6 +96,17 @@ class FourStageDeliveryTests(unittest.TestCase):
         self.assertIn('--readiness-timeout "$READINESS_TIMEOUT"', source)
         self.assertIn("never publishes velocity, wheel, chassis or actuator commands", source)
 
+    def test_planning_smoke_hotfix_runner_builds_python_package_without_restarting_live_stack(self):
+        source = (ROOT / "scripts/rebuild_and_run_n01_planning_smoke_test.sh").read_text()
+        self.assertIn("health_rx_age_at_publish =", source)
+        self.assertIn("HOTFIX_SOURCE_CONTRACT_OK", source)
+        self.assertIn('--packages-select n01_live_navigation', source)
+        self.assertIn("expected exactly one running live_scan launch", source)
+        self.assertIn("live_scan launch identity changed during build", source)
+        self.assertIn("--readiness-timeout 120", source)
+        self.assertNotIn("kill -INT", source)
+        self.assertNotIn("ros2 launch", source)
+
     def test_planning_smoke_graph_allows_its_own_bspline_observer_only(self):
         source = (ROOT / "src/n01_live_navigation/n01_live_navigation/planning_smoke_test.py").read_text()
         self.assertIn('observer = {"/n01_planning_smoke_test"}', source)
