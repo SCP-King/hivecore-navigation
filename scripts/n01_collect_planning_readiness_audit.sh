@@ -12,6 +12,7 @@ OUT_DIR="$HOME/lyy/n01_runtime/runs/planning_readiness_audit"
 mkdir -p "$OUT_DIR" || exit 2
 LOG_FILE="$OUT_DIR/n01_planning_readiness_audit_$STAMP.log"
 PROBE_JSON="$OUT_DIR/n01_planning_ros_probe_$STAMP.json"
+STACK_PREFLIGHT_JSON="$OUT_DIR/n01_live_stack_preflight_$STAMP.json"
 BUNDLE_FILE="$OUT_DIR/n01_planning_readiness_bundle_$STAMP.tar.gz"
 TF_PDF="$OUT_DIR/frames_$STAMP.pdf"
 TF_GV="$OUT_DIR/frames_$STAMP.gv"
@@ -132,11 +133,17 @@ finish() {
   printf 'N-01 planning-readiness audit finished: %s\n' "$(date --iso-8601=seconds)"
   printf 'LOG_FILE: %s\n' "$LOG_FILE"
   BUNDLE_ITEMS=("$(basename "$LOG_FILE")")
+  if [ -f "$STACK_PREFLIGHT_JSON" ]; then
+    printf 'STACK_PREFLIGHT_JSON: %s\n' "$STACK_PREFLIGHT_JSON"
+    BUNDLE_ITEMS+=("$(basename "$STACK_PREFLIGHT_JSON")")
+  else
+    printf 'STACK_PREFLIGHT_JSON_MISSING: stack preflight did not produce a JSON report\n'
+  fi
   if [ -f "$PROBE_JSON" ]; then
     printf 'ROS_PROBE_JSON: %s\n' "$PROBE_JSON"
     BUNDLE_ITEMS+=("$(basename "$PROBE_JSON")")
   else
-    printf 'ROS_PROBE_JSON_MISSING: probe did not produce a JSON report\n'
+    printf 'ROS_PROBE_JSON_MISSING: structured ROS probe did not produce a JSON report\n'
   fi
   if [ -f "$TF_PDF" ]; then BUNDLE_ITEMS+=("$(basename "$TF_PDF")"); fi
   if [ -f "$TF_GV" ]; then BUNDLE_ITEMS+=("$(basename "$TF_GV")"); fi
@@ -572,7 +579,16 @@ fi
 section "11. Live rates (sensor-data QoS rates are measured by the structured Python probe)"
 topic_hz /planning/bspline reliable
 
-section "12. Structured ROS live-data probe: cloud geometry, pose frames, IMU and exact stamp alignment"
+section "12. Structured ROS live-data probes: publisher attribution, rates, XYZ bounds and timestamp alignment"
+if [ -f "$WS_ROOT/scripts/n01_live_stack_preflight.py" ]; then
+  run_cmd 30 bash -c "python3 '$WS_ROOT/scripts/n01_live_stack_preflight.py' --duration 8 > '$STACK_PREFLIGHT_JSON' 2>&1"
+  if [ -f "$STACK_PREFLIGHT_JSON" ]; then
+    printf '\n--- Live stack preflight JSON (publisher endpoints, rates, TF edges) ---\n'
+    sed -n '1,260p' "$STACK_PREFLIGHT_JSON"
+  fi
+else
+  printf 'STACK_PREFLIGHT_SCRIPT_MISSING: %s/scripts/n01_live_stack_preflight.py\n' "$WS_ROOT"
+fi
 if [ -f "$WS_ROOT/scripts/n01_live_planning_ros_probe.py" ]; then
   run_cmd 30 python3 "$WS_ROOT/scripts/n01_live_planning_ros_probe.py" --duration 8 --output "$PROBE_JSON"
 else
