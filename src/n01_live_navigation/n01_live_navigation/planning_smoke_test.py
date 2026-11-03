@@ -263,6 +263,53 @@ class PlanningSmokeTest(Node):
             "observer_robot_pose_receive_age_s": round(robot_pose_receive_age_at_publish, 4),
             "observer_robot_pose_stamp_age_s": round(robot_pose_stamp_age_at_publish, 4),
         }
+        health_rx_age_at_publish = (
+            sent_at - self.health_rx if self.health_rx is not None else float("inf"))
+        safety_rx_age_at_publish = (
+            sent_at - self.safety_rx if self.safety_rx is not None else float("inf"))
+        body_rx_age_at_publish = (
+            sent_at - self.body_rx if self.body_rx is not None else float("inf"))
+        body_stamp_at_publish = (
+            self.body.header.stamp.sec * 1000000000
+            + self.body.header.stamp.nanosec
+        )
+        body_stamp_age_at_publish = (
+            self.get_clock().now().nanoseconds - body_stamp_at_publish
+        ) / 1e9
+        bridge_rx_age_at_publish = bridge_at_publish.get("robot_pose_receive_age_s")
+        bridge_stamp_age_at_publish = bridge_at_publish.get("robot_pose_stamp_age_s")
+        final_snapshot_valid = (
+            robot_pose_receive_age_at_publish <= ROBOT_POSE_MAX_RX_AGE_S
+            and -0.2 <= robot_pose_stamp_age_at_publish <= ROBOT_POSE_MAX_STAMP_AGE_S
+            and body_rx_age_at_publish <= 0.5
+            and -0.2 <= body_stamp_age_at_publish <= 0.5
+            and health_rx_age_at_publish <= 0.75
+            and safety_rx_age_at_publish <= 1.0
+            and bridge_at_publish.get("robot_pose_receive_fresh") is True
+            and isinstance(bridge_rx_age_at_publish, (int, float))
+            and math.isfinite(float(bridge_rx_age_at_publish))
+            and 0.0 <= float(bridge_rx_age_at_publish) <= ROBOT_POSE_MAX_RX_AGE_S
+            and isinstance(bridge_stamp_age_at_publish, (int, float))
+            and math.isfinite(float(bridge_stamp_age_at_publish))
+            and -0.2 <= float(bridge_stamp_age_at_publish) <= ROBOT_POSE_MAX_STAMP_AGE_S
+            and bridge_at_publish.get("body_pose_live_anchor_fresh") is True
+            and health_at_publish.get("status") == "READY_FOR_GOAL_PLANNING"
+            and health_at_publish.get("navigation_ready") is True
+            and health_at_publish.get("blockers") == []
+            and health_at_publish.get("static_overlay_ready") is True
+            and safety_at_publish.get("actuator_output") == "DISABLED"
+            and safety_at_publish.get("safety_authorization") == "NEVER"
+            and safety_at_publish.get("execution_authorized") is False
+        )
+        if not final_snapshot_valid:
+            return 2, {
+                "result": "PREFLIGHT_FAILED",
+                "reason": "readiness_window_closed_at_publish",
+                "readiness_snapshot": readiness_snapshot,
+                "goal_published": False,
+                "actuator_command_published": False,
+                "execution_authorized": False,
+            }
         self.goal_pub.publish(goal)
 
         if not self.spin_until(
