@@ -4,6 +4,12 @@ on:
     paths:
       - 'scripts/n01_collect_planning_readiness_audit.sh'
       - 'scripts/deploy_n01_planning_fixes.sh'
+      - 'scripts/lib/ros_env.sh'
+      - 'scripts/test_ros_env_compat.sh'
+      - 'scripts/n01_environment_preflight.sh'
+      - 'scripts/build_n01_fast_lio2.sh'
+      - 'scripts/run_n01_fast_lio2_bag.sh'
+      - 'docs/n01_development_environment.md'
       - 'src/n01_live_navigation/n01_live_navigation/planning_smoke_test.py'
       - 'src/scan_planner/plan_env/**'
       - 'scripts/n01_live_planning_ros_probe.py'
@@ -44,6 +50,13 @@ jobs:
           bash -n scripts/run_n01_bag_functional.sh
       - name: N-01 deploy, smoke-test and static-inflation validation
         run: |
+          bash -n scripts/lib/ros_env.sh
+          bash -n scripts/test_ros_env_compat.sh
+          bash -n scripts/n01_environment_preflight.sh
+          bash -n scripts/deploy_n01_planning_fixes.sh
+          bash -n scripts/build_n01_fast_lio2.sh
+          bash -n scripts/run_n01_fast_lio2_bag.sh
+          bash scripts/test_ros_env_compat.sh
           bash -n scripts/deploy_n01_planning_fixes.sh
           python3 -m py_compile src/n01_live_navigation/n01_live_navigation/planning_smoke_test.py
           g++ -std=c++17 -Wall -Wextra -Wpedantic -Werror \
