@@ -31,3 +31,17 @@ bash -n scripts/run_g1_offline.sh && bash scripts/run_g1_offline.sh
 
 
 完整 G1 离线验收请参考 [G1_ACCEPTANCE.md](G1_ACCEPTANCE.md)，命令是 `bash scripts/run_g1_acceptance.sh`；原 `run_g1_offline.sh` 只做冒烟测试。
+
+
+## N01 实机 A/B/C/D 一次性只读诊断
+
+在真实 N01 ROS 运行环境中，使用一个脚本一次性采集定位与 IMU 时间同步、机体位姿、静态 PCD、动态障碍、原生 SCAN、Hive2 候选运动学、安全状态机、控制接口拓扑、运行参数、TF、当前源码引用及 SLAM 源码压缩包中的相关实现。脚本只读取 ROS 图、话题、参数和文件；不发布控制命令、不调用 ROS 服务或动作、不修改参数、不停止节点、不构建、不运行测试。
+
+```bash
+cd ~/lyy/hivecore-navigation
+git switch fix/n01-pose-freshness-watchdogs
+timeout 90s git -c http.version=HTTP/1.1 -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=15 pull --ff-only origin fix/n01-pose-freshness-watchdogs
+bash -n scripts/n01_collect_full_runtime_diagnostics.sh && bash scripts/n01_collect_full_runtime_diagnostics.sh
+```
+
+日志自动保存到 ~/lyy/n01_runtime/runs/full_diagnostics/。把脚本结束时打印的 LOG_FILE 对应文件上传到 ChatGPT 即可；不需要再逐条复制终端输出。脚本使用 install/local_setup.bash 叠加 ROS Humble，避免通过 install/setup.bash 重新加载过期 underlay 路径。
