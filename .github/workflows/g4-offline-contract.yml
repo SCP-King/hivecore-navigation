@@ -7,6 +7,7 @@ on:
       - 'scripts/lib/ros_env.sh'
       - 'scripts/lib/colcon_build_guard.sh'
       - 'scripts/test_colcon_build_guard.sh'
+      - 'scripts/run_n01_live_stack_preflight.sh'
       - 'scripts/test_ros_env_compat.sh'
       - 'scripts/n01_environment_preflight.sh'
       - 'scripts/build_n01_fast_lio2.sh'
@@ -56,6 +57,7 @@ jobs:
           bash -n scripts/lib/ros_env.sh
           bash -n scripts/lib/colcon_build_guard.sh
           bash -n scripts/test_colcon_build_guard.sh
+          bash -n scripts/run_n01_live_stack_preflight.sh
           bash scripts/test_colcon_build_guard.sh
           bash -n scripts/test_ros_env_compat.sh
           bash -n scripts/n01_environment_preflight.sh
