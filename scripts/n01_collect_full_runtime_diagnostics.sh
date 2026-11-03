@@ -140,7 +140,7 @@ run_cmd 8 ros2 pkg prefix scan_planner_msgs
 run_cmd 8 ros2 pkg prefix n01_static_map
 
 section "3. Processes, launch arguments, PCD paths and duplicate processes"
-run_cmd 8 bash -lc "ps -eo pid,ppid,etimes,args | grep -E '[s]lam3d_node|[s]can_planner_node|n01_live_|[r]os2 launch|[r]viz2|[s]tatic_map_node'"
+run_cmd 8 bash -c "ps -eo pid,ppid,etimes,args | grep -E '[s]lam3d_node|[s]can_planner_node|n01_live_|[r]os2 launch|[r]viz2|[s]tatic_map_node'"
 printf '\nPotential obsolete FROZEN path references in active process arguments:\n'
 ps -eo args | grep -E '[F]ROZEN|[s]lam3d_node|[s]can_planner_node|n01_live_' || true
 printf '\nPCD files available under ~/lyy/slam_data/maps:\n'
