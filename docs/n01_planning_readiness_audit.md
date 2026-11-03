@@ -36,10 +36,11 @@ bash scripts/n01_collect_pose_goal_diagnostics.sh
 The audit creates:
 
 - `~/lyy/n01_runtime/runs/planning_readiness_audit/n01_planning_readiness_audit_<timestamp>.log`
+- `~/lyy/n01_runtime/runs/planning_readiness_audit/n01_live_stack_preflight_<timestamp>.json`
 - `~/lyy/n01_runtime/runs/planning_readiness_audit/n01_planning_ros_probe_<timestamp>.json`
 - `~/lyy/n01_runtime/runs/planning_readiness_audit/n01_planning_readiness_bundle_<timestamp>.tar.gz`
 
-The compressed bundle contains the log and structured ROS probe JSON and is the preferred artifact to attach to the next project turn.
+The compressed bundle contains the log, publisher-attributed live-stack preflight JSON, XYZ/timestamp probe JSON, and generated TF graph files when available. It is the preferred artifact to attach to the next project turn.
 
 ## Hivecore SLAM GUI cross-check
 
