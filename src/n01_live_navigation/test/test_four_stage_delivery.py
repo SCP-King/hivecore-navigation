@@ -135,6 +135,13 @@ class FourStageDeliveryTests(unittest.TestCase):
         self.assertIn('DISTANCE="0.5"', source)
         self.assertIn('READINESS_TIMEOUT="120"', source)
         self.assertIn('--readiness-timeout "$READINESS_TIMEOUT"', source)
+        self.assertIn('state != Z*', source)
+        self.assertIn('kill -INT -- "-$OLD_PGID"', source)
+        self.assertIn("legacy launch is not session-isolated", source)
+        self.assertIn("nohup setsid ros2 launch", source)
+        self.assertIn("n01_active_pids_matching", source)
+        self.assertIn("pstree -ap", source)
+        self.assertNotIn("kill -9", source)
 
     def test_dynamic_tracker_uses_sensor_time_and_publishes_invalid_status(self):
         source = (ROOT / "src/n01_live_navigation/n01_live_navigation/dynamic_obstacle_tracker.py").read_text()
