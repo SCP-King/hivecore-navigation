@@ -39,8 +39,8 @@ bash -n scripts/run_g1_offline.sh && bash scripts/run_g1_offline.sh
 
 ```bash
 cd ~/lyy/hivecore-navigation
-git switch fix/n01-pose-freshness-watchdogs
-timeout 90s git -c http.version=HTTP/1.1 -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=15 pull --ff-only origin fix/n01-pose-freshness-watchdogs
+git switch fix/n01-pose-freshness-watchdogs && \
+timeout 90s git -c http.version=HTTP/1.1 -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=15 pull --ff-only origin fix/n01-pose-freshness-watchdogs && \
 bash -n scripts/n01_collect_full_runtime_diagnostics.sh && bash scripts/n01_collect_full_runtime_diagnostics.sh
 ```
 
