@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Rebuild N-01 planning code, restart only the N-01 live_scan launch, then
 # generate one guarded planning-only candidate. SLAM and hardware drivers remain up.
-set -Eeuo pipefail
+# ROS Humble setup scripts reference optional environment variables. Keep errexit
+# and pipefail, but do not enable nounset while sourcing ROS/colcon overlays.
+set -Eeo pipefail
 
 if [[ "${1:-}" != "--confirm-planning-only" ]]; then
   echo "Usage: bash scripts/deploy_n01_planning_fixes.sh --confirm-planning-only"
@@ -23,17 +25,40 @@ export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-55}"
 export RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}"
 export ROS_LOCALHOST_ONLY="${ROS_LOCALHOST_ONLY:-0}"
 
-source /opt/ros/humble/setup.bash
-if [[ -f "$WS_ROOT/install/setup.bash" ]]; then
-  source "$WS_ROOT/install/setup.bash"
-fi
-cd "$WS_ROOT"
-
 mkdir -p "$HOME/lyy/n01_runtime/runs/planning_deploy"
 STAMP="$(date +%Y%m%d_%H%M%S)"
 DEPLOY_LOG="$HOME/lyy/n01_runtime/runs/planning_deploy/n01_planning_deploy_$STAMP.log"
 LAUNCH_LOG="$HOME/lyy/n01_runtime/runs/planning_deploy/n01_live_scan_$STAMP.log"
 exec > >(tee -a "$DEPLOY_LOG") 2>&1
+
+echo "=== N-01 deployment preflight ==="
+echo "workspace: $WS_ROOT"
+echo "ROS_DOMAIN_ID: $ROS_DOMAIN_ID"
+echo "RMW_IMPLEMENTATION: $RMW_IMPLEMENTATION"
+echo "deployment_log: $DEPLOY_LOG"
+
+if [[ ! -f /opt/ros/humble/setup.bash ]]; then
+  echo "ERROR: /opt/ros/humble/setup.bash is missing."
+  exit 10
+fi
+# Intentionally source with nounset disabled (the script does not enable it):
+# ROS Humble setup uses optional variables such as AMENT_TRACE_SETUP_FILES.
+source /opt/ros/humble/setup.bash
+if [[ -f "$WS_ROOT/install/setup.bash" ]]; then
+  source "$WS_ROOT/install/setup.bash"
+else
+  echo "WARNING: workspace install/setup.bash is missing; build will create the overlay."
+fi
+cd "$WS_ROOT"
+
+if ! command -v colcon >/dev/null 2>&1; then
+  echo "ERROR: colcon is unavailable after sourcing ROS Humble."
+  exit 11
+fi
+if ! command -v ros2 >/dev/null 2>&1; then
+  echo "ERROR: ros2 is unavailable after sourcing ROS Humble."
+  exit 11
+fi
 
 echo "=== N-01 planning fix deployment ==="
 echo "workspace: $WS_ROOT"
@@ -90,7 +115,7 @@ colcon build --symlink-install --packages-up-to scan_planner n01_live_navigation
 echo
 echo "=== 2/4 Run static inflation equivalence test ==="
 colcon test --packages-select plan_env --ctest-args -R test_static_inflation --output-on-failure
-colcon test-result --verbose
+colcon test-result --test-result-base "$WS_ROOT/build/plan_env" --verbose
 
 # Refresh package paths after build/test.
 source "$WS_ROOT/install/setup.bash"
