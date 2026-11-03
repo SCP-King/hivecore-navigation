@@ -104,7 +104,7 @@ echo "SAVED: $OUT_DIR/pcd_file.txt"
 } > "$OUT_DIR/workspace_revision.txt"
 echo "SAVED: $OUT_DIR/workspace_revision.txt"
 
-if tar -czf "$BUNDLE" -C "$BASE_DIR" "$(basename "$OUT_DIR")"; then
+if tar -czf "$BUNDLE" --exclude="$(basename "$OUT_DIR")/capture.log" -C "$BASE_DIR" "$(basename "$OUT_DIR")"; then
   echo "BUNDLE_FILE: $BUNDLE"
   sha256sum "$BUNDLE"
 else
