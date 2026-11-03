@@ -49,6 +49,21 @@ class FourStageDeliveryTests(unittest.TestCase):
         self.assertIn("DurabilityPolicy.VOLATILE", source)
         self.assertIn('"static_overlay_status": static_overlay_status', source)
 
+    def test_live_preflight_uses_qos_profiles_for_every_topic_and_emits_runtime_error_json(self):
+        source = (ROOT / "scripts/n01_live_stack_preflight.py").read_text()
+        self.assertIn("return QoSProfile(depth=10)", source)
+        self.assertIn('"status": "ROS_RUNTIME_AUDIT_FAILED"', source)
+        self.assertIn('"read_only": True', source)
+        self.assertIn('"actuator_output": "DISABLED"', source)
+
+    def test_planning_smoke_graph_allows_its_own_bspline_observer_only(self):
+        source = (ROOT / "src/n01_live_navigation/n01_live_navigation/planning_smoke_test.py").read_text()
+        self.assertIn('observer = {"/n01_planning_smoke_test"}', source)
+        self.assertIn("unexpected = subs - expected - observer", source)
+        self.assertIn('"/n01_live_runtime_supervisor"', source)
+        self.assertIn('"/n01_hive2_trajectory_monitor"', source)
+        self.assertIn('"unexpected_bspline_consumers:"', source)
+
     def test_one_command_live_preflight_runner_is_read_only_and_uses_active_domain(self):
         source = (ROOT / "scripts/run_n01_live_stack_preflight.sh").read_text()
         self.assertIn('ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-55}"', source)
