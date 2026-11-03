@@ -2,8 +2,8 @@
 # Focused, read-only capture for the first N-01 planning blockers.
 set -uo pipefail
 
-WS_ROOT="\${WS_ROOT:-$HOME/lyy/hivecore-navigation}"
-PCD_PATH="\${PCD_PATH:-$HOME/lyy/slam_data/maps/cloud_map_20261027_225549.pcd}"
+WS_ROOT="${WS_ROOT:-$HOME/lyy/hivecore-navigation}"
+PCD_PATH="${PCD_PATH:-$HOME/lyy/slam_data/maps/cloud_map_20261027_225549.pcd}"
 STAMP="$(date +%Y%m%d_%H%M%S)"
 BASE_DIR="$HOME/lyy/n01_runtime/runs"
 OUT_DIR="$BASE_DIR/planning_blockers_$STAMP"
