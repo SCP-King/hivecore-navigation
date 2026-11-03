@@ -264,7 +264,7 @@ for topic in \
   /mapping_robot_pose_orientation_rpy /goal_pose /plan /robot_trajectory /robot_trajectory_pose_array \
   /cloud /sensor_pose /body_pose /n01/live_navigation/scan_body_pose \
   /grid_map/static_occupancy /grid_map/static_overlay_ready /grid_map/static_overlay_status \
-  /grid_map/occupancy /grid_map/occupancy_inflate /grid_map/unknown /grid_map/sliding_map_bbox /mapping_processing_timings /n01/live_navigation/navigation_ready \
+  /grid_map/occupancy /grid_map/occupancy_inflate /grid_map/unknown /grid_map/sliding_map_bbox /n01/live_navigation/navigation_ready \
   /n01/live_navigation/readiness /n01/live_navigation/system_health \
   /n01/live_navigation/goal_gate_status /move_base_simple/goal \
   /n01/live_navigation/goal_gated /planning/bspline /planning/data_display \
@@ -317,7 +317,7 @@ for topic in \
   /tf /tf_static \
   /grid_map/static_occupancy /grid_map/static_overlay_ready /grid_map/static_overlay_status \
   /grid_map/occupancy /grid_map/occupancy_inflate /grid_map/unknown \
-  /mapping_processing_timings /n01/live_navigation/navigation_ready \
+  /n01/live_navigation/navigation_ready \
   /move_base_simple/goal /n01/live_navigation/goal_gated \
   /planning/bspline /planning/data_display \
   /n01/live_navigation/dynamic_obstacle_status \
