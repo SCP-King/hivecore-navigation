@@ -12,6 +12,7 @@ if [[ "${1:-}" != "--confirm-planning-only" ]]; then
 fi
 
 WS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$WS_ROOT/scripts/lib/ros_env.sh"
 PCD_PATH="$HOME/lyy/slam_data/maps/cloud_map_20261027_225549.pcd"
 PCD_ASSERTED="true"
 GROUND_Z="-0.55"
@@ -43,9 +44,9 @@ if [[ ! -f /opt/ros/humble/setup.bash ]]; then
 fi
 # Intentionally source with nounset disabled (the script does not enable it):
 # ROS Humble setup uses optional variables such as AMENT_TRACE_SETUP_FILES.
-source /opt/ros/humble/setup.bash
+n01_source_setup /opt/ros/humble/setup.bash
 if [[ -f "$WS_ROOT/install/setup.bash" ]]; then
-  source "$WS_ROOT/install/setup.bash"
+  n01_source_setup "$WS_ROOT/install/setup.bash"
 else
   echo "WARNING: workspace install/setup.bash is missing; build will create the overlay."
 fi
@@ -118,7 +119,7 @@ colcon test --packages-select plan_env --ctest-args -R test_static_inflation --o
 colcon test-result --test-result-base "$WS_ROOT/build/plan_env" --verbose
 
 # Refresh package paths after build/test.
-source "$WS_ROOT/install/setup.bash"
+n01_source_setup "$WS_ROOT/install/setup.bash"
 
 echo
 echo "=== 3/4 Restart only the N-01 live_scan launch ==="
