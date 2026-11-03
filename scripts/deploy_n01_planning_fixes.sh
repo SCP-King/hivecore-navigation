@@ -20,8 +20,9 @@ GROUND_Z="-0.55"
 BODY_HEIGHT="0.90"
 RVIZ="true"
 RVIZ_CONFIG=""
-DISTANCE="0.8"
-SMOKE_TIMEOUT="20"
+DISTANCE="0.5"
+SMOKE_TIMEOUT="15"
+READINESS_TIMEOUT="120"
 
 export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-55}"
 export RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}"
@@ -182,7 +183,8 @@ echo
 echo "=== 4/4 One planning-only B-spline smoke test ==="
 set +e
 ros2 run n01_live_navigation n01_planning_smoke_test \
-  --distance "$DISTANCE" --timeout "$SMOKE_TIMEOUT" --confirm-planning-only
+  --distance "$DISTANCE" --timeout "$SMOKE_TIMEOUT" \
+  --readiness-timeout "$READINESS_TIMEOUT" --confirm-planning-only
 SMOKE_RC=$?
 set -e
 
