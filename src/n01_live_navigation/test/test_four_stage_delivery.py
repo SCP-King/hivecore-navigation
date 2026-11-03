@@ -40,6 +40,24 @@ class FourStageDeliveryTests(unittest.TestCase):
         for marker in ("## A.", "## B.", "## C.", "## D."):
             self.assertIn(marker, source)
 
+    def test_live_preflight_import_error_is_structured_and_static_status_is_observed(self):
+        source = (ROOT / "scripts/n01_live_stack_preflight.py").read_text()
+        self.assertIn('"status": "ROS_PYTHON_IMPORT_FAILED"', source)
+        self.assertIn('"/grid_map/static_overlay_status": "std_msgs/msg/String"', source)
+        self.assertIn('"/grid_map/static_overlay_status"', source)
+        self.assertIn("publisher_infos", source)
+        self.assertIn("DurabilityPolicy.VOLATILE", source)
+        self.assertIn('"static_overlay_status": static_overlay_status', source)
+
+    def test_deployment_build_excludes_its_own_install_prefix_and_repairs_only_generated_collision(self):
+        source = (ROOT / "scripts/deploy_n01_planning_fixes.sh").read_text()
+        build_index = source.index("colcon build")
+        overlay_index = source.index('n01_source_setup "$WS_ROOT/install/setup.bash"')
+        self.assertLess(build_index, overlay_index)
+        self.assertIn("n01_strip_workspace_prefixes", source)
+        self.assertIn("n01_repair_generated_python_link_collision", source)
+        self.assertIn("without self-sourcing install overlay", source)
+
     def test_dynamic_tracker_uses_sensor_time_and_publishes_invalid_status(self):
         source = (ROOT / "src/n01_live_navigation/n01_live_navigation/dynamic_obstacle_tracker.py").read_text()
         self.assertIn("estimate_velocity(", source)
