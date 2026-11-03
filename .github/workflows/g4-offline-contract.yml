@@ -45,10 +45,6 @@ jobs:
           bash -n scripts/n01_collect_pose_goal_diagnostics.sh
           bash -n scripts/n01_capture_planning_blockers.sh
           python3 -m py_compile scripts/n01_live_planning_ros_probe.py
-        run: |
-          bash -n scripts/n01_collect_planning_readiness_audit.sh
-          bash -n scripts/n01_collect_pose_goal_diagnostics.sh
-          python3 -m py_compile scripts/n01_live_planning_ros_probe.py
       - name: Hive2 29-frame four-wheel steer and fixed-pitch source contract
         run: python3 -m unittest discover -s src/n01_offline_integration/test -p 'test_wheel_only_tf_contract.py' -v
       - name: Hive2 authoritative wheel motion YAML audit and G3 mismatch contracts
