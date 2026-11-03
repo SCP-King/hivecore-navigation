@@ -12,8 +12,8 @@ REPORT="$OUT_DIR/n01_robot_pose_source_audit_$STAMP.json"
 LOG="$OUT_DIR/n01_robot_pose_source_audit_$STAMP.log"
 ENDPOINTS="$OUT_DIR/n01_robot_pose_endpoints_$STAMP.txt"
 BUNDLE="$OUT_DIR/n01_robot_pose_source_audit_$STAMP.tar.gz"
-DURATION="$1"
-if [[ -z "$DURATION" ]]; then DURATION=20; fi
+DURATION=20
+if (( $# > 0 )) && [[ -n "$1" ]]; then DURATION="$1"; fi
 
 mkdir -p "$OUT_DIR"
 exec > >(tee -a "$LOG") 2>&1
@@ -53,7 +53,7 @@ echo "PREFLIGHT_EXIT_CODE=$PREFLIGHT_RC"
 
 {
   echo "=== /robot_pose endpoint graph ==="
-  timeout --signal=INT --kill-after=2s 10s ros2 topic info /robot_pose --verbose 2>&1
+  timeout --signal=INT --kill-after=2s 10s ros2 topic info /robot_pose --verbose 2>&1 || true
   echo
   echo "=== publisher node details ==="
 } > "$ENDPOINTS"
@@ -63,7 +63,7 @@ while IFS= read -r node; do
   {
     echo
     echo "--- ros2 node info $node ---"
-    timeout --signal=INT --kill-after=2s 8s ros2 node info "$node" 2>&1
+    timeout --signal=INT --kill-after=2s 8s ros2 node info "$node" 2>&1 || true
   } >> "$ENDPOINTS"
 done < <("$ROS_PYTHON" - "$REPORT" <<'PY'
 import json
