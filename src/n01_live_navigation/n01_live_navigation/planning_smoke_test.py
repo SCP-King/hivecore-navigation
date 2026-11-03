@@ -84,9 +84,15 @@ class PlanningSmokeTest(Node):
             return False, "unexpected_bspline_publishers:" + repr(sorted(pubs))
 
         expected = {"/n01_live_runtime_supervisor", "/n01_hive2_trajectory_monitor"}
+        # This smoke-test node subscribes to /planning/bspline itself so it can
+        # verify the generated candidate. Permit only this known observer in
+        # addition to the two runtime consumers; all other consumers remain
+        # a fail-closed topology violation.
+        observer = {"/n01_planning_smoke_test"}
         subs = {fqn(x) for x in self.get_subscriptions_info_by_topic("/planning/bspline")}
-        if subs - expected:
-            return False, "unexpected_bspline_consumers:" + repr(sorted(subs - expected))
+        unexpected = subs - expected - observer
+        if unexpected:
+            return False, "unexpected_bspline_consumers:" + repr(sorted(unexpected))
         if expected - subs:
             return False, "candidate_monitors_missing:" + repr(sorted(expected - subs))
         return True, "planning_only_graph_verified"
