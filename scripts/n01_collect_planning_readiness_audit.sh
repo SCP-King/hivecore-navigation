@@ -216,12 +216,12 @@ for topic in \
   /localization_status /robot_pose /odom /imu/data /livox/lidar/geo_filtered \
   /cloud /sensor_pose /body_pose /n01/live_navigation/scan_body_pose \
   /grid_map/static_occupancy /grid_map/static_overlay_ready /grid_map/static_overlay_status \
-  /grid_map/occupancy /grid_map/occupancy_inflate /grid_map/unknown /mapping_processing_timings /n01/live_navigation/navigation_ready \
+  /grid_map/occupancy /grid_map/occupancy_inflate /grid_map/unknown /grid_map/sliding_map_bbox /mapping_processing_timings /n01/live_navigation/navigation_ready \
   /n01/live_navigation/readiness /n01/live_navigation/system_health \
   /n01/live_navigation/goal_gate_status /move_base_simple/goal \
   /n01/live_navigation/goal_gated /planning/bspline /planning/data_display \
   /n01/live_navigation/dynamic_obstacle_status \
-  /n01/live_navigation/dynamic_obstacle_candidates \
+  /n01/live_navigation/dynamic_obstacle_candidates /n01/live_navigation/dynamic_obstacle_tracks \
   /n01/live_navigation/hive2_feasibility /n01/live_navigation/hive2_candidate_path \
   /n01/live_navigation/hive2_wheel_kinematics /joint_states /planning/go2_execution_frozen \
   /n01/live_navigation/operator_hold /n01/live_navigation/safety_status
