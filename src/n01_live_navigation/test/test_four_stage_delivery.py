@@ -56,6 +56,15 @@ class FourStageDeliveryTests(unittest.TestCase):
         self.assertIn('"read_only": True', source)
         self.assertIn('"actuator_output": "DISABLED"', source)
 
+    def test_standalone_planning_smoke_runner_is_guarded_and_does_not_rebuild(self):
+        source = (ROOT / "scripts/run_n01_planning_smoke_test.sh").read_text()
+        self.assertIn("pgrep -f", source)
+        self.assertIn("live_scan.launch.py", source)
+        self.assertIn("n01_planning_smoke_test", source)
+        self.assertIn("expected exactly one running N-01 live_scan launch", source)
+        self.assertNotIn("colcon build", source)
+        self.assertNotIn("ros2 launch", source)
+
     def test_planning_smoke_graph_allows_its_own_bspline_observer_only(self):
         source = (ROOT / "src/n01_live_navigation/n01_live_navigation/planning_smoke_test.py").read_text()
         self.assertIn('observer = {"/n01_planning_smoke_test"}', source)
