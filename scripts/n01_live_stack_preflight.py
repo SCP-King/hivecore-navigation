@@ -25,7 +25,7 @@ def _emit_ros_import_failure(stage, exc):
     for variable in ("AMENT_PREFIX_PATH", "COLCON_PREFIX_PATH", "CMAKE_PREFIX_PATH"):
         prefixes.extend(item for item in os.environ.get(variable, "").split(os.pathsep) if item)
     prefixes = list(dict.fromkeys(["/opt/ros/humble", *prefixes]))
-    soname_match = re.search(r"(lib[^\\s:]+\\.so(?:\\.[0-9]+)*)", str(exc))
+    soname_match = re.search(r"(lib[^\s:]+\.so(?:\.[0-9]+)*)", str(exc))
     missing_soname = soname_match.group(1) if soname_match else None
     library_candidates = []
     if missing_soname:
