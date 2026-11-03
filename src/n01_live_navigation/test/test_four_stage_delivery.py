@@ -74,6 +74,10 @@ class FourStageDeliveryTests(unittest.TestCase):
         self.assertIn('bridge.get("body_pose_live_anchor_fresh") is not True', source)
         self.assertIn("self.readiness_timeout", source)
         self.assertIn("recheck freshness and the ros graph immediately before", source.lower())
+        self.assertIn("robot_pose_receive_age_s", source)
+        self.assertIn("bridge_rx_age_at_publish", source)
+        self.assertIn("final_snapshot_valid", source)
+        self.assertIn('"reason": "readiness_window_closed_at_publish"', source)
         self.assertIn('default=0.5', source)
         self.assertIn('"goal_published": False', source)
 
