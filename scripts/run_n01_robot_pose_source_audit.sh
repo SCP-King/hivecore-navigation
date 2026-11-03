@@ -2,6 +2,7 @@
 # Focused, read-only audit of the two /robot_pose publisher endpoints.
 # Captures endpoint GIDs/QoS, aggregate pose timing, bridge counters and node wiring.
 set -Eeuo pipefail
+umask 077
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
 RUNTIME_ROOT="$(printenv N01_RUNTIME_ROOT 2>/dev/null || true)"
