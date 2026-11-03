@@ -5,6 +5,8 @@ on:
       - 'scripts/n01_collect_planning_readiness_audit.sh'
       - 'scripts/deploy_n01_planning_fixes.sh'
       - 'scripts/lib/ros_env.sh'
+      - 'scripts/lib/colcon_build_guard.sh'
+      - 'scripts/test_colcon_build_guard.sh'
       - 'scripts/test_ros_env_compat.sh'
       - 'scripts/n01_environment_preflight.sh'
       - 'scripts/build_n01_fast_lio2.sh'
@@ -51,6 +53,9 @@ jobs:
       - name: N-01 deploy, smoke-test and static-inflation validation
         run: |
           bash -n scripts/lib/ros_env.sh
+          bash -n scripts/lib/colcon_build_guard.sh
+          bash -n scripts/test_colcon_build_guard.sh
+          bash scripts/test_colcon_build_guard.sh
           bash -n scripts/test_ros_env_compat.sh
           bash -n scripts/n01_environment_preflight.sh
           bash -n scripts/deploy_n01_planning_fixes.sh
@@ -64,6 +69,22 @@ jobs:
             src/scan_planner/plan_env/test/test_static_inflation.cpp \
             -o /tmp/test_static_inflation
           /tmp/test_static_inflation
+      - name: N-01 live preflight import failures remain valid JSON without ROS
+        run: |
+          set +e
+          python3 -S scripts/n01_live_stack_preflight.py > /tmp/n01_live_preflight_import.json 2> /tmp/n01_live_preflight_stderr.txt
+          rc=$?
+          set -e
+          test "$rc" -eq 2
+          python3 - <<'PY'
+          import json
+          with open("/tmp/n01_live_preflight_import.json", encoding="utf-8") as stream:
+              report = json.load(stream)
+          assert report["schema"] == "n01.live_stack_preflight_import_error.v1"
+          assert report["status"] == "ROS_PYTHON_IMPORT_FAILED"
+          assert report["import_stage"] == "rclpy"
+          PY
+          test ! -s /tmp/n01_live_preflight_stderr.txt
       - name: N-01 planning-readiness audit syntax (no ROS runtime or commands)
         run: |
           bash -n scripts/n01_collect_planning_readiness_audit.sh
