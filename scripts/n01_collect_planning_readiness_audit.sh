@@ -231,6 +231,15 @@ timeout 10s ros2 action list -t 2>&1
 section "4. Required node and topic presence matrix"
 for node in \
   /slam3d_node \
+  /slam3d_services_gui \
+  /slam_services_gui \
+  /lidar_cloud_preprocess_node \
+  /lidar_cloud_geometric_filter_z_node \
+  /octomap_server \
+  /octomap_save_server \
+  /static_tf_publisher_node \
+  /vis_world \
+  /chassis_controller \
   /n01_live_scan_bridge \
   /n01_live_static_pcd \
   /n01_live_runtime_supervisor \
@@ -243,7 +252,10 @@ do
   if has_node "$node"; then printf 'NODE_PRESENT %s\n' "$node"; else printf 'NODE_MISSING %s\n' "$node"; fi
 done
 for topic in \
-  /localization_status /robot_pose /odom /imu/data /livox/lidar/geo_filtered \
+  /mapping_status /localization_status /robot_pose /odom /imu/data /livox/lidar/geo_filtered \
+  /cloud_map /cloud_map_fe /localization_map /initialpose /clock \
+  /imu/rpy/filtered /mapping_processing_timings /mapping_delta_registration_orientation_at_scan \
+  /mapping_robot_pose_orientation_rpy /goal_pose /plan /robot_trajectory /robot_trajectory_pose_array \
   /cloud /sensor_pose /body_pose /n01/live_navigation/scan_body_pose \
   /grid_map/static_occupancy /grid_map/static_overlay_ready /grid_map/static_overlay_status \
   /grid_map/occupancy /grid_map/occupancy_inflate /grid_map/unknown /grid_map/sliding_map_bbox /mapping_processing_timings /n01/live_navigation/navigation_ready \
@@ -259,9 +271,36 @@ do
   if has_topic "$topic"; then printf 'TOPIC_PRESENT %s\n' "$topic"; else printf 'TOPIC_MISSING %s\n' "$topic"; fi
 done
 
+section "4B. GUI and SLAM service availability (inspection only; no service calls)"
+for service in \
+  /slam3d_node/start_mapping \
+  /slam3d_node/stop_mapping \
+  /slam3d_node/freeze_mapping \
+  /slam3d_node/enter_relocalization \
+  /slam3d_node/continue_mapping \
+  /slam3d_node/start_localization \
+  /slam3d_node/stop_localization \
+  /slam3d_node/enter_tracking \
+  /slam3d_node/load_map \
+  /slam3d_node/publish_cloud_map_once \
+  /slam3d_node/publish_map_once \
+  /slam3d_node/set_enable_publish_cloud_map \
+  /slam3d_node/set_enable_publish_localization_map \
+  /lidar_cloud_preprocess_node/set_enable_forward \
+  /lidar_cloud_preprocess_node/set_geo_filter \
+  /lidar_cloud_geometric_filter_z_node/set_enable_forward \
+  /octomap_server/reset \
+  /save_octomap
+do
+  service_check "$service"
+done
+
 section "5. Publisher/subscriber endpoint topology and QoS"
 for topic in \
-  /localization_status /robot_pose /odom /imu/data /livox/lidar/geo_filtered \
+  /mapping_status /localization_status /robot_pose /odom /imu/data /livox/lidar/geo_filtered \
+  /cloud_map /cloud_map_fe /localization_map /initialpose /clock \
+  /imu/rpy/filtered /mapping_processing_timings /mapping_delta_registration_orientation_at_scan \
+  /mapping_robot_pose_orientation_rpy /goal_pose /plan /robot_trajectory /robot_trajectory_pose_array \
   /cloud /sensor_pose /body_pose /n01/live_navigation/scan_body_pose \
   /tf /tf_static \
   /grid_map/static_occupancy /grid_map/static_overlay_ready /grid_map/static_overlay_status \
@@ -281,7 +320,8 @@ do
 done
 
 section "6. Latest status snapshots (read only; no point-cloud payload dump)"
-topic_echo /localization_status sensor
+topic_echo /mapping_status reliable
+topic_echo /localization_status reliable
 topic_echo /n01/live_navigation/readiness reliable
 topic_echo /n01/live_navigation/navigation_ready reliable
 topic_echo /mapping_processing_timings reliable
@@ -300,6 +340,15 @@ topic_echo /planning/data_display reliable
 section "7. Relevant node wiring"
 for node in \
   /slam3d_node \
+  /slam3d_services_gui \
+  /slam_services_gui \
+  /lidar_cloud_preprocess_node \
+  /lidar_cloud_geometric_filter_z_node \
+  /octomap_server \
+  /octomap_save_server \
+  /static_tf_publisher_node \
+  /vis_world \
+  /chassis_controller \
   /n01_live_scan_bridge \
   /n01_live_static_pcd \
   /scan_planner_node \
@@ -312,9 +361,12 @@ do
   node_info "$node"
 done
 
-section "8. Runtime parameters for every node in the planning chain"
+section "8. Runtime parameters for every node in the planning chain and GUI backends"
 for node in \
   /slam3d_node \
+  /slam3d_services_gui \
+  /lidar_cloud_preprocess_node \
+  /lidar_cloud_geometric_filter_z_node \
   /n01_live_scan_bridge \
   /n01_live_static_pcd \
   /scan_planner_node \
