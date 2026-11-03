@@ -339,7 +339,10 @@ class LiveStackPreflight(Node):
             return QoSProfile(depth=100, reliability=ReliabilityPolicy.RELIABLE)
         if topic in SENSOR_TOPICS:
             return qos_profile_sensor_data
-        return 10
+        # Keep the ROS 2 default depth-10 behavior, but return a QoSProfile
+        # consistently because the observer records its reliability,
+        # durability and depth for every subscription.
+        return QoSProfile(depth=10)
 
     def _callback(self, topic):
         def callback(msg):
@@ -603,15 +606,32 @@ def main():
     if not math.isfinite(args.duration) or not 3.0 <= args.duration <= 60.0:
         parser.error("--duration must be between 3 and 60 seconds")
 
-    rclpy.init(args=None)
-    node = LiveStackPreflight(args.duration)
+    node = None
     try:
+        rclpy.init(args=None)
+        node = LiveStackPreflight(args.duration)
         deadline = time.monotonic() + args.duration
         while rclpy.ok() and time.monotonic() < deadline:
             rclpy.spin_once(node, timeout_sec=0.1)
         print(json.dumps(node.report(), indent=2, ensure_ascii=False, sort_keys=True))
+    except Exception as exc:
+        # Runtime graph/QoS errors must still produce a parseable audit artifact.
+        failure = {
+            "schema": "n01.live_stack_preflight_runtime_error.v1",
+            "status": "ROS_RUNTIME_AUDIT_FAILED",
+            "exception_type": type(exc).__name__,
+            "exception": str(exc),
+            "traceback": traceback.format_exc()[-6000:],
+            "read_only": True,
+            "actuator_output": "DISABLED",
+            "execution_authorized": False,
+            "safety_authorization": "NEVER",
+        }
+        print(json.dumps(failure, indent=2, ensure_ascii=False, sort_keys=True))
+        raise SystemExit(3)
     finally:
-        node.destroy_node()
+        if node is not None:
+            node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
 
