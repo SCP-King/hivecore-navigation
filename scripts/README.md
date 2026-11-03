@@ -54,6 +54,24 @@ bash scripts/n01_collect_planning_readiness_audit.sh
 
 此入口只读取 ROS 图、话题、参数和文件；不发送导航目标、不发布底盘控制命令、不调用 SLAM 业务服务、不修改参数、不停止或重启节点，也不构建或运行机器人。
 
+## Hivecore SLAM 位姿发布与处理耗时专项诊断
+
+上一次只读预检已确认：`/robot_pose` 有两个同名 `/slam3d_node` 发布端点，单进程快照只发现一个 `slam3d_node`；位姿时间戳年龄中位数约 1.23 s，P95 约 1.80 s，而 `/odom` 约 49.4 Hz、`/localization_status` 约 5.0 Hz。不要直接删除发布端点或放宽新鲜度门限。
+
+先执行一次完整的 SLAM 上游只读取证：
+
+```bash
+cd ~/lyy/hivecore-navigation
+git fetch origin fix/n01-pose-freshness-watchdogs
+git switch fix/n01-pose-freshness-watchdogs
+git pull --ff-only origin fix/n01-pose-freshness-watchdogs
+bash scripts/run_n01_slam_pose_pipeline_audit.sh 30
+```
+
+此脚本连续采样 `/robot_pose`、`/odom`、`/imu/data`、Livox 输入点云、SLAM 输出点云、`/mapping_processing_timings` 和定位状态；检查位姿重复时间戳/相同时间戳冲突；读取 SLAM 参数、节点接线、DDS 端点、进程资源、已加载库，并在本机安装工作区存在源码时搜索 `robot_pose` 和 Publisher 创建位置。
+
+执行完成后上传终端打印的 `UPLOAD THIS BUNDLE: ...tar.gz`。脚本不创建 publisher/client，不调用服务或 action，不发布目标，不修改参数，不重启进程，也不发送执行器命令。普通 ROS 订阅回调无法直接识别每条消息的 DDS publisher GID；报告会明确区分端点图与消息时间序列证据。
+
 ## N-01 /robot_pose 双发布端点专项诊断
 
 当前运行日志曾出现 `robot_pose_publisher_count=2`，并伴随 `NAVIGATION READY/BLOCKED` 反复切换。先定位两个发布端点的节点名、DDS endpoint GID、QoS 和节点接线，不放宽 0.7 s 位姿接收新鲜度门限，也不重启 SLAM。
