@@ -11,7 +11,7 @@ if [[ ! -f /opt/ros/humble/setup.bash ]]; then
   exit 2
 fi
 # Source ROS underlay first, then an optional existing Livox driver overlay.
-if [[ "${ROS_DISTRO:-}" != "humble" ]]; then
+if [[ "${ROS_DISTRO:-}" != "humble" ]] || ! command -v ros2 >/dev/null 2>&1; then
   n01_source_setup /opt/ros/humble/setup.bash
 fi
 if [[ -n "${LIVOX_SETUP:-}" ]]; then
