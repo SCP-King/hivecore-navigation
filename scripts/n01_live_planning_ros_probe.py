@@ -32,7 +32,6 @@ SENSOR_TOPICS = {
     "/n01/live_navigation/scan_body_pose": "nav_msgs/msg/Odometry",
     "/imu/data": "sensor_msgs/msg/Imu",
     "/joint_states": "sensor_msgs/msg/JointState",
-    "/localization_status": "hivecore_slam3d/msg/LocalizationStatus",
 }
 RELIABLE_TOPICS = {
     "/planning/bspline": "scan_planner_msgs/msg/Bspline",
@@ -43,6 +42,8 @@ RELIABLE_TOPICS = {
     "/n01/live_navigation/hive2_feasibility": "std_msgs/msg/String",
     "/n01/live_navigation/safety_status": "std_msgs/msg/String",
     "/n01/live_navigation/operator_hold": "std_msgs/msg/Bool",
+    "/mapping_status": "hivecore_slam3d/msg/MappingStatus",
+    "/localization_status": "hivecore_slam3d/msg/LocalizationStatus",
     "/n01/live_navigation/navigation_ready": "std_msgs/msg/Bool",
     "/planning/go2_execution_frozen": "std_msgs/msg/Bool",
     "/mapping_processing_timings": "geometry_msgs/msg/Vector3Stamped",
@@ -164,7 +165,7 @@ class PlanningReadinessProbe(Node):
         super().__init__("n01_planning_readiness_probe")
         self.started = time.monotonic()
         self.stats = {}
-        self.subscriptions = []
+        self.audit_subscriptions = []
         self.topic_types = {}
         self.stamp_caches = {}
         self._create_subscriptions(SENSOR_TOPICS, sensor=True)
@@ -204,7 +205,7 @@ class PlanningReadinessProbe(Node):
                     lambda msg, name=topic: self._on_message(name, msg),
                     qos,
                 )
-                self.subscriptions.append(sub)
+                self.audit_subscriptions.append(sub)
             except Exception as exc:
                 self.stats[topic]["subscription_error"] = str(exc)
 
@@ -319,6 +320,8 @@ class PlanningReadinessProbe(Node):
             ]
         elif topic == "/localization_status":
             detail["localization_status_fields"] = primitive_fields(msg)
+        elif topic == "/mapping_status":
+            detail["mapping_status_fields"] = primitive_fields(msg)
         stat["last_detail"] = detail
 
     def result(self, duration_s):
