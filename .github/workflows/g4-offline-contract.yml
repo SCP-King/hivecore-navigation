@@ -3,6 +3,7 @@ on:
   push:
     paths:
       - 'scripts/n01_collect_planning_readiness_audit.sh'
+      - 'scripts/n01_capture_planning_blockers.sh'
       - 'scripts/n01_live_planning_ros_probe.py'
       - 'scripts/n01_collect_pose_goal_diagnostics.sh'
       - 'docs/n01_planning_readiness_audit.md'
@@ -39,6 +40,11 @@ jobs:
           bash -n scripts/run_n01_g4_full_chain.sh
           bash -n scripts/run_n01_bag_functional.sh
       - name: N-01 planning-readiness audit syntax (no ROS runtime or commands)
+        run: |
+          bash -n scripts/n01_collect_planning_readiness_audit.sh
+          bash -n scripts/n01_collect_pose_goal_diagnostics.sh
+          bash -n scripts/n01_capture_planning_blockers.sh
+          python3 -m py_compile scripts/n01_live_planning_ros_probe.py
         run: |
           bash -n scripts/n01_collect_planning_readiness_audit.sh
           bash -n scripts/n01_collect_pose_goal_diagnostics.sh
