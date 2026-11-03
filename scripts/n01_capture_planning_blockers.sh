@@ -125,9 +125,9 @@ echo "SAVED: $OUT_DIR/workspace_revision.txt"
 exec 1>&3 2>&4
 exec 3>&- 4>&-
 if tar -czf "$BUNDLE" -C "$BASE_DIR" "$(basename "$OUT_DIR")"; then
-  printf "BUNDLE_FILE: %s\\n" "$BUNDLE"
+  printf "BUNDLE_FILE: %s\n" "$BUNDLE"
   sha256sum "$BUNDLE"
 else
-  printf "ERROR: failed to create bundle\\n" >&2
+  printf "ERROR: failed to create bundle\n" >&2
   exit 1
 fi
