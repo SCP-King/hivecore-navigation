@@ -39,29 +39,26 @@
 
 ## 构建与启动
 
-停止旧的 `live_scan.launch.py` 实例（Ctrl+C），保留甲方 SLAM、Livox、IMU、robot_state_publisher 和底盘状态节点运行：
+当前四阶段实机集成代码维护在 `fix/n01-pose-freshness-watchdogs`。旧版文档曾要求切换到 `feat/n01-four-stage-navigation`，但该分支在本次核对时并不存在于 origin；不要照旧文档创建或切换到不存在的分支。
+
+先检查工作树；若存在本地修改，不要 reset/clean，先备份或提交。随后使用仓库唯一部署入口：
 
 ```bash
 cd /home/demo/lyy/hivecore-navigation
-source /opt/ros/humble/setup.bash
 git status --short
-# 先确认上一步没有未提交改动；若有输出，先备份/提交后再切分支。
-git fetch origin
-if git show-ref --verify --quiet refs/heads/feat/n01-four-stage-navigation; then
-  git switch feat/n01-four-stage-navigation
-  git pull --ff-only origin feat/n01-four-stage-navigation
-else
-  git switch --track -c feat/n01-four-stage-navigation origin/feat/n01-four-stage-navigation
-fi
-colcon build --packages-up-to n01_live_navigation scan_planner n01_static_map n01_scan_dynacbf_bridge --event-handlers console_direct+
-source install/setup.bash
-colcon test --packages-select n01_live_navigation
-colcon test-result --verbose
+git pull --ff-only origin fix/n01-pose-freshness-watchdogs
+bash scripts/deploy_n01_planning_fixes.sh --confirm-planning-only
 ```
 
-启动命令：
+部署入口会先保留已加载的 Hivecore/Livox 等 vendor underlay、移除当前工作空间自身的 install 前缀，再加载 ROS Humble 并构建；构建完成后才加载工作空间 overlay。若检测到 `scan_planner_msgs` 的 ament Python 生成目录与 symlink 冲突，只会先归档并清理该精确生成目录，不会删除整个 `build` 或 `install`。构建或测试失败时，旧的 `live_scan.launch.py` 不会被停止。
+
+构建和静态膨胀测试成功后，入口才会停止并重启 N-01 的 `live_scan.launch.py`，保留甲方 SLAM、Livox、IMU 和底盘状态节点运行，并执行一次只规划 smoke test。它不会发布底盘、轮速、速度或执行器命令；`execution_authorized=false`、`actuator_output=DISABLED`、`safety_authorization=NEVER` 仍是固定边界。
+
+若需要手动启动（不与部署入口同时执行），启动前先确保只存在一套 N-01 live stack：
 
 ```bash
+source /opt/ros/humble/setup.bash
+source /home/demo/lyy/hivecore-navigation/install/setup.bash
 ros2 launch n01_live_navigation live_scan.launch.py \
   pcd_path:=/home/demo/lyy/slam_data/maps/cloud_map_20261027_225549.pcd \
   pcd_map_frame_asserted:=true \
@@ -75,11 +72,15 @@ ros2 launch n01_live_navigation live_scan.launch.py \
 ## 一次性采集状态
 
 ```bash
+source /opt/ros/humble/setup.bash
+source /home/demo/lyy/hivecore-navigation/install/setup.bash
 ros2 run n01_live_navigation n01_navigation_acceptance
 
-# 只读采集 10 秒：话题频率、时间戳年龄、ExactTime 配对、publisher endpoint 拓扑和四阶段状态
-python3 scripts/n01_live_stack_preflight.py --duration 10
+# 使用 ROS Humble 对应的系统 Python；只订阅，不发目标或控制命令
+/usr/bin/python3 scripts/n01_live_stack_preflight.py --duration 10
 ```
+
+预检同时报告 `/robot_pose` 的接收频率、最大接收间隔、stamp age，以及 `/localization_status` 的接收/时间戳新鲜度；不能只凭 `body_pose_live_anchor_delta_s` 推断上游发布频率。静态 overlay 的 `/grid_map/static_overlay_status` 会单独记录实际 publisher QoS、源地图点数、活动窗口相交情况和 ready/reason。
 
 安全监视器的软件保持默认开启。若只需在静态规划测试中解除软件保持，可发送：
 
