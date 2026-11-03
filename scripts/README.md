@@ -69,3 +69,9 @@ bash scripts/run_n01_planning_smoke_test.sh 0.5 15 120
 测试会最多等待 120 s，并在发布前检查直接接收的 `/robot_pose` 年龄不超过 0.7 s、时间戳年龄不超过 1.5 s；还会把 `system_health` 消息自身的接收年龄计入 bridge 快照中的 pose receive age、stamp age 和 live-anchor delta，避免使用过期 READY 快照。runtime bridge 必须报告位姿锚点 fresh、system_health 无 blockers、静态 overlay READY、安全状态保持 `DISABLED/NEVER`，且规划 topic 拓扑正确。检查未通过或 READY 窗口关闭时不发布目标。通过后最多发送一个规划目标，只验证 Goal Gate 和 SCAN B-spline，不发布速度、轮速、底盘或执行器命令，也不改变 operator hold 或执行授权。
 
 此 smoke test 是唯一推荐的 READY 窗口规划入口；不要手工运行未经门控的临时 `/move_base_simple/goal` publisher。
+
+## N-01 live_scan 安全重启说明
+
+`scripts/deploy_n01_planning_fixes.sh --confirm-planning-only` 只重启 N-01 `live_scan.launch.py`，不停止甲方 SLAM 或 Livox。部署脚本按 Linux 进程状态判断旧 launch 是否退出：`Z`（zombie）和 `X` 状态不再被 `kill -0` 误判为仍在运行；若进程仍存活，会打印 PID/PPID/PGID/SID、进程树和最近的 live_scan 日志，然后安全退出，不执行强杀。
+
+旧版本启动的 launch 若没有独立 session，只向已识别的 launch PID 发送 SIGINT，绝不向未知进程组发信号。新版本使用 `setsid` 将 N-01 launch 及其子节点放入专用 session；后续仅在 PGID 与 SID 都等于 launch PID 时，才允许向该隔离进程组发送 SIGINT。launch 退出后逐一确认 SCAN、bridge、static map、supervisor、goal gate、trajectory monitor 和 RViz 等 N-01 节点均已退出，再启动新实例。不会使用 `kill -9`、`pkill` 或 `killall`。
