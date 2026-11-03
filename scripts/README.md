@@ -33,15 +33,23 @@ bash -n scripts/run_g1_offline.sh && bash scripts/run_g1_offline.sh
 完整 G1 离线验收请参考 [G1_ACCEPTANCE.md](G1_ACCEPTANCE.md)，命令是 `bash scripts/run_g1_acceptance.sh`；原 `run_g1_offline.sh` 只做冒烟测试。
 
 
-## N01 实机 A/B/C/D 一次性只读诊断
+## N-01 当前规划故障诊断（唯一入口）
 
-在真实 N01 ROS 运行环境中，使用一个脚本一次性采集定位与 IMU 时间同步、机体位姿、静态 PCD、动态障碍、原生 SCAN、Hive2 候选运动学、安全状态机、控制接口拓扑、运行参数、TF、当前源码引用及 SLAM 源码压缩包中的相关实现。脚本只读取 ROS 图、话题、参数和文件；不发布控制命令、不调用导航业务服务或动作（仅通过参数服务读取参数）、不修改参数、不停止节点、不构建、不运行测试。
+当前从 Hivecore Tracking 进入 N-01 / SCAN 规划时，统一使用仓库内这一份完整只读诊断入口：
 
 ```bash
 cd ~/lyy/hivecore-navigation
-git switch fix/n01-pose-freshness-watchdogs && \
-timeout 90s git -c http.version=HTTP/1.1 -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=15 pull --ff-only origin fix/n01-pose-freshness-watchdogs && \
-bash -n scripts/n01_collect_full_runtime_diagnostics.sh && bash scripts/n01_collect_full_runtime_diagnostics.sh
+git fetch origin fix/n01-pose-freshness-watchdogs
+git switch fix/n01-pose-freshness-watchdogs
+git pull --ff-only origin fix/n01-pose-freshness-watchdogs
+bash scripts/n01_collect_planning_readiness_audit.sh
 ```
 
-日志自动保存到 ~/lyy/n01_runtime/runs/full_diagnostics/。把脚本结束时打印的 LOG_FILE 对应文件上传到 ChatGPT 即可；不需要再逐条复制终端输出。脚本使用 install/local_setup.bash 叠加 ROS Humble，避免通过 install/setup.bash 重新加载过期 underlay 路径。
+不要把脚本复制到 `/tmp`。主脚本会直接调用同一仓库 `scripts/` 下的两个配套只读探针：
+
+- `n01_live_stack_preflight.py`：发布端点身份、频率、TF 边和实时链路预检。
+- `n01_live_planning_ros_probe.py`：点云几何、位姿、IMU 和时间戳对齐。
+
+诊断结果自动保存在 `~/lyy/n01_runtime/runs/planning_readiness_audit/`，并生成包含日志、JSON 探针和 TF 图的 `n01_planning_readiness_bundle_<timestamp>.tar.gz`。上传压缩包即可，不需要复制终端滚屏。
+
+此入口只读取 ROS 图、话题、参数和文件；不发送导航目标、不发布底盘控制命令、不调用 SLAM 业务服务、不修改参数、不停止或重启节点，也不构建或运行机器人。
