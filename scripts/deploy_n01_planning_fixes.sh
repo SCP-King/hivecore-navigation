@@ -212,7 +212,12 @@ if (( ${#LIVE_LAUNCH_PIDS[@]} == 1 )); then
   fi
   echo "old launch parent has exited (or is a reaped/zombie process); checking owned N-01 nodes."
 
-  for pattern in '[s]can_planner_node' '[n]01_live_scan_bridge' '[n]01_live_static_pcd'; do
+  for pattern in \
+    '[s]can_planner_node' '[n]01_live_scan_bridge' '[n]01_live_static_pcd' \
+    '[n]01_live_runtime_supervisor' '[n]01_live_safety_supervisor' \
+    '[n]01_live_dynamic_obstacle_tracker' '[n]01_hive2_trajectory_monitor' \
+    '[n]01_live_scan_goal_gate' '[n]01_live_navigation_rviz'
+  do
     for _ in $(seq 1 50); do
       mapfile -t ACTIVE_NODE_PIDS < <(n01_active_pids_matching "$pattern")
       (( ${#ACTIVE_NODE_PIDS[@]} == 0 )) && break
@@ -222,7 +227,8 @@ if (( ${#LIVE_LAUNCH_PIDS[@]} == 1 )); then
     if (( ${#ACTIVE_NODE_PIDS[@]} )); then
       echo "ERROR: old N-01 process remains after launch shutdown: $pattern"
       printf '  active PID: %s\\n' "${ACTIVE_NODE_PIDS[@]}"
-      ps -o pid,ppid,pgid,sid,stat,etime,args -p "${ACTIVE_NODE_PIDS[@]}" || true
+      ACTIVE_NODE_PID_LIST="$(IFS=,; echo "${ACTIVE_NODE_PIDS[*]}")"
+      ps -o pid,ppid,pgid,sid,stat,etime,args -p "$ACTIVE_NODE_PID_LIST" || true
       exit 5
     fi
   done
