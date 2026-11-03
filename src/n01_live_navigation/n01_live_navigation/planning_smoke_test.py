@@ -1,0 +1,250 @@
+#!/usr/bin/env python3
+"""One-shot SCAN planning test; publishes a goal only, never actuator commands."""
+import argparse
+import json
+import math
+import sys
+import time
+
+import rclpy
+from geometry_msgs.msg import PoseStamped
+from nav_msgs.msg import Odometry
+from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
+from scan_planner_msgs.msg import Bspline
+from std_msgs.msg import String
+
+
+def parse_json(msg):
+    try:
+        value = json.loads(msg.data)
+        return value if isinstance(value, dict) else None
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
+def fqn(endpoint):
+    namespace = str(endpoint.node_namespace).rstrip("/")
+    return (namespace + "/" + str(endpoint.node_name)) if namespace else "/" + str(endpoint.node_name)
+
+
+class PlanningSmokeTest(Node):
+    def __init__(self, distance, timeout):
+        super().__init__("n01_planning_smoke_test")
+        self.distance = distance
+        self.timeout = timeout
+        self.body = self.health = self.safety = self.gate = self.feasibility = None
+        self.body_rx = self.health_rx = self.safety_rx = None
+        self.gate_rx = self.feasibility_rx = self.bspline_rx = None
+        self.bspline = None
+        self.bspline_count = 0
+
+        self.goal_pub = self.create_publisher(PoseStamped, "/move_base_simple/goal", 10)
+        self.create_subscription(Odometry, "/body_pose", self.on_body, qos_profile_sensor_data)
+        self.create_subscription(String, "/n01/live_navigation/system_health", self.on_health, 10)
+        self.create_subscription(String, "/n01/live_navigation/safety_status", self.on_safety, 10)
+        self.create_subscription(String, "/n01/live_navigation/goal_gate_status", self.on_gate, 10)
+        self.create_subscription(String, "/n01/live_navigation/hive2_feasibility", self.on_feasibility, 10)
+        self.create_subscription(Bspline, "/planning/bspline", self.on_bspline, 10)
+
+    def on_body(self, msg):
+        self.body, self.body_rx = msg, time.monotonic()
+
+    def on_health(self, msg):
+        self.health, self.health_rx = parse_json(msg), time.monotonic()
+
+    def on_safety(self, msg):
+        self.safety, self.safety_rx = parse_json(msg), time.monotonic()
+
+    def on_gate(self, msg):
+        self.gate, self.gate_rx = parse_json(msg), time.monotonic()
+
+    def on_feasibility(self, msg):
+        self.feasibility, self.feasibility_rx = parse_json(msg), time.monotonic()
+
+    def on_bspline(self, msg):
+        self.bspline = msg
+        self.bspline_rx = time.monotonic()
+        self.bspline_count += 1
+
+    def spin_until(self, predicate, deadline):
+        while rclpy.ok() and time.monotonic() < deadline:
+            rclpy.spin_once(self, timeout_sec=0.1)
+            if predicate():
+                return True
+        return bool(predicate())
+
+    def graph_contract(self):
+        goal_subs = {fqn(x) for x in self.get_subscriptions_info_by_topic("/move_base_simple/goal")}
+        if "/n01_live_scan_goal_gate" not in goal_subs:
+            return False, "existing_goal_gate_not_subscribed"
+
+        pubs = {fqn(x) for x in self.get_publishers_info_by_topic("/planning/bspline")}
+        if pubs != {"/scan_planner_node"}:
+            return False, "unexpected_bspline_publishers:" + repr(sorted(pubs))
+
+        expected = {"/n01_live_runtime_supervisor", "/n01_hive2_trajectory_monitor"}
+        subs = {fqn(x) for x in self.get_subscriptions_info_by_topic("/planning/bspline")}
+        if subs - expected:
+            return False, "unexpected_bspline_consumers:" + repr(sorted(subs - expected))
+        if expected - subs:
+            return False, "candidate_monitors_missing:" + repr(sorted(expected - subs))
+        return True, "planning_only_graph_verified"
+
+    def preflight(self):
+        now = time.monotonic()
+        if self.body is None or self.body_rx is None or now - self.body_rx > 0.5:
+            return False, "body_pose_missing_or_stale"
+        if self.body.header.frame_id.lstrip("/") != "map":
+            return False, "body_pose_frame_must_be_map"
+        if self.body.child_frame_id.lstrip("/") != "base_footprint":
+            return False, "body_pose_child_frame_must_be_base_footprint"
+        stamp = self.body.header.stamp.sec * 1000000000 + self.body.header.stamp.nanosec
+        stamp_age = (self.get_clock().now().nanoseconds - stamp) / 1e9
+        if stamp <= 0 or not -0.2 <= stamp_age <= 0.5:
+            return False, "body_pose_stamp_missing_or_stale"
+
+        if self.health is None or self.health_rx is None or now - self.health_rx > 0.75:
+            return False, "system_health_missing_or_stale"
+        if (self.health.get("status") != "READY_FOR_GOAL_PLANNING"
+                or self.health.get("navigation_ready") is not True
+                or self.health.get("blockers") != []
+                or self.health.get("static_overlay_ready") is not True):
+            return False, "navigation_or_static_overlay_not_ready"
+
+        if self.safety is None or self.safety_rx is None or now - self.safety_rx > 1.0:
+            return False, "safety_status_missing_or_stale"
+        if (self.safety.get("actuator_output") != "DISABLED"
+                or self.safety.get("safety_authorization") != "NEVER"
+                or self.safety.get("execution_authorized") is not False):
+            return False, "safety_supervisor_not_explicitly_fail_closed"
+        if self.goal_pub.get_subscription_count() < 1:
+            return False, "goal_gate_subscription_missing"
+        return self.graph_contract()
+
+    def make_goal(self):
+        pose = self.body.pose.pose
+        q = pose.orientation
+        norm = math.sqrt(q.x*q.x + q.y*q.y + q.z*q.z + q.w*q.w)
+        if not math.isfinite(norm) or norm < 1e-6:
+            raise ValueError("body_pose_quaternion_invalid")
+        qx, qy, qz, qw = q.x/norm, q.y/norm, q.z/norm, q.w/norm
+        yaw = math.atan2(2.0*(qw*qz + qx*qy), 1.0 - 2.0*(qy*qy + qz*qz))
+        goal = PoseStamped()
+        goal.header.frame_id = "map"
+        goal.header.stamp = self.get_clock().now().to_msg()
+        goal.pose.position.x = float(pose.position.x + self.distance*math.cos(yaw))
+        goal.pose.position.y = float(pose.position.y + self.distance*math.sin(yaw))
+        # SCAN takes its planning Z from current body_pose; zero is the goal-gate sentinel.
+        goal.pose.position.z = 0.0
+        goal.pose.orientation.x, goal.pose.orientation.y = qx, qy
+        goal.pose.orientation.z, goal.pose.orientation.w = qz, qw
+        return goal
+
+    @staticmethod
+    def spline_summary(msg):
+        order = int(msg.order)
+        points = [(float(p.x), float(p.y), float(p.z)) for p in msg.pos_pts]
+        knots = [float(v) for v in msg.knots]
+        finite = (all(math.isfinite(v) for p in points for v in p)
+                  and all(math.isfinite(v) for v in knots))
+        valid = order >= 1 and len(points) >= order + 1 and len(knots) >= 2 and finite
+        return {
+            "valid": bool(valid), "order": order,
+            "control_point_count": len(points), "knot_count": len(knots),
+            "trajectory_id": int(msg.traj_id),
+            "all_control_points_and_knots_finite": bool(finite),
+        }
+
+    def run_test(self):
+        if not self.spin_until(
+            lambda: self.body is not None and self.health is not None and self.safety is not None,
+            time.monotonic() + min(10.0, self.timeout)):
+            return 2, {"result": "PREFLIGHT_FAILED", "reason": "required_status_not_received"}
+
+        ok, reason = self.preflight()
+        if not ok:
+            return 2, {"result": "PREFLIGHT_FAILED", "reason": reason}
+        try:
+            goal = self.make_goal()
+        except ValueError as exc:
+            return 2, {"result": "PREFLIGHT_FAILED", "reason": str(exc)}
+
+        baseline = self.bspline_count
+        sent_at = time.monotonic()
+        self.goal_pub.publish(goal)
+
+        if not self.spin_until(
+            lambda: self.gate_rx is not None and self.gate_rx >= sent_at,
+            sent_at + min(3.0, self.timeout)):
+            return 3, {"result": "GOAL_GATE_TIMEOUT"}
+        gate = self.gate or {}
+        if gate.get("accepted") is not True:
+            return 3, {"result": "GOAL_REJECTED", "goal_gate_status": gate}
+
+        if not self.spin_until(
+            lambda: self.bspline_count > baseline and self.bspline_rx is not None
+            and self.bspline_rx >= sent_at,
+            sent_at + self.timeout):
+            return 4, {"result": "BSPLINE_NOT_GENERATED", "goal_gate_status": gate,
+                       "system_health": self.health}
+
+        summary = self.spline_summary(self.bspline)
+        self.spin_until(
+            lambda: self.feasibility_rx is not None and self.feasibility_rx >= self.bspline_rx,
+            time.monotonic() + 1.0)
+        safety = self.safety or {}
+        result = {
+            "result": "BSPLINE_GENERATED" if summary["valid"] else "BSPLINE_INVALID",
+            "goal_map_xyz": [round(goal.pose.position.x, 4),
+                             round(goal.pose.position.y, 4), 0.0],
+            "goal_gate_status": gate,
+            "bspline": summary,
+            "hive2_candidate_feasibility": self.feasibility,
+            "safety_status": {
+                "status": safety.get("status"),
+                "operator_hold": safety.get("operator_hold"),
+                "actuator_output": safety.get("actuator_output"),
+                "safety_authorization": safety.get("safety_authorization"),
+                "execution_authorized": safety.get("execution_authorized"),
+            },
+            "published_topic": "/move_base_simple/goal",
+            "actuator_command_published": False,
+            "operator_hold_changed": False,
+            "execution_authorized": False,
+        }
+        return (0 if summary["valid"] else 5), result
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Generate one fail-closed, planning-only SCAN B-spline candidate.")
+    parser.add_argument("--distance", type=float, default=0.8,
+                        help="short forward test-goal distance in metres (0.3..1.5)")
+    parser.add_argument("--timeout", type=float, default=15.0,
+                        help="maximum wait for a new B-spline (5..60 seconds)")
+    parser.add_argument("--confirm-planning-only", action="store_true", required=True,
+                        help="explicitly confirm this sends one planning goal only")
+    args = parser.parse_args(argv)
+    if not 0.3 <= args.distance <= 1.5:
+        parser.error("--distance must be between 0.3 and 1.5 metres")
+    if not 5.0 <= args.timeout <= 60.0:
+        parser.error("--timeout must be between 5 and 60 seconds")
+
+    rclpy.init(args=[])
+    node = PlanningSmokeTest(args.distance, args.timeout)
+    try:
+        code, result = node.run_test()
+        print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+        return code
+    except KeyboardInterrupt:
+        print(json.dumps({"result": "INTERRUPTED", "actuator_command_published": False}))
+        return 130
+    finally:
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    sys.exit(main())
