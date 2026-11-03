@@ -25,11 +25,7 @@ git pull --ff-only origin fix/n01-pose-freshness-watchdogs
 bash scripts/n01_collect_planning_readiness_audit.sh
 ```
 
-The previous focused entry point remains backward compatible and now invokes the full audit:
-
-```bash
-bash scripts/n01_collect_pose_goal_diagnostics.sh
-```
+All planning-readiness collection is maintained in this repository. Do not copy the script to `/tmp`; its Python probes are resolved relative to the checked-out workspace.
 
 ## Outputs
 
