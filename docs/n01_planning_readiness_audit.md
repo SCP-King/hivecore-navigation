@@ -1,0 +1,86 @@
+# N-01 Planning Readiness Audit
+
+## Purpose
+
+This is the one-shot, read-only evidence collection for moving from a running live-localization stack to the next native SCAN planning test.
+
+It deliberately checks the complete chain rather than only `/robot_pose`:
+
+1. ROS environment, active workspace revision, running processes and duplicate nodes.
+2. SLAM status, global pose, odometry, IMU and LiDAR input timing.
+3. Live bridge outputs: `/cloud`, `/sensor_pose`, `/body_pose` and scan-time body pose.
+4. TF frame chain and LiDAR mounting transform.
+5. Original PCD parser compatibility, source bounds and the live SCAN rolling-window overlay.
+6. Native SCAN subscriptions, planner parameters, goal-gate path and B-spline output.
+7. Dynamic-scene diagnostics and Hive2 candidate feasibility.
+8. Operator hold, safety status and actuator-topic publisher topology.
+
+## Run
+
+From the checked-out repository:
+
+```bash
+cd ~/lyy/hivecore-navigation
+git pull --ff-only origin fix/n01-pose-freshness-watchdogs
+bash scripts/n01_collect_planning_readiness_audit.sh
+```
+
+The previous focused entry point remains backward compatible and now invokes the full audit:
+
+```bash
+bash scripts/n01_collect_pose_goal_diagnostics.sh
+```
+
+## Outputs
+
+The audit creates:
+
+- `~/lyy/n01_runtime/runs/planning_readiness_audit/n01_planning_readiness_audit_<timestamp>.log`
+- `~/lyy/n01_runtime/runs/planning_readiness_audit/n01_planning_ros_probe_<timestamp>.json`
+- `~/lyy/n01_runtime/runs/planning_readiness_audit/n01_planning_readiness_bundle_<timestamp>.tar.gz`
+
+The compressed bundle contains the log and structured ROS probe JSON and is the preferred artifact to attach to the next project turn.
+
+## Planning stages
+
+### P0 — Inputs required to attempt native SCAN planning
+
+- Fresh SLAM tracking status and advancing global pose timestamps.
+- Valid local odometry and scan-time pose/odometry support.
+- Valid `base_footprint <- lidar_link` extrinsic.
+- Fresh map-frame `/cloud` and scan-stamped `/sensor_pose`.
+- Fresh map-frame `/body_pose` consumed by native SCAN.
+- Static PCD loaded, map-frame asserted, and source bounds intersecting the active SCAN window.
+- Native planner node present with the expected subscriptions and a healthy goal-gate snapshot.
+
+### P1 — Candidate trajectory review
+
+- A B-spline has been produced after a goal is supplied.
+- The B-spline has valid order, knots and finite control points.
+- Hive2 candidate feasibility has current body-pose and joint feedback.
+- Dynamic-scene diagnostics are current.
+
+The dynamic-obstacle tracker is intentionally visualization/diagnostics only. Native SCAN consumes the transformed map-frame `/cloud` directly for live occupancy updates, together with the separate static PCD overlay. The tracker output must not be mistaken for a direct planner input.
+
+A missing `/planning/bspline` before a valid goal is sent is not, by itself, a planner failure. The audit does not invent or publish a goal.
+
+### P2 — Physical execution acceptance
+
+This stage is separate from planning. The audit only reads the safety state and command-topic graph. It never changes operator hold, authorizes motion, or publishes actuator commands. Physical controller mapping, wheel geometry, emergency-stop behavior, braking distance and other acceptance checks remain unverified until separately tested.
+
+## Important interpretation limits
+
+- Standard PCD files do not encode or prove their coordinate registration. The PCD parser check proves file-format compatibility and reports bounds; the active static-overlay status reports whether the source intersects the current SCAN window. Coordinate registration still depends on the operator-confirmed vendor SLAM map-frame contract.
+- A direct `map -> base_footprint` TF edge is not required by the current bridge contract because the bridge derives `/body_pose` from timestamped global SLAM anchors plus relative odometry. The `base_footprint -> lidar_link` extrinsic and `odom -> base_link` motion chain are important.
+- The dynamic obstacle tracker reports unmatched returns for visualization and diagnostics. The native SCAN occupancy map receives `/cloud` and the static overlay independently.
+- The safety supervisor is a monitor, not an actuator controller. Its fail-closed state is expected during planning-only work.
+
+## Safety contract
+
+The audit:
+
+- subscribes to ROS topics and inspects graph, parameters, files and process metadata;
+- reads parameters only;
+- does not publish `/move_base_simple/goal`, `/n01/live_navigation/goal_gated`, `/cmd_vel`, `/cmd_wheel`, or chassis commands;
+- does not invoke ROS services or actions;
+- does not change parameters, stop nodes, restart nodes, launch stacks, build packages or run tests.
