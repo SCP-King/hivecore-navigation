@@ -49,6 +49,15 @@ class FourStageDeliveryTests(unittest.TestCase):
         self.assertIn("DurabilityPolicy.VOLATILE", source)
         self.assertIn('"static_overlay_status": static_overlay_status', source)
 
+    def test_one_command_live_preflight_runner_is_read_only_and_uses_active_domain(self):
+        source = (ROOT / "scripts/run_n01_live_stack_preflight.sh").read_text()
+        self.assertIn('ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-55}"', source)
+        self.assertIn('RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}"', source)
+        self.assertIn("n01_live_stack_preflight.py", source)
+        self.assertIn("READ_ONLY: subscriber only", source)
+        self.assertNotIn("ros2 topic pub", source)
+        self.assertNotIn("ros2 service call", source)
+
     def test_deployment_build_excludes_its_own_install_prefix_and_repairs_only_generated_collision(self):
         source = (ROOT / "scripts/deploy_n01_planning_fixes.sh").read_text()
         build_index = source.index("colcon build")
