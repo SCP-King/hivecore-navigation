@@ -282,6 +282,9 @@ for service in \
   /slam3d_node/start_mapping \
   /slam3d_node/stop_mapping \
   /slam3d_node/freeze_mapping \
+  /slam3d_node/enter_localization \
+  /slam3d_node/enter_mapping \
+  /slam3d_node/enter_idle \
   /slam3d_node/enter_relocalization \
   /slam3d_node/continue_mapping \
   /slam3d_node/start_localization \
@@ -292,9 +295,12 @@ for service in \
   /slam3d_node/publish_map_once \
   /slam3d_node/set_enable_publish_cloud_map \
   /slam3d_node/set_enable_publish_localization_map \
+  /lidar_cloud_preprocess_node/reset_ingress_lock \
   /lidar_cloud_preprocess_node/set_enable_forward \
   /lidar_cloud_preprocess_node/set_geo_filter \
+  /lidar_cloud_preprocess_node/set_publish_geo_filter_markers \
   /lidar_cloud_geometric_filter_z_node/set_enable_forward \
+  /lidar_cloud_geometric_filter_z_node/set_height_filter \
   /octomap_server/reset \
   /save_octomap
 do
@@ -429,6 +435,15 @@ if [ -n "$SLAM_LOCALIZATION_MAP_PATH" ]; then
     run_cmd 8 sha256sum "$SLAM_LOCALIZATION_MAP_PATH"
   else
     printf 'SLAM_LOCALIZATION_MAP_NOT_READABLE_OR_MISSING: %s\n' "$SLAM_LOCALIZATION_MAP_PATH"
+  fi
+fi
+if [ -r "$PCD_PATH" ] && [ -r "$SLAM_LOCALIZATION_MAP_PATH" ]; then
+  STATIC_PCD_SHA="$(sha256sum "$PCD_PATH" | awk '{print $1}')"
+  SLAM_MAP_SHA="$(sha256sum "$SLAM_LOCALIZATION_MAP_PATH" | awk '{print $1}')"
+  if [ "$STATIC_PCD_SHA" = "$SLAM_MAP_SHA" ]; then
+    printf 'STATIC_PCD_VS_SLAM_LOCALIZATION_MAP: IDENTICAL_BYTES\n'
+  else
+    printf 'STATIC_PCD_VS_SLAM_LOCALIZATION_MAP: DIFFERENT_FILES (registration must be verified; byte difference alone is not proof of misalignment)\n'
   fi
 fi
 if [ -n "$PCD_PATH" ]; then
