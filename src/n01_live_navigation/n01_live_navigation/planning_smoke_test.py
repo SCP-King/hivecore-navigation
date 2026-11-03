@@ -30,6 +30,7 @@ def fqn(endpoint):
 
 ROBOT_POSE_MAX_RX_AGE_S = 0.7
 ROBOT_POSE_MAX_STAMP_AGE_S = 1.5
+BODY_POSE_LIVE_ANCHOR_MAX_DELTA_S = 1.4
 
 
 class PlanningSmokeTest(Node):
@@ -145,16 +146,23 @@ class PlanningSmokeTest(Node):
         if (bridge.get("robot_pose_receive_fresh") is not True
                 or bridge.get("body_pose_live_anchor_fresh") is not True):
             return False, "global_robot_pose_or_live_anchor_not_fresh"
+        health_age = now - self.health_rx
         bridge_rx_age = bridge.get("robot_pose_receive_age_s")
         if (not isinstance(bridge_rx_age, (int, float))
                 or not math.isfinite(float(bridge_rx_age))
-                or not 0.0 <= float(bridge_rx_age) <= ROBOT_POSE_MAX_RX_AGE_S):
+                or not 0.0 <= float(bridge_rx_age) + health_age <= ROBOT_POSE_MAX_RX_AGE_S):
             return False, "global_robot_pose_receive_age_outside_budget"
         bridge_stamp_age = bridge.get("robot_pose_stamp_age_s")
         if (not isinstance(bridge_stamp_age, (int, float))
                 or not math.isfinite(float(bridge_stamp_age))
-                or not -0.2 <= float(bridge_stamp_age) <= ROBOT_POSE_MAX_STAMP_AGE_S):
+                or not -0.2 <= float(bridge_stamp_age) + health_age <= ROBOT_POSE_MAX_STAMP_AGE_S):
             return False, "global_robot_pose_stamp_missing_or_stale"
+        anchor_delta = bridge.get("body_pose_live_anchor_delta_s")
+        if (not isinstance(anchor_delta, (int, float))
+                or not math.isfinite(float(anchor_delta))
+                or not 0.0 <= float(anchor_delta) + health_age
+                <= BODY_POSE_LIVE_ANCHOR_MAX_DELTA_S):
+            return False, "body_pose_live_anchor_delta_outside_budget"
         if (self.health.get("status") != "READY_FOR_GOAL_PLANNING"
                 or self.health.get("navigation_ready") is not True
                 or self.health.get("blockers") != []
@@ -262,6 +270,19 @@ class PlanningSmokeTest(Node):
             "body_pose_live_anchor_delta_s": bridge_at_publish.get("body_pose_live_anchor_delta_s"),
             "observer_robot_pose_receive_age_s": round(robot_pose_receive_age_at_publish, 4),
             "observer_robot_pose_stamp_age_s": round(robot_pose_stamp_age_at_publish, 4),
+            "system_health_receive_age_s": round(health_rx_age_at_publish, 4),
+            "bridge_robot_pose_receive_age_effective_s": (
+                round(float(bridge_at_publish["robot_pose_receive_age_s"])
+                      + health_rx_age_at_publish, 4)
+                if isinstance(bridge_at_publish.get("robot_pose_receive_age_s"), (int, float))
+                else None
+            ),
+            "bridge_body_pose_live_anchor_delta_effective_s": (
+                round(float(bridge_at_publish["body_pose_live_anchor_delta_s"])
+                      + health_rx_age_at_publish, 4)
+                if isinstance(bridge_at_publish.get("body_pose_live_anchor_delta_s"), (int, float))
+                else None
+            ),
         }
         health_rx_age_at_publish = (
             sent_at - self.health_rx if self.health_rx is not None else float("inf"))
@@ -288,11 +309,17 @@ class PlanningSmokeTest(Node):
             and bridge_at_publish.get("robot_pose_receive_fresh") is True
             and isinstance(bridge_rx_age_at_publish, (int, float))
             and math.isfinite(float(bridge_rx_age_at_publish))
-            and 0.0 <= float(bridge_rx_age_at_publish) <= ROBOT_POSE_MAX_RX_AGE_S
+            and 0.0 <= float(bridge_rx_age_at_publish) + health_rx_age_at_publish
+            <= ROBOT_POSE_MAX_RX_AGE_S
             and isinstance(bridge_stamp_age_at_publish, (int, float))
             and math.isfinite(float(bridge_stamp_age_at_publish))
-            and -0.2 <= float(bridge_stamp_age_at_publish) <= ROBOT_POSE_MAX_STAMP_AGE_S
+            and -0.2 <= float(bridge_stamp_age_at_publish) + health_rx_age_at_publish
+            <= ROBOT_POSE_MAX_STAMP_AGE_S
             and bridge_at_publish.get("body_pose_live_anchor_fresh") is True
+            and isinstance(bridge_at_publish.get("body_pose_live_anchor_delta_s"), (int, float))
+            and math.isfinite(float(bridge_at_publish.get("body_pose_live_anchor_delta_s")))
+            and 0.0 <= float(bridge_at_publish.get("body_pose_live_anchor_delta_s"))
+            + health_rx_age_at_publish <= BODY_POSE_LIVE_ANCHOR_MAX_DELTA_S
             and health_at_publish.get("status") == "READY_FOR_GOAL_PLANNING"
             and health_at_publish.get("navigation_ready") is True
             and health_at_publish.get("blockers") == []
