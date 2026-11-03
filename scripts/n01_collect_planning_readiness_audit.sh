@@ -84,12 +84,12 @@ topic_echo() {
       run_cmd 4 ros2 topic echo "$topic" --once --qos-reliability best_effort
       ;;
     latched)
-      printf '\\n$ ros2 topic echo %s --once --qos-durability transient_local (first choice)\\n' "$topic"
+      printf '\n$ ros2 topic echo %s --once --qos-durability transient_local (first choice)\n' "$topic"
       timeout --signal=INT --kill-after=1s 4s ros2 topic echo "$topic" --once --qos-durability transient_local
       rc=$?
-      printf '[transient_local_exit_code=%s]\\n' "$rc"
+      printf '[transient_local_exit_code=%s]\n' "$rc"
       if [ "$rc" -eq 124 ] || [ "$rc" -eq 2 ]; then
-        printf 'Retrying %s with VOLATILE durability to detect a volatile publisher/QoS mismatch.\\n' "$topic"
+        printf 'Retrying %s with VOLATILE durability to detect a volatile publisher/QoS mismatch.\n' "$topic"
         run_cmd 4 ros2 topic echo "$topic" --once --qos-durability volatile
       fi
       ;;
@@ -607,11 +607,17 @@ if [ -f "$WS_ROOT/scripts/n01_live_stack_preflight.py" ]; then
   # lose the ROS shared-library environment on some desktop launch paths.
   printf '\n$ python3 %s --duration 8 > %s 2>&1\n' \
     "$WS_ROOT/scripts/n01_live_stack_preflight.py" "$STACK_PREFLIGHT_JSON"
-  timeout --signal=INT --kill-after=2s 30s \
-    "$ROS_PYTHON" "$WS_ROOT/scripts/n01_live_stack_preflight.py" --duration 8 \
-    > "$STACK_PREFLIGHT_JSON" 2>&1
-  rc=$?
-  printf '[exit_code=%s]\n' "$rc"
+  if [ -n "$ROS_PYTHON" ] && [ -x "$ROS_PYTHON" ]; then
+    timeout --signal=INT --kill-after=2s 30s \
+      "$ROS_PYTHON" "$WS_ROOT/scripts/n01_live_stack_preflight.py" --duration 8 \
+      > "$STACK_PREFLIGHT_JSON" 2>&1
+    rc=$?
+    printf '[exit_code=%s]\n' "$rc"
+  else
+    printf 'STACK_PREFLIGHT_NOT_RUN: ROS Python interpreter unavailable\n'
+    printf '{"schema":"n01.live_stack_preflight_import_error.v1","status":"ROS_PYTHON_NOT_FOUND"}\n' \
+      > "$STACK_PREFLIGHT_JSON"
+  fi
   if [ -f "$STACK_PREFLIGHT_JSON" ]; then
     printf '\n--- Live stack preflight JSON (publisher endpoints, rates, TF edges) ---\n'
     sed -n '1,260p' "$STACK_PREFLIGHT_JSON"
