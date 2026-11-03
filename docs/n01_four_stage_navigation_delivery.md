@@ -72,15 +72,14 @@ ros2 launch n01_live_navigation live_scan.launch.py \
 ## 一次性采集状态
 
 ```bash
-source /opt/ros/humble/setup.bash
-source /home/demo/lyy/hivecore-navigation/install/setup.bash
+cd /home/demo/lyy/hivecore-navigation
 ros2 run n01_live_navigation n01_navigation_acceptance
 
-# 使用 ROS Humble 对应的系统 Python；只订阅，不发目标或控制命令
-/usr/bin/python3 scripts/n01_live_stack_preflight.py --duration 10
+# 单命令只读采集；只启动订阅型 observer，不发送目标或控制命令
+bash scripts/run_n01_live_stack_preflight.sh 10
 ```
 
-预检同时报告 `/robot_pose` 的接收频率、最大接收间隔、stamp age，以及 `/localization_status` 的接收/时间戳新鲜度；不能只凭 `body_pose_live_anchor_delta_s` 推断上游发布频率。静态 overlay 的 `/grid_map/static_overlay_status` 会单独记录实际 publisher QoS、源地图点数、活动窗口相交情况和 ready/reason。
+预检自动加载 ROS Humble 和当前工作空间，默认连接 N-01 部署使用的 ROS domain 55（可通过环境变量覆盖）。它同时报告 `/robot_pose` 的接收频率、最大接收间隔、stamp age，以及 `/localization_status` 的接收/时间戳新鲜度；不能只凭 `body_pose_live_anchor_delta_s` 推断上游发布频率。静态 overlay 的 `/grid_map/static_overlay_status` 会单独记录实际 publisher QoS、源地图点数、活动窗口相交情况和 ready/reason。结构化报告保存在 `~/lyy/n01_runtime/runs/live_stack_preflight/`；即使 ROS Python 导入失败，也会生成包含缺失 so 和环境路径的 JSON 诊断。
 
 安全监视器的软件保持默认开启。若只需在静态规划测试中解除软件保持，可发送：
 
