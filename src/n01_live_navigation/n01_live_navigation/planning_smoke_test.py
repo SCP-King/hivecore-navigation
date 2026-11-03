@@ -28,24 +28,36 @@ def fqn(endpoint):
     return (namespace + "/" + str(endpoint.node_name)) if namespace else "/" + str(endpoint.node_name)
 
 
+ROBOT_POSE_MAX_RX_AGE_S = 0.7
+ROBOT_POSE_MAX_STAMP_AGE_S = 1.5
+
+
 class PlanningSmokeTest(Node):
-    def __init__(self, distance, timeout):
+    def __init__(self, distance, timeout, readiness_timeout):
         super().__init__("n01_planning_smoke_test")
         self.distance = distance
         self.timeout = timeout
-        self.body = self.health = self.safety = self.gate = self.feasibility = None
-        self.body_rx = self.health_rx = self.safety_rx = None
+        self.readiness_timeout = readiness_timeout
+        self.body = self.robot_pose = None
+        self.health = self.safety = self.gate = self.feasibility = None
+        self.body_rx = self.robot_pose_rx = None
+        self.health_rx = self.safety_rx = None
         self.gate_rx = self.feasibility_rx = self.bspline_rx = None
         self.bspline = None
         self.bspline_count = 0
 
         self.goal_pub = self.create_publisher(PoseStamped, "/move_base_simple/goal", 10)
+        self.create_subscription(Odometry, "/robot_pose", self.on_robot_pose,
+                                 qos_profile_sensor_data)
         self.create_subscription(Odometry, "/body_pose", self.on_body, qos_profile_sensor_data)
         self.create_subscription(String, "/n01/live_navigation/system_health", self.on_health, 10)
         self.create_subscription(String, "/n01/live_navigation/safety_status", self.on_safety, 10)
         self.create_subscription(String, "/n01/live_navigation/goal_gate_status", self.on_gate, 10)
         self.create_subscription(String, "/n01/live_navigation/hive2_feasibility", self.on_feasibility, 10)
         self.create_subscription(Bspline, "/planning/bspline", self.on_bspline, 10)
+
+    def on_robot_pose(self, msg):
+        self.robot_pose, self.robot_pose_rx = msg, time.monotonic()
 
     def on_body(self, msg):
         self.body, self.body_rx = msg, time.monotonic()
@@ -99,19 +111,39 @@ class PlanningSmokeTest(Node):
 
     def preflight(self):
         now = time.monotonic()
+        if (self.robot_pose is None or self.robot_pose_rx is None
+                or now - self.robot_pose_rx > ROBOT_POSE_MAX_RX_AGE_S):
+            return False, "robot_pose_receive_missing_or_stale"
+        robot_stamp = (
+            self.robot_pose.header.stamp.sec * 1000000000
+            + self.robot_pose.header.stamp.nanosec
+        )
+        robot_stamp_age = (self.get_clock().now().nanoseconds - robot_stamp) / 1e9
+        if robot_stamp <= 0 or not -0.2 <= robot_stamp_age <= ROBOT_POSE_MAX_STAMP_AGE_S:
+            return False, "robot_pose_stamp_missing_or_stale"
+
         if self.body is None or self.body_rx is None or now - self.body_rx > 0.5:
             return False, "body_pose_missing_or_stale"
         if self.body.header.frame_id.lstrip("/") != "map":
             return False, "body_pose_frame_must_be_map"
         if self.body.child_frame_id.lstrip("/") != "base_footprint":
             return False, "body_pose_child_frame_must_be_base_footprint"
-        stamp = self.body.header.stamp.sec * 1000000000 + self.body.header.stamp.nanosec
-        stamp_age = (self.get_clock().now().nanoseconds - stamp) / 1e9
-        if stamp <= 0 or not -0.2 <= stamp_age <= 0.5:
+        body_stamp = self.body.header.stamp.sec * 1000000000 + self.body.header.stamp.nanosec
+        body_stamp_age = (self.get_clock().now().nanoseconds - body_stamp) / 1e9
+        if body_stamp <= 0 or not -0.2 <= body_stamp_age <= 0.5:
             return False, "body_pose_stamp_missing_or_stale"
 
         if self.health is None or self.health_rx is None or now - self.health_rx > 0.75:
             return False, "system_health_missing_or_stale"
+        bridge = self.health.get("bridge", {})
+        if (bridge.get("robot_pose_receive_fresh") is not True
+                or bridge.get("body_pose_live_anchor_fresh") is not True):
+            return False, "global_robot_pose_or_live_anchor_not_fresh"
+        bridge_stamp_age = bridge.get("robot_pose_stamp_age_s")
+        if (not isinstance(bridge_stamp_age, (int, float))
+                or not math.isfinite(float(bridge_stamp_age))
+                or not -0.2 <= float(bridge_stamp_age) <= ROBOT_POSE_MAX_STAMP_AGE_S):
+            return False, "global_robot_pose_stamp_missing_or_stale"
         if (self.health.get("status") != "READY_FOR_GOAL_PLANNING"
                 or self.health.get("navigation_ready") is not True
                 or self.health.get("blockers") != []
@@ -163,19 +195,33 @@ class PlanningSmokeTest(Node):
         }
 
     def run_test(self):
-        preflight_deadline = time.monotonic() + min(30.0, self.timeout)
+        readiness_started = time.monotonic()
+        preflight_deadline = readiness_started + self.readiness_timeout
         ok, reason = False, "navigation_preflight_timeout"
+        goal = None
         while rclpy.ok() and time.monotonic() < preflight_deadline:
             rclpy.spin_once(self, timeout_sec=0.1)
             ok, reason = self.preflight()
+            if not ok:
+                continue
+            try:
+                candidate_goal = self.make_goal()
+            except ValueError as exc:
+                return 2, {"result": "PREFLIGHT_FAILED", "reason": str(exc)}
+            # Recheck immediately before publishing to close the readiness-window
+            # race while the pose freshness budget is only 0.7 seconds.
+            ok, reason = self.preflight()
             if ok:
+                goal = candidate_goal
                 break
-        if not ok:
-            return 2, {"result": "PREFLIGHT_FAILED", "reason": reason}
-        try:
-            goal = self.make_goal()
-        except ValueError as exc:
-            return 2, {"result": "PREFLIGHT_FAILED", "reason": str(exc)}
+        if not ok or goal is None:
+            return 2, {
+                "result": "PREFLIGHT_FAILED",
+                "reason": reason,
+                "readiness_wait_s": round(time.monotonic() - readiness_started, 3),
+                "readiness_timeout_s": self.readiness_timeout,
+                "goal_published": False,
+            }
 
         baseline = self.bspline_count
         sent_at = time.monotonic()
@@ -216,6 +262,12 @@ class PlanningSmokeTest(Node):
                 "execution_authorized": safety.get("execution_authorized"),
             },
             "published_topic": "/move_base_simple/goal",
+            "readiness_wait_s": round(time.monotonic() - readiness_started, 3),
+            "robot_pose_receive_age_s": round(time.monotonic() - self.robot_pose_rx, 4),
+            "robot_pose_stamp_age_s": round(
+                (self.get_clock().now().nanoseconds
+                 - (self.robot_pose.header.stamp.sec * 1000000000
+                    + self.robot_pose.header.stamp.nanosec)) / 1e9, 4),
             "actuator_command_published": False,
             "operator_hold_changed": False,
             "execution_authorized": False,
@@ -226,10 +278,12 @@ class PlanningSmokeTest(Node):
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Generate one fail-closed, planning-only SCAN B-spline candidate.")
-    parser.add_argument("--distance", type=float, default=0.8,
+    parser.add_argument("--distance", type=float, default=0.5,
                         help="short forward test-goal distance in metres (0.3..1.5)")
     parser.add_argument("--timeout", type=float, default=15.0,
                         help="maximum wait for a new B-spline (5..60 seconds)")
+    parser.add_argument("--readiness-timeout", type=float, default=120.0,
+                        help="maximum wait for a fresh READY window (10..180 seconds)")
     parser.add_argument("--confirm-planning-only", action="store_true", required=True,
                         help="explicitly confirm this sends one planning goal only")
     args = parser.parse_args(argv)
@@ -237,9 +291,11 @@ def main(argv=None):
         parser.error("--distance must be between 0.3 and 1.5 metres")
     if not 5.0 <= args.timeout <= 60.0:
         parser.error("--timeout must be between 5 and 60 seconds")
+    if not 10.0 <= args.readiness_timeout <= 180.0:
+        parser.error("--readiness-timeout must be between 10 and 180 seconds")
 
     rclpy.init(args=[])
-    node = PlanningSmokeTest(args.distance, args.timeout)
+    node = PlanningSmokeTest(args.distance, args.timeout, args.readiness_timeout)
     try:
         code, result = node.run_test()
         print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
