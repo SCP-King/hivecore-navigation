@@ -288,7 +288,7 @@ SLAM_ARCHIVE="$LYY_ROOT/hive2_slam_sources_20261030_155649.tar.gz"
 if [ -f "$SLAM_ARCHIVE" ]; then
   printf 'archive: %s\n' "$SLAM_ARCHIVE"
   printf '\nRelevant source/config member names:\n'
-  MEMBERS="$(tar -tzf "$SLAM_ARCHIVE" 2>/dev/null | grep -Ei '(slam3d|localiz|mola|pose|fusion).*\.(cpp|cc|cxx|hpp|h|yaml|yml))"
+  MEMBERS="$(tar -tzf "$SLAM_ARCHIVE" 2>/dev/null | grep -Ei '(slam3d|localiz|mola|pose|fusion).*\.(cpp|cc|cxx|hpp|h|yaml|yml)$')"
   printf '%s\n' "$MEMBERS"
   printf '\nSource matches for pose publishing and IMU synchronization:\n'
   while IFS= read -r member; do
@@ -322,42 +322,7 @@ printf 'Collected: host/time/ROS env, git revision, active processes, ROS nodes/
 printf 'A localization+IMU+body pose, B static map+dynamic obstacle+SCAN, C Hive2 feasibility,\n'
 printf 'D safety/control topology, live params, message contracts, TF samples, local source refs,\n'
 printf 'and vendor SLAM archive source matches when the archive is present.\n'
-printf 'No ROS command topic was published. No application service/action was invoked.
-ROS parameter services are used only to read parameter values.\n'
-printf 'No ROS parameter was changed. No node was stopped or restarted. No build/test was run.\n'
- | head -n 40)"
-  printf '%s\n' "$MEMBERS"
-  printf '\nSource matches for pose publishing and IMU synchronization:\n'
-  while IFS= read -r member; do
-    [ -z "$member" ] && continue
-    matches="$(tar -xOzf "$SLAM_ARCHIVE" "$member" 2>/dev/null | grep -n -C 3 -E 'pose_publish_period|publish_pose|pose_topic|fusion_path_imu_sync_ok|imu_cloud_max_stamp_delta_sec|imu_cloud_stamp_delta' | head -n 100 || true)"
-    if [ -n "$matches" ]; then
-      printf '\n--- %s ---\n%s\n' "$member" "$matches"
-    fi
-  done <<< "$MEMBERS"
-else
-  printf 'SLAM_SOURCE_ARCHIVE_MISSING: %s\n' "$SLAM_ARCHIVE"
-fi
 
-section "15. Existing N01 diagnostic and runbook artifacts"
-for file in \
-  "$WS_ROOT/scripts/n01_live_stack_preflight.py" \
-  "$WS_ROOT/scripts/n01_live_localization_readonly_audit.py" \
-  "$WS_ROOT/docs/n01_four_stage_navigation_delivery.md" \
-  "$WS_ROOT/docs/n01_live_navigation_full_stack.md" \
-  "$WS_ROOT/docs/n01_g415_native_scan_static_pcd_integration.md"
-do
-  if [ -f "$file" ]; then
-    ls -lh "$file"
-  else
-    printf 'MISSING: %s\n' "$file"
-  fi
-done
-
-section "16. Diagnostic completeness checklist"
-printf 'Collected: host/time/ROS env, git revision, active processes, ROS nodes/topics/services,\n'
-printf 'A localization+IMU+body pose, B static map+dynamic obstacle+SCAN, C Hive2 feasibility,\n'
-printf 'D safety/control topology, live params, message contracts, TF samples, local source refs,\n'
-printf 'and vendor SLAM archive source matches when the archive is present.\n'
-printf 'No ROS command topic was published. No ROS service/action was called.\n'
+printf 'No ROS command topic was published. No application service/action was invoked.\n'
+printf 'ROS parameter services are used only to read parameter values.\n'
 printf 'No ROS parameter was changed. No node was stopped or restarted. No build/test was run.\n'
