@@ -53,5 +53,5 @@ echo "readiness_timeout_s: $READINESS_TIMEOUT"
 echo "This sends at most one /move_base_simple/goal after all freshness, health, safety and graph checks pass."
 echo "It never publishes velocity, wheel, chassis or actuator commands."
 exec ros2 run n01_live_navigation n01_planning_smoke_test \
-  --distance "$DISTANCE" --timeout "$TIMEOUT" \\
+  --distance "$DISTANCE" --timeout "$TIMEOUT" \
   --readiness-timeout "$READINESS_TIMEOUT" --confirm-planning-only
