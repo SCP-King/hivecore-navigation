@@ -4,8 +4,9 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-DISTANCE="${1:-0.8}"
+DISTANCE="${1:-0.5}"
 TIMEOUT="${2:-15}"
+READINESS_TIMEOUT="${3:-120}"
 # Match the deployed N-01 ROS environment unless explicitly overridden.
 export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-55}"
 export RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}"
@@ -47,8 +48,10 @@ echo "live_scan_pid: ${launch_pids[0]}"
 echo "ROS_DOMAIN_ID: $ROS_DOMAIN_ID"
 echo "RMW_IMPLEMENTATION: $RMW_IMPLEMENTATION"
 echo "distance_m: $DISTANCE"
-echo "timeout_s: $TIMEOUT"
+echo "bspline_timeout_s: $TIMEOUT"
+echo "readiness_timeout_s: $READINESS_TIMEOUT"
 echo "This sends at most one /move_base_simple/goal after all freshness, health, safety and graph checks pass."
 echo "It never publishes velocity, wheel, chassis or actuator commands."
 exec ros2 run n01_live_navigation n01_planning_smoke_test \
-  --distance "$DISTANCE" --timeout "$TIMEOUT" --confirm-planning-only
+  --distance "$DISTANCE" --timeout "$TIMEOUT" \\
+  --readiness-timeout "$READINESS_TIMEOUT" --confirm-planning-only
