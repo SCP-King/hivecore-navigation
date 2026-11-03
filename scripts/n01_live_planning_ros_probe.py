@@ -185,6 +185,7 @@ class PlanningReadinessProbe(Node):
             try:
                 msg_type = get_message(type_name)
                 if topic in (
+                    "/grid_map/static_occupancy",
                     "/grid_map/static_overlay_ready",
                     "/grid_map/static_overlay_status",
                 ):
