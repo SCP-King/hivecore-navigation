@@ -84,6 +84,8 @@ class FourStageDeliveryTests(unittest.TestCase):
         self.assertIn("self.pose_rx_monotonic = 0.0", bridge)
         self.assertIn('"global_robot_pose_missing_or_stale"', source)
         self.assertIn('"global_robot_pose_anchor_outside_scan_time_budget"', source)
+        self.assertIn('"bridge_summary": bridge_summary', source)
+        self.assertIn('"NAVIGATION BLOCKED "', source)
 
 
 if __name__ == "__main__":

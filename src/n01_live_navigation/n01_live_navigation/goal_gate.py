@@ -1,10 +1,10 @@
 """Fail-closed RViz goal relay; planning inputs only, never robot commands."""
 import json
+import time
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from geometry_msgs.msg import PoseStamped
-from std_msgs.msg import Bool, String
+from std_msgs.msg import String
 
 from .core import goal_is_valid
 
@@ -12,19 +12,17 @@ from .core import goal_is_valid
 class LiveGoalGate(Node):
     def __init__(self):
         super().__init__("n01_live_scan_goal_gate")
+        self.health = {}
+        self.health_rx_monotonic = None
+        self.health_error = "waiting_system_health"
         self.live_ready = False
         self.navigation_ready = False
         self.static_ready = False
-        self.live_reason = "waiting_live_adapter"
-        latched = QoSProfile(
-            depth=1, reliability=ReliabilityPolicy.RELIABLE,
-            durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self.live_reason = "waiting_system_health"
+        # Use one supervisor snapshot for every gate decision. Separate Bool
+        # and bridge topics can be sampled at different times and disagree.
         self.create_subscription(
-            Bool, "/grid_map/static_overlay_ready", self.on_static_ready, latched)
-        self.create_subscription(
-            Bool, "/n01/live_navigation/navigation_ready", self.on_navigation_ready, 10)
-        self.create_subscription(
-            String, "/n01/live_navigation/readiness", self.on_live_status, 10)
+            String, "/n01/live_navigation/system_health", self.on_system_health, 10)
         self.create_subscription(
             PoseStamped, "/move_base_simple/goal", self.on_goal, 10)
         self.goal_pub = self.create_publisher(
@@ -34,31 +32,53 @@ class LiveGoalGate(Node):
         self.get_logger().warning(
             "RViz goal relay is fail-closed until localization, fresh scan, body pose and static PCD are ready")
 
-    def on_static_ready(self, msg):
-        self.static_ready = bool(msg.data)
-
-    def on_navigation_ready(self, msg):
-        self.navigation_ready = bool(msg.data)
-
-    def on_live_status(self, msg):
+    def on_system_health(self, msg):
         try:
-            status = json.loads(msg.data)
-            self.live_ready = (
-                status.get("status") == "LIVE_SCAN_INPUTS_READY"
-                and status.get("localization_status_fresh") is True
-                and status.get("cloud_output_fresh") is True
+            health = json.loads(msg.data)
+            if not isinstance(health, dict):
+                raise ValueError("system_health_not_object")
+            blockers = health.get("blockers")
+            if not isinstance(blockers, list):
+                raise ValueError("system_health_blockers_missing")
+            self.health = health
+            self.health_rx_monotonic = time.monotonic()
+            self.health_error = ""
+            self.navigation_ready = bool(
+                health.get("status") == "READY_FOR_GOAL_PLANNING"
+                and health.get("navigation_ready") is True
+                and not blockers
             )
-            self.live_reason = status.get("localization_status", "unknown")
-        except (ValueError, TypeError, AttributeError):
+            self.static_ready = health.get("static_overlay_ready") is True
+            self.live_ready = self.navigation_ready
+            self.live_reason = (
+                "ready" if self.navigation_ready
+                else str(blockers[0]) if blockers
+                else "system_health_not_ready"
+            )
+        except (ValueError, TypeError, AttributeError) as exc:
+            self.health = {}
+            self.health_rx_monotonic = None
+            self.health_error = str(exc)
+            self.navigation_ready = False
+            self.static_ready = False
             self.live_ready = False
-            self.live_reason = "invalid_live_readiness_message"
+            self.live_reason = "invalid_system_health_message"
 
     def on_goal(self, msg):
+        health_age = (
+            time.monotonic() - self.health_rx_monotonic
+            if self.health_rx_monotonic is not None else None)
+        health_fresh = bool(
+            health_age is not None and 0.0 <= health_age <= 0.75)
         valid, reason = goal_is_valid(
             msg,
-            live_ready=self.live_ready and self.navigation_ready,
-            static_ready=self.static_ready,
+            live_ready=health_fresh and self.live_ready and self.navigation_ready,
+            static_ready=health_fresh and self.static_ready,
         )
+        if not health_fresh:
+            valid, reason = False, "system_health_missing_or_stale"
+        elif not self.navigation_ready and self.health.get("blockers"):
+            valid, reason = False, str(self.health["blockers"][0])
         stamp_ns = int(msg.header.stamp.sec) * 1000000000 + int(msg.header.stamp.nanosec)
         now_ns = self.get_clock().now().nanoseconds
         age_s = (now_ns - stamp_ns) / 1e9 if stamp_ns > 0 else None
@@ -69,6 +89,11 @@ class LiveGoalGate(Node):
             "accepted": bool(valid),
             "reason": reason,
             "localization_reason": self.live_reason,
+            "system_health_status": self.health.get("status", "WAITING"),
+            "system_health_fresh": health_fresh,
+            "system_health_age_s": health_age,
+            "system_health_blockers": self.health.get("blockers", []),
+            "system_health_error": self.health_error,
             "navigation_ready": self.navigation_ready,
             "static_overlay_ready": self.static_ready,
             "goal_stamp_age_s": age_s,

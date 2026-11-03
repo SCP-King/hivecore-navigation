@@ -49,6 +49,8 @@ class LiveRuntimeSupervisor(Node):
         self.planner_rx_monotonic = None
         self.planner_traj_id = None
         self.last_health = {}
+        self.last_logged_blocker_signature = None
+        self.last_diagnostic_log_monotonic = 0.0
 
         latched = QoSProfile(
             depth=1, reliability=ReliabilityPolicy.RELIABLE,
@@ -288,12 +290,31 @@ class LiveRuntimeSupervisor(Node):
                 ],
             },
         }
+        bridge_summary_keys = (
+            "status", "localization_status", "localization_status_fresh",
+            "robot_pose_contract", "robot_pose_receive_fresh",
+            "robot_pose_receive_age_s", "robot_pose_stamp_age_s",
+            "robot_pose_stamp_progress_age_s", "robot_pose_last_error",
+            "robot_pose_publisher_count", "robot_pose_multiple_publisher_endpoints",
+            "pose_scan_anchor_available", "pose_scan_alignment", "pose_scan_skew_s",
+            "odom_contract", "odom_receive_fresh", "odom_receive_age_s",
+            "odom_stamp_age_s", "odom_last_error",
+            "motion_compensation_ready", "motion_compensation_error",
+            "sensor_extrinsic_ready", "last_tf_error",
+            "cloud_output_fresh", "cloud_output_age_s", "latest_scan_lag_s",
+            "body_pose_live_fresh", "body_pose_live_error",
+        )
+        bridge_summary = {
+            key: self.bridge.get(key) for key in bridge_summary_keys
+        }
+
         health = {
             "schema": "n01.live_system_health.v2",
             "status": "READY_FOR_GOAL_PLANNING" if navigation_ready else "BLOCKED",
             "navigation_ready": bool(navigation_ready),
             "blockers": blockers,
             "bridge": self.bridge,
+            "bridge_summary": bridge_summary,
             "static_overlay_ready": bool(self.static_ready),
             "static_overlay_diagnostic": self.static_overlay_status,
             "body_pose_stamp_age_s": body_stamp_age,
@@ -329,6 +350,27 @@ class LiveRuntimeSupervisor(Node):
             "actuator_output": "DISABLED",
             "safety_authorization": "NEVER",
         }
+        blocker_signature = tuple(blockers)
+        if (
+            blocker_signature != self.last_logged_blocker_signature
+            or now_mono - self.last_diagnostic_log_monotonic >= 5.0
+        ):
+            diagnostic = {
+                "blockers": blockers,
+                "bridge": bridge_summary,
+                "body_pose_stamp_age_s": body_stamp_age,
+                "body_pose_receive_age_s": body_rx_age,
+                "static_overlay_ready": bool(self.static_ready),
+            }
+            if blockers:
+                self.get_logger().warning(
+                    "NAVIGATION BLOCKED " + json.dumps(diagnostic, sort_keys=True))
+            else:
+                self.get_logger().info(
+                    "NAVIGATION READY " + json.dumps(diagnostic, sort_keys=True))
+            self.last_logged_blocker_signature = blocker_signature
+            self.last_diagnostic_log_monotonic = now_mono
+
         self.ready_pub.publish(Bool(data=bool(navigation_ready)))
         self.health_pub.publish(String(data=json.dumps(health, sort_keys=True)))
         self.last_health = health

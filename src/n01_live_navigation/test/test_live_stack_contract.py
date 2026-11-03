@@ -75,6 +75,15 @@ class LiveStackContractTests(unittest.TestCase):
         self.assertIn('max_pending_clouds: 1', config)
         self.assertIn('self.counts["drop_superseded"] += len(self.pending_clouds)', bridge)
 
+    def test_goal_gate_uses_one_fresh_authoritative_health_snapshot(self):
+        gate = (ROOT / "src/n01_live_navigation/n01_live_navigation/goal_gate.py").read_text()
+        self.assertIn('String, "/n01/live_navigation/system_health"', gate)
+        self.assertIn("health_rx_monotonic", gate)
+        self.assertIn('health.get("status") == "READY_FOR_GOAL_PLANNING"', gate)
+        self.assertIn('health.get("navigation_ready") is True', gate)
+        self.assertNotIn('"/n01/live_navigation/navigation_ready"', gate)
+        self.assertNotIn('"/n01/live_navigation/readiness"', gate)
+
     def test_live_navigation_remains_non_actuating(self):
         package = ROOT / "src/n01_live_navigation/n01_live_navigation"
         combined = "\n".join(path.read_text() for path in package.glob("*.py"))
