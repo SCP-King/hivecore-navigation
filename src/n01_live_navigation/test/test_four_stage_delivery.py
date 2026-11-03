@@ -135,7 +135,7 @@ class FourStageDeliveryTests(unittest.TestCase):
         self.assertIn('DISTANCE="0.5"', source)
         self.assertIn('READINESS_TIMEOUT="120"', source)
         self.assertIn('--readiness-timeout "$READINESS_TIMEOUT"', source)
-        self.assertIn('state != Z*', source)
+        self.assertIn('!= Z*', source)
         self.assertIn('kill -INT -- "-$OLD_PGID"', source)
         self.assertIn("legacy launch is not session-isolated", source)
         self.assertIn("nohup setsid ros2 launch", source)
