@@ -13,6 +13,8 @@ mkdir -p "$OUT_DIR" || exit 2
 LOG_FILE="$OUT_DIR/n01_planning_readiness_audit_$STAMP.log"
 PROBE_JSON="$OUT_DIR/n01_planning_ros_probe_$STAMP.json"
 BUNDLE_FILE="$OUT_DIR/n01_planning_readiness_bundle_$STAMP.tar.gz"
+TF_PDF="$OUT_DIR/frames_$STAMP.pdf"
+TF_GV="$OUT_DIR/frames_$STAMP.gv"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
 section() {
@@ -37,6 +39,20 @@ has_topic() {
 
 has_node() {
   printf '%s\n' "$NODE_LIST" | grep -Fxq "$1"
+}
+
+has_service() {
+  printf '%s\n' "$SERVICE_LIST" | awk '{print $1}' | grep -Fxq "$1"
+}
+
+service_check() {
+  service="$1"
+  if has_service "$service"; then
+    line="$(printf '%s\n' "$SERVICE_LIST" | awk -v s="$service" '$1 == s {print $0; exit}')"
+    printf 'SERVICE_PRESENT %s | %s\n' "$service" "$line"
+  else
+    printf 'SERVICE_MISSING %s\n' "$service"
+  fi
 }
 
 topic_info() {
@@ -81,11 +97,9 @@ topic_hz() {
     printf '\nTOPIC_MISSING: %s\n' "$topic"
     return 0
   fi
-  if [ "$qos" = "sensor" ]; then
-    run_cmd 4 ros2 topic hz "$topic" --qos-reliability best_effort
-  else
-    run_cmd 4 ros2 topic hz "$topic"
-  fi
+  # Humble ros2 topic hz does not accept the same QoS flags as topic echo.
+  # Sensor-data rates are measured by the Python probe with sensor-data QoS.
+  run_cmd 4 ros2 topic hz "$topic"
 }
 
 node_info() {
@@ -117,12 +131,18 @@ finish() {
   printf '\n================================================================\n'
   printf 'N-01 planning-readiness audit finished: %s\n' "$(date --iso-8601=seconds)"
   printf 'LOG_FILE: %s\n' "$LOG_FILE"
+  BUNDLE_ITEMS=("$(basename "$LOG_FILE")")
   if [ -f "$PROBE_JSON" ]; then
     printf 'ROS_PROBE_JSON: %s\n' "$PROBE_JSON"
-    tar -czf "$BUNDLE_FILE" -C "$OUT_DIR" "$(basename "$LOG_FILE")" "$(basename "$PROBE_JSON")" 2>/dev/null
-    if [ -f "$BUNDLE_FILE" ]; then
-      printf 'BUNDLE_FILE: %s\n' "$BUNDLE_FILE"
-    fi
+    BUNDLE_ITEMS+=("$(basename "$PROBE_JSON")")
+  else
+    printf 'ROS_PROBE_JSON_MISSING: probe did not produce a JSON report\n'
+  fi
+  if [ -f "$TF_PDF" ]; then BUNDLE_ITEMS+=("$(basename "$TF_PDF")"); fi
+  if [ -f "$TF_GV" ]; then BUNDLE_ITEMS+=("$(basename "$TF_GV")"); fi
+  tar -czf "$BUNDLE_FILE" -C "$OUT_DIR" "${BUNDLE_ITEMS[@]}" 2>/dev/null
+  if [ -f "$BUNDLE_FILE" ]; then
+    printf 'BUNDLE_FILE: %s\n' "$BUNDLE_FILE"
   fi
   printf 'READ_ONLY: no goal published; no actuator command published; no parameter writes; no service/action calls; no node restarts\n'
   printf '================================================================\n'
