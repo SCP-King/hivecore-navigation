@@ -1,5 +1,6 @@
 #include "plan_env/grid_map.h"
 #include <cmath>
+#include <chrono>
 #include <limits>
 #include <string>
 #include <stdexcept>
@@ -251,10 +252,13 @@ void GridMap::rebuildInflationOffsets()
 {
   const double double_radius = std::max(0.0, mp_.double_cylinder_radius_);
   const int inf_step_xy = ceil(double_radius / mp_.resolution_);
-  const int inf_step_z_up = ceil(mp_.obstacles_inflation_z_up / mp_.resolution_);
-  const int inf_step_z_down = ceil(mp_.obstacles_inflation_z_down / mp_.resolution_);
+  static_inflate_z_up_steps_ =
+      std::max(0, static_cast<int>(ceil(mp_.obstacles_inflation_z_up / mp_.resolution_)));
+  static_inflate_z_down_steps_ =
+      std::max(0, static_cast<int>(ceil(mp_.obstacles_inflation_z_down / mp_.resolution_)));
 
   md_.inflate_offsets_.clear();
+  static_inflate_xy_offsets_.clear();
   for (int x = -inf_step_xy; x <= inf_step_xy; ++x)
     for (int y = -inf_step_xy; y <= inf_step_xy; ++y)
     {
@@ -262,7 +266,8 @@ void GridMap::rebuildInflationOffsets()
       if (offset_xy.norm() >= double_radius)
         continue;
 
-      for (int z = -inf_step_z_down; z <= inf_step_z_up; ++z)
+      static_inflate_xy_offsets_.push_back({x, y});
+      for (int z = -static_inflate_z_down_steps_; z <= static_inflate_z_up_steps_; ++z)
         md_.inflate_offsets_.push_back(Eigen::Vector3i(x, y, z));
     }
 }
@@ -967,13 +972,19 @@ void GridMap::staticCloudCallback(
   Eigen::Vector3d source_max = Eigen::Vector3d::Constant(
       -std::numeric_limits<double>::infinity());
   size_t finite_points = 0;
+  static_source_decoded_.clear();
+  static_source_decoded_.points.reserve(decoded.points.size());
   for (const auto& pt : decoded.points) {
     if (!std::isfinite(pt.x) || !std::isfinite(pt.y) || !std::isfinite(pt.z))
       continue;
     source_min = source_min.cwiseMin(Eigen::Vector3d(pt.x, pt.y, pt.z));
     source_max = source_max.cwiseMax(Eigen::Vector3d(pt.x, pt.y, pt.z));
+    static_source_decoded_.points.push_back(pt);
     ++finite_points;
   }
+  static_source_decoded_.width = static_cast<uint32_t>(finite_points);
+  static_source_decoded_.height = 1;
+  static_source_decoded_.is_dense = true;
   if (finite_points == 0) {
     publishStaticOverlayStatus(false, "static_map_has_no_finite_points");
     return;
@@ -1005,6 +1016,11 @@ void GridMap::publishStaticOverlayStatus(bool ready, const std::string& reason)
       << ",\"source_points\":" << static_source_points_
       << ",\"window_points\":" << static_window_points_
       << ",\"occupied_voxels_in_window\":" << static_occupied_voxels_
+      << ",\"rebuild_duration_ms\":" << static_overlay_rebuild_ms_
+      << ",\"inflation_xy_kernel_size\":" << static_inflate_xy_offsets_.size()
+      << ",\"inflation_z_down_voxels\":" << static_inflate_z_down_steps_
+      << ",\"inflation_z_up_voxels\":" << static_inflate_z_up_steps_
+      << ",\"inflation_strategy\":\"xy_row_span_fill\""
       << ",\"window_intersects_source_bounds\":"
       << (static_window_intersects_source_bounds_ ? "true" : "false")
       << ",\"ready\":" << (ready ? "true" : "false")
@@ -1032,13 +1048,14 @@ void GridMap::publishStaticOverlayStatus(bool ready, const std::string& reason)
 void GridMap::rebuildStaticOverlay()
 {
   if (!static_cloud_enabled_ || !static_source_cloud_ || !static_source_valid_) return;
-  // Static layer is independent of dynamic occupancy probabilities. It
-  // survives raycasting clears and is reprojected after sliding window moves.
+  const auto rebuild_start = std::chrono::steady_clock::now();
+
+  // Static layer is independent of dynamic occupancy probabilities. Cache the
+  // decoded PCD once; sliding-window rebuilds only reproject the cached points.
   std::fill(static_occupancy_buffer_.begin(), static_occupancy_buffer_.end(), 0);
   std::fill(static_inflate_buffer_.begin(), static_inflate_buffer_.end(), 0);
   static_window_points_ = 0;
-  pcl::PointCloud<pcl::PointXYZ> cloud;
-  pcl::fromROSMsg(*static_source_cloud_, cloud);
+  const auto& cloud = static_source_decoded_;
 
   // A sparse occupancy map can legitimately contain no obstacle returns in
   // the active local window. Readiness therefore means that a valid, finite,
@@ -1065,12 +1082,18 @@ void GridMap::rebuildStaticOverlay()
     }
   }
   for (const auto& id : occupied) {
-    for (const auto& offset : md_.inflate_offsets_) {
-      const Eigen::Vector3i inf_id = id + offset;
-      if (isInMap(inf_id)) static_inflate_buffer_[toAddress(inf_id)] = 1;
-    }
+    plan_env_detail::markStaticInflationRows(
+        static_inflate_buffer_,
+        mp_.map_voxel_num_(0), mp_.map_voxel_num_(1), mp_.map_voxel_num_(2),
+        mp_.map_bound_min_idx_(0), mp_.map_bound_min_idx_(1), mp_.map_bound_min_idx_(2),
+        mp_.map_bound_max_idx_(0), mp_.map_bound_max_idx_(1), mp_.map_bound_max_idx_(2),
+        id(0), id(1), id(2),
+        static_inflate_xy_offsets_,
+        static_inflate_z_down_steps_, static_inflate_z_up_steps_);
   }
   static_occupied_voxels_ = occupied.size();
+  static_overlay_rebuild_ms_ = std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - rebuild_start).count();
 
   const bool ready = static_source_valid_ && static_window_intersects_source_bounds_;
   const std::string reason = !static_source_valid_
@@ -1084,9 +1107,9 @@ void GridMap::rebuildStaticOverlay()
 
   RCLCPP_INFO(node_->get_logger(),
               "[GridMap] immutable static PCD overlay: source=%zu points, "
-              "window=%zu points/%zu occupied voxels, ready=%s (%s)",
+              "window=%zu points/%zu occupied voxels, rebuild=%.3f ms, ready=%s (%s)",
               static_source_points_, static_window_points_, static_occupied_voxels_,
-              ready ? "true" : "false", reason.c_str());
+              static_overlay_rebuild_ms_, ready ? "true" : "false", reason.c_str());
 }
 
 void GridMap::cloudCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr &img)

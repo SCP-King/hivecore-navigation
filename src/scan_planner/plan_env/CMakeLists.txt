@@ -42,4 +42,11 @@ ament_export_targets(export_plan_env HAS_LIBRARY_TARGET)
 ament_export_dependencies(
   cv_bridge Eigen3 geometry_msgs message_filters nav_msgs pcl_conversions
   rclcpp sensor_msgs std_msgs tf2 tf2_ros visualization_msgs)
+if(BUILD_TESTING)
+  enable_testing()
+  add_executable(test_static_inflation test/test_static_inflation.cpp)
+  target_include_directories(test_static_inflation PRIVATE include)
+  add_test(NAME test_static_inflation COMMAND test_static_inflation)
+endif()
+
 ament_package()
