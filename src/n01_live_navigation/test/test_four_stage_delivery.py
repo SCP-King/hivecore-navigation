@@ -79,6 +79,10 @@ class FourStageDeliveryTests(unittest.TestCase):
         self.assertIn("bridge_rx_age_at_publish", source)
         self.assertIn("health_rx_age", source)
         self.assertIn("bridge_body_pose_live_anchor_delta_effective_s", source)
+        self.assertLess(
+            source.index("health_rx_age_at_publish ="),
+            source.index("readiness_snapshot = {"),
+        )
         self.assertIn("final_snapshot_valid", source)
         self.assertIn('"reason": "readiness_window_closed_at_publish"', source)
         self.assertIn('default=0.5', source)
