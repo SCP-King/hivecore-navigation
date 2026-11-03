@@ -104,6 +104,9 @@ timeout 10s ros2 topic list -t 2>&1
 section "3. Exact /robot_pose publisher identities and full bridge diagnostic"
 topic_info /robot_pose
 topic_echo /robot_pose sensor
+topic_info /body_pose
+topic_info /sensor_pose
+topic_info /cloud
 topic_info /n01/live_navigation/readiness
 topic_echo /n01/live_navigation/readiness reliable
 
@@ -122,6 +125,7 @@ topic_echo /planning/bspline reliable
 section "6. Timestamp and rate samples"
 topic_echo /odom sensor
 topic_echo /body_pose sensor
+topic_echo /sensor_pose sensor
 topic_hz /robot_pose sensor
 topic_hz /odom sensor
 topic_hz /body_pose sensor
