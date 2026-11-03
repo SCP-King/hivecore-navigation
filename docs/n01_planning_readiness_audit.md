@@ -8,9 +8,9 @@ It deliberately checks the complete chain rather than only `/robot_pose`:
 
 1. ROS environment, active workspace revision, running processes and duplicate nodes.
 2. SLAM status, global pose, odometry, IMU and LiDAR input timing.
-3. Live bridge outputs: `/cloud`, `/sensor_pose`, `/body_pose` and scan-time body pose.
+3. Live bridge outputs: `/cloud`, `/sensor_pose`, `/body_pose` and scan-time body pose, including sampled XYZ bounds and exact timestamp comparisons.
 4. TF frame chain and LiDAR mounting transform.
-5. Original PCD parser compatibility, source bounds and the live SCAN rolling-window overlay.
+5. Original PCD parser compatibility, source bounds, retained static occupancy cloud, robot pose versus active rolling-window geometry and the live SCAN overlay.
 6. Native SCAN subscriptions, planner parameters, goal-gate path and B-spline output.
 7. Dynamic-scene diagnostics and Hive2 candidate feasibility.
 8. Operator hold, safety status and actuator-topic publisher topology.
