@@ -1,3 +1,4 @@
+import ast
 import subprocess
 import unittest
 from pathlib import Path
@@ -146,6 +147,31 @@ class FourStageDeliveryTests(unittest.TestCase):
         self.assertNotIn("kill -9", source)
         self.assertNotIn("pkill", source)
         self.assertNotIn("killall", source)
+
+    def test_slam_pose_pipeline_audit_is_syntax_valid_and_read_only(self):
+        script = ROOT / "scripts/n01_slam_pose_pipeline_audit.py"
+        source = script.read_text()
+        ast.parse(source, filename=str(script))
+        for topic in (
+            '"/robot_pose"', '"/odom"', '"/imu/data"',
+            '"/livox/lidar/geo_filtered"', '"/cloud"',
+            '"/mapping_processing_timings"', '"/localization_status"',
+        ):
+            self.assertIn(topic, source)
+        self.assertIn("create_subscription(", source)
+        self.assertIn("get_publishers_info_by_topic", source)
+        self.assertIn('"slam3d_node_param_dump"', source)
+        self.assertIn("inspect_source_tree", source)
+        self.assertNotIn("create_publisher(", source)
+        self.assertNotIn("create_client(", source)
+        self.assertIn('"actuator_output": "DISABLED"', source)
+        self.assertIn('"safety_authorization": "NEVER"', source)
+
+    def test_slam_pose_pipeline_audit_runner_has_valid_bash_syntax(self):
+        script = ROOT / "scripts/run_n01_slam_pose_pipeline_audit.sh"
+        result = subprocess.run(
+            ["bash", "-n", str(script)], capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_deployment_build_excludes_its_own_install_prefix_and_repairs_only_generated_collision(self):
         source = (ROOT / "scripts/deploy_n01_planning_fixes.sh").read_text()
