@@ -109,7 +109,7 @@ class PlanningSmokeTest(Node):
             return False, "candidate_monitors_missing:" + repr(sorted(expected - subs))
         return True, "planning_only_graph_verified"
 
-    def preflight(self):
+    def preflight(self, check_graph=True):
         now = time.monotonic()
         if (self.robot_pose is None or self.robot_pose_rx is None
                 or now - self.robot_pose_rx > ROBOT_POSE_MAX_RX_AGE_S):
@@ -167,6 +167,8 @@ class PlanningSmokeTest(Node):
                 or self.safety.get("safety_authorization") != "NEVER"
                 or self.safety.get("execution_authorized") is not False):
             return False, "safety_supervisor_not_explicitly_fail_closed"
+        if not check_graph:
+            return True, "freshness_and_readiness_verified"
         if self.goal_pub.get_subscription_count() < 1:
             return False, "goal_gate_subscription_missing"
         return self.graph_contract()
@@ -212,12 +214,13 @@ class PlanningSmokeTest(Node):
         goal = None
         while rclpy.ok() and time.monotonic() < preflight_deadline:
             rclpy.spin_once(self, timeout_sec=0.1)
-            ok, reason = self.preflight()
+            ok, reason = self.preflight(check_graph=False)
             if not ok:
                 continue
-            # Recheck immediately before goal construction/publication to close
-            # the readiness-window race while the pose freshness budget is 0.7 s.
-            ok, reason = self.preflight()
+            # Recheck freshness and the ROS graph immediately before goal
+            # construction/publication. Graph discovery is intentionally done
+            # only at this final point, not 10 times per second while waiting.
+            ok, reason = self.preflight(check_graph=True)
             if ok:
                 try:
                     goal = self.make_goal()
