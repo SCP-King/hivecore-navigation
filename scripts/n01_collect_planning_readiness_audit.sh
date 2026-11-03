@@ -196,6 +196,7 @@ printf '\nSERVICES (list only):\n'
 timeout 10s ros2 service list -t 2>&1
 printf '\nACTIONS (list only):\n'
 timeout 10s ros2 action list -t 2>&1
+run_cmd 15 ros2 doctor --report
 
 section "4. Required node and topic presence matrix"
 for node in \
@@ -215,14 +216,14 @@ for topic in \
   /localization_status /robot_pose /odom /imu/data /livox/lidar/geo_filtered \
   /cloud /sensor_pose /body_pose /n01/live_navigation/scan_body_pose \
   /grid_map/static_occupancy /grid_map/static_overlay_ready /grid_map/static_overlay_status \
-  /grid_map/occupancy /grid_map/occupancy_inflate \
+  /grid_map/occupancy /grid_map/occupancy_inflate /grid_map/unknown /mapping_processing_timings /n01/live_navigation/navigation_ready \
   /n01/live_navigation/readiness /n01/live_navigation/system_health \
   /n01/live_navigation/goal_gate_status /move_base_simple/goal \
   /n01/live_navigation/goal_gated /planning/bspline /planning/data_display \
   /n01/live_navigation/dynamic_obstacle_status \
   /n01/live_navigation/dynamic_obstacle_candidates \
   /n01/live_navigation/hive2_feasibility /n01/live_navigation/hive2_candidate_path \
-  /n01/live_navigation/hive2_wheel_kinematics /joint_states \
+  /n01/live_navigation/hive2_wheel_kinematics /joint_states /planning/go2_execution_frozen \
   /n01/live_navigation/operator_hold /n01/live_navigation/safety_status
 do
   if has_topic "$topic"; then printf 'TOPIC_PRESENT %s\n' "$topic"; else printf 'TOPIC_MISSING %s\n' "$topic"; fi
@@ -239,7 +240,7 @@ for topic in \
   /planning/bspline /planning/data_display \
   /n01/live_navigation/dynamic_obstacle_status \
   /n01/live_navigation/dynamic_obstacle_candidates \
-  /n01/live_navigation/hive2_feasibility /joint_states \
+  /n01/live_navigation/hive2_feasibility /n01/live_navigation/hive2_candidate_path /n01/live_navigation/hive2_wheel_kinematics /joint_states /planning/go2_execution_frozen \
   /n01/live_navigation/system_health /n01/live_navigation/goal_gate_status \
   /n01/live_navigation/operator_hold /n01/live_navigation/safety_status \
   /cmd_vel /cmd_wheel /chassis_controller/rt_command \
@@ -251,6 +252,9 @@ done
 section "6. Latest status snapshots (read only; no point-cloud payload dump)"
 topic_echo /localization_status sensor
 topic_echo /n01/live_navigation/readiness reliable
+topic_echo /n01/live_navigation/navigation_ready reliable
+topic_echo /mapping_processing_timings reliable
+topic_echo /planning/go2_execution_frozen reliable
 topic_echo /grid_map/static_overlay_ready latched
 topic_echo /grid_map/static_overlay_status latched
 topic_echo /n01/live_navigation/dynamic_obstacle_status reliable
