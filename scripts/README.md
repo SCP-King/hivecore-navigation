@@ -53,3 +53,19 @@ bash scripts/n01_collect_planning_readiness_audit.sh
 诊断结果自动保存在 `~/lyy/n01_runtime/runs/planning_readiness_audit/`，并生成包含日志、JSON 探针和 TF 图的 `n01_planning_readiness_bundle_<timestamp>.tar.gz`。上传压缩包即可，不需要复制终端滚屏。
 
 此入口只读取 ROS 图、话题、参数和文件；不发送导航目标、不发布底盘控制命令、不调用 SLAM 业务服务、不修改参数、不停止或重启节点，也不构建或运行机器人。
+
+## N-01 READY 窗口内的一次性规划验证
+
+当前实机证据已确认 `/grid_map/static_overlay_ready=true`。主要入口风险是甲方 `/robot_pose` 约 2.6 Hz、最大接收间隔 0.754 s，超过 N-01 0.7 s 接收新鲜度预算；不允许通过放宽门限掩盖上游发布节奏问题。
+
+构建/部署成功且现有 `live_scan.launch.py` 正在运行时，使用：
+
+```bash
+bash scripts/run_n01_planning_smoke_test.sh 0.5 15 120
+```
+
+参数依次为前向距离（米）、B-spline 等待秒数、READY 窗口等待秒数。默认目标由当前 map-frame `/body_pose` 沿机器人朝向前移 0.5 m，不是固定 map 原点坐标；执行前必须确认该位置属于已知空旷区域。
+
+测试会最多等待 120 s，并在发布前检查直接接收的 `/robot_pose` 年龄不超过 0.7 s、时间戳年龄不超过 1.5 s，runtime bridge 报告位姿锚点 fresh、system_health 无 blockers、静态 overlay READY、安全状态保持 `DISABLED/NEVER`，以及规划 topic 拓扑正确。检查未通过或 READY 窗口关闭时不发布目标。通过后最多发送一个规划目标，只验证 Goal Gate 和 SCAN B-spline，不发布速度、轮速、底盘或执行器命令，也不改变 operator hold 或执行授权。
+
+此 smoke test 是唯一推荐的 READY 窗口规划入口；不要手工运行未经门控的临时 `/move_base_simple/goal` publisher。
