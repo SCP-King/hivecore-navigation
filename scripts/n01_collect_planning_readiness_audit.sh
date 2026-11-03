@@ -158,6 +158,8 @@ printf 'ROS_DISTRO(before source)=%s\n' "$(printenv ROS_DISTRO 2>/dev/null || ec
 printf 'ROS_DOMAIN_ID(before source)=%s\n' "$(printenv ROS_DOMAIN_ID 2>/dev/null || echo unset)"
 printf 'RMW_IMPLEMENTATION(before source)=%s\n' "$(printenv RMW_IMPLEMENTATION 2>/dev/null || echo default)"
 printf 'ROS_LOCALHOST_ONLY(before source)=%s\n' "$(printenv ROS_LOCALHOST_ONLY 2>/dev/null || echo unset)"
+printf 'LD_LIBRARY_PATH(before source)=%s\n' "$(printenv LD_LIBRARY_PATH 2>/dev/null || echo unset)"
+printf 'FASTRTPS_DEFAULT_PROFILES_FILE=%s\n' "$(printenv FASTRTPS_DEFAULT_PROFILES_FILE 2>/dev/null || echo unset)"
 run_cmd 5 uname -a
 run_cmd 6 timedatectl status
 run_cmd 5 uptime
@@ -187,6 +189,14 @@ printf 'ROS_DOMAIN_ID(after source)=%s\n' "$(printenv ROS_DOMAIN_ID 2>/dev/null 
 printf 'RMW_IMPLEMENTATION(after source)=%s\n' "$(printenv RMW_IMPLEMENTATION 2>/dev/null || echo default)"
 printf 'ROS_LOCALHOST_ONLY(after source)=%s\n' "$(printenv ROS_LOCALHOST_ONLY 2>/dev/null || echo unset)"
 printf 'AMENT_PREFIX_PATH=%s\n' "$(printenv AMENT_PREFIX_PATH 2>/dev/null || echo unset)"
+printf 'LD_LIBRARY_PATH(after source)=%s\n' "$(printenv LD_LIBRARY_PATH 2>/dev/null || echo unset)"
+SLAM_PREFIX="$(ros2 pkg prefix hivecore_slam3d 2>/dev/null)"
+printf 'HIVECORE_SLAM3D_PREFIX=%s\n' "${SLAM_PREFIX:-NOT_FOUND}"
+if [ -n "$SLAM_PREFIX" ]; then
+  SLAM_TYPESUPPORT_SO="$(find "$SLAM_PREFIX" -type f -name 'libhivecore_slam3d__rosidl_generator_py.so' -print -quit 2>/dev/null)"
+  printf 'HIVECORE_SLAM3D_PY_TYPESUPPORT=%s\n' "${SLAM_TYPESUPPORT_SO:-NOT_FOUND}"
+  if [ -n "$SLAM_TYPESUPPORT_SO" ]; then run_cmd 8 ldd "$SLAM_TYPESUPPORT_SO"; fi
+fi
 run_cmd 8 git -C "$WS_ROOT" branch --show-current
 run_cmd 8 git -C "$WS_ROOT" rev-parse HEAD
 run_cmd 8 git -C "$WS_ROOT" status --short --branch
@@ -213,10 +223,10 @@ printf '%s\n' "$NODE_LIST" | grep '^/' | sort | uniq -c | awk '$1 > 1 {print}' |
 printf '\nTOPICS AND TYPES:\n'
 timeout 12s ros2 topic list -t 2>&1
 printf '\nSERVICES (list only):\n'
-timeout 10s ros2 service list -t 2>&1
+SERVICE_LIST="$(timeout 10s ros2 service list -t 2>&1)"
+printf '%s\n' "$SERVICE_LIST"
 printf '\nACTIONS (list only):\n'
 timeout 10s ros2 action list -t 2>&1
-run_cmd 15 ros2 doctor --report
 
 section "4. Required node and topic presence matrix"
 for node in \
