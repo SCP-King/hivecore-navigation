@@ -54,6 +54,13 @@ bash scripts/deploy_n01_planning_fixes.sh --confirm-planning-only
 
 构建和静态膨胀测试成功后，入口才会停止并重启 N-01 的 `live_scan.launch.py`，保留甲方 SLAM、Livox、IMU 和底盘状态节点运行，并执行一次只规划 smoke test。它不会发布底盘、轮速、速度或执行器命令；`execution_authorized=false`、`actuator_output=DISABLED`、`safety_authorization=NEVER` 仍是固定边界。
 
+如果构建/重启已成功，但只规划 smoke test 因现场状态或验收条件失败，不要为了重试而再次重启 live stack。更新代码后可单独执行：
+
+```bash
+bash scripts/run_n01_planning_smoke_test.sh 0.8 15
+```
+
+该入口要求恰好一套现存 `live_scan.launch.py`，不会构建或重启节点；它最多发布一个 `/move_base_simple/goal`，且只有定位、健康、静态 overlay、安全状态和规划拓扑检查全部通过才会发送。它不发布速度、轮速、底盘或执行器命令。
 若需要手动启动（不与部署入口同时执行），启动前先确保只存在一套 N-01 live stack：
 
 ```bash
@@ -79,7 +86,7 @@ ros2 run n01_live_navigation n01_navigation_acceptance
 bash scripts/run_n01_live_stack_preflight.sh 10
 ```
 
-预检自动加载 ROS Humble 和当前工作空间，默认连接 N-01 部署使用的 ROS domain 55（可通过环境变量覆盖）。它同时报告 `/robot_pose` 的接收频率、最大接收间隔、stamp age，以及 `/localization_status` 的接收/时间戳新鲜度；不能只凭 `body_pose_live_anchor_delta_s` 推断上游发布频率。静态 overlay 的 `/grid_map/static_overlay_status` 会单独记录实际 publisher QoS、源地图点数、活动窗口相交情况和 ready/reason。结构化报告保存在 `~/lyy/n01_runtime/runs/live_stack_preflight/`；即使 ROS Python 导入失败，也会生成包含缺失 so 和环境路径的 JSON 诊断。
+预检自动加载 ROS Humble 和当前工作空间，默认连接 N-01 部署使用的 ROS domain 55（可通过环境变量覆盖）。它同时报告 `/robot_pose` 的接收频率、最大接收间隔、stamp age，以及 `/localization_status` 的接收/时间戳新鲜度；不能只凭 `body_pose_live_anchor_delta_s` 推断上游发布频率。静态 overlay 的 `/grid_map/static_overlay_status` 会单独记录实际 publisher QoS、源地图点数、活动窗口相交情况和 ready/reason。结构化报告保存在 `~/lyy/n01_runtime/runs/live_stack_preflight/`；即使 ROS Python 导入或运行期审计异常，也会生成有效 JSON 诊断，不再只留下无法解析的 traceback。
 
 安全监视器的软件保持默认开启。若只需在静态规划测试中解除软件保持，可发送：
 
