@@ -65,6 +65,26 @@ class FourStageDeliveryTests(unittest.TestCase):
         self.assertNotIn("colcon build", source)
         self.assertNotIn("ros2 launch", source)
 
+    def test_planning_smoke_waits_for_live_robot_pose_readiness_window(self):
+        source = (ROOT / "src/n01_live_navigation/n01_live_navigation/planning_smoke_test.py").read_text()
+        self.assertIn("ROBOT_POSE_MAX_RX_AGE_S = 0.7", source)
+        self.assertIn("ROBOT_POSE_MAX_STAMP_AGE_S = 1.5", source)
+        self.assertIn('"/robot_pose", self.on_robot_pose', source)
+        self.assertIn('bridge.get("robot_pose_receive_fresh") is not True', source)
+        self.assertIn('bridge.get("body_pose_live_anchor_fresh") is not True', source)
+        self.assertIn("self.readiness_timeout", source)
+        self.assertIn("Recheck immediately before publishing", source)
+        self.assertIn('default=0.5', source)
+        self.assertIn('"goal_published": False', source)
+
+    def test_planning_smoke_runner_exposes_separate_readiness_and_bspline_timeouts(self):
+        source = (ROOT / "scripts/run_n01_planning_smoke_test.sh").read_text()
+        self.assertIn('DISTANCE="${1:-0.5}"', source)
+        self.assertIn('TIMEOUT="${2:-15}"', source)
+        self.assertIn('READINESS_TIMEOUT="${3:-120}"', source)
+        self.assertIn('--readiness-timeout "$READINESS_TIMEOUT"', source)
+        self.assertIn("never publishes velocity, wheel, chassis or actuator commands", source)
+
     def test_planning_smoke_graph_allows_its_own_bspline_observer_only(self):
         source = (ROOT / "src/n01_live_navigation/n01_live_navigation/planning_smoke_test.py").read_text()
         self.assertIn('observer = {"/n01_planning_smoke_test"}', source)
