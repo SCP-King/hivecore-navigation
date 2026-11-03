@@ -259,6 +259,8 @@ class PlanningSmokeTest(Node):
         robot_pose_stamp_age_at_publish = (
             self.get_clock().now().nanoseconds - robot_pose_stamp_at_publish
         ) / 1e9
+        health_rx_age_at_publish = (
+            sent_at - self.health_rx if self.health_rx is not None else float("inf"))
         readiness_snapshot = {
             "status": health_at_publish.get("status"),
             "blockers": health_at_publish.get("blockers"),
