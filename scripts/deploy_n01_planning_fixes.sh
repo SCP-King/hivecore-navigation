@@ -34,6 +34,28 @@ DEPLOY_LOG="$HOME/lyy/n01_runtime/runs/planning_deploy/n01_planning_deploy_$STAM
 LAUNCH_LOG="$HOME/lyy/n01_runtime/runs/planning_deploy/n01_live_scan_$STAMP.log"
 exec > >(tee -a "$DEPLOY_LOG") 2>&1
 
+# A zombie still answers kill -0, but it has already exited. Use the
+# kernel process state so a completed launch is not mistaken for a hung one.
+n01_pid_is_running() {
+  local pid="${1:-}" state
+  [[ -n "$pid" ]] || return 1
+  state="$(ps -o stat= -p "$pid" 2>/dev/null | awk 'NR == 1 { print $1 }')"
+  [[ -n "$state" && "$state" != Z* && "$state" != X* ]]
+}
+
+n01_active_pids_matching() {
+  local pattern="$1" pid
+  local -a candidates=()
+  local -a active=()
+  mapfile -t candidates < <(pgrep -f "$pattern" || true)
+  for pid in "${candidates[@]}"; do
+    if n01_pid_is_running "$pid"; then
+      active+=("$pid")
+    fi
+  done
+  printf '%s\\n' "${active[@]}"
+}
+
 echo "=== N-01 deployment preflight ==="
 echo "workspace: $WS_ROOT"
 echo "ROS_DOMAIN_ID: $ROS_DOMAIN_ID"
@@ -133,22 +155,55 @@ colcon test-result --test-result-base "$WS_ROOT/build/plan_env" --verbose
 echo
 echo "=== 3/4 Restart only the N-01 live_scan launch ==="
 if (( ${#LIVE_LAUNCH_PIDS[@]} == 1 )); then
-  kill -INT "$OLD_PID"
+  OLD_PGID="$(ps -o pgid= -p "$OLD_PID" 2>/dev/null | tr -d ' ' || true)"
+  OLD_SID="$(ps -o sid= -p "$OLD_PID" 2>/dev/null | tr -d ' ' || true)"
+  if [[ "$OLD_PGID" == "$OLD_PID" && "$OLD_SID" == "$OLD_PID" ]]; then
+    # New deployments are isolated with setsid, so this process group contains
+    # only this launch and its children (never the vendor SLAM/Livox stack).
+    echo "sending SIGINT to isolated N-01 launch process group $OLD_PGID"
+    kill -INT -- "-$OLD_PGID"
+  else
+    # Older nohup launches may share the operator's session/process group.
+    # Signal only the launch parent; never signal an unverified process group.
+    echo "legacy launch is not session-isolated; sending SIGINT only to PID $OLD_PID"
+    kill -INT "$OLD_PID"
+  fi
+
   for _ in $(seq 1 150); do
-    if ! kill -0 "$OLD_PID" 2>/dev/null; then break; fi
+    if ! n01_pid_is_running "$OLD_PID"; then break; fi
     sleep 0.2
   done
-  if kill -0 "$OLD_PID" 2>/dev/null; then
-    echo "ERROR: live_scan launch did not exit after SIGINT; refusing forced termination."
+  if n01_pid_is_running "$OLD_PID"; then
+    echo "ERROR: live_scan launch is still running after SIGINT; refusing forced termination."
+    ps -o pid,ppid,pgid,sid,stat,etime,wchan:28,args -p "$OLD_PID" || true
+    echo "--- direct children ---"
+    ps -o pid,ppid,pgid,sid,stat,etime,args --ppid "$OLD_PID" || true
+    if command -v pstree >/dev/null 2>&1; then
+      echo "--- launch process tree ---"
+      pstree -ap "$OLD_PID" || true
+    fi
+    LATEST_LAUNCH_LOG="$(find "$HOME/lyy/n01_runtime/runs/planning_deploy" \
+      -maxdepth 1 -type f -name 'n01_live_scan_*.log' -printf '%T@ %p\\n' 2>/dev/null \
+      | sort -nr | head -n 1 | cut -d' ' -f2-)"
+    if [[ -n "$LATEST_LAUNCH_LOG" ]]; then
+      echo "--- latest live_scan log: $LATEST_LAUNCH_LOG ---"
+      tail -n 100 "$LATEST_LAUNCH_LOG" || true
+    fi
     exit 5
   fi
+  echo "old launch parent has exited (or is a reaped/zombie process); checking owned N-01 nodes."
+
   for pattern in '[s]can_planner_node' '[n]01_live_scan_bridge' '[n]01_live_static_pcd'; do
     for _ in $(seq 1 50); do
-      pgrep -f "$pattern" >/dev/null || break
+      mapfile -t ACTIVE_NODE_PIDS < <(n01_active_pids_matching "$pattern")
+      (( ${#ACTIVE_NODE_PIDS[@]} == 0 )) && break
       sleep 0.2
     done
-    if pgrep -f "$pattern" >/dev/null; then
+    mapfile -t ACTIVE_NODE_PIDS < <(n01_active_pids_matching "$pattern")
+    if (( ${#ACTIVE_NODE_PIDS[@]} )); then
       echo "ERROR: old N-01 process remains after launch shutdown: $pattern"
+      printf '  active PID: %s\\n' "${ACTIVE_NODE_PIDS[@]}"
+      ps -o pid,ppid,pgid,sid,stat,etime,args -p "${ACTIVE_NODE_PIDS[@]}" || true
       exit 5
     fi
   done
@@ -165,7 +220,14 @@ if [[ -n "$RVIZ_CONFIG" ]]; then
   LAUNCH_ARGS+=(rviz_config:="$RVIZ_CONFIG")
 fi
 
-nohup ros2 launch n01_live_navigation live_scan.launch.py "${LAUNCH_ARGS[@]}" \
+if ! command -v setsid >/dev/null 2>&1; then
+  echo "ERROR: setsid is required to isolate the N-01 launch process group safely."
+  exit 7
+fi
+# Isolate only N-01 launch and its children in a dedicated session. Future
+# graceful restarts can then signal this verified process group without
+# touching vendor SLAM, Livox, or the operator's terminal process group.
+nohup setsid ros2 launch n01_live_navigation live_scan.launch.py "${LAUNCH_ARGS[@]}" \
   > "$LAUNCH_LOG" 2>&1 < /dev/null &
 NEW_LAUNCH_PID=$!
 echo "$NEW_LAUNCH_PID" > "$HOME/lyy/n01_runtime/runs/planning_deploy/n01_live_scan.pid"
