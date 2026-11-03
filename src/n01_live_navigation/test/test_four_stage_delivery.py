@@ -124,6 +124,22 @@ class FourStageDeliveryTests(unittest.TestCase):
         self.assertNotIn("ros2 topic pub", source)
         self.assertNotIn("ros2 service call", source)
 
+    def test_robot_pose_source_audit_runner_is_read_only_and_bundles_endpoint_evidence(self):
+        source = (ROOT / "scripts/run_n01_robot_pose_source_audit.sh").read_text()
+        self.assertIn("n01_live_stack_preflight.py", source)
+        self.assertIn('multiple_publisher_endpoints', source)
+        self.assertIn('ros2 topic info /robot_pose --verbose', source)
+        self.assertIn('ros2 node info "$node"', source)
+        self.assertIn("UPLOAD THIS BUNDLE", source)
+        self.assertIn("No publishers, clients, services, actions", source)
+        self.assertIn("actuator commands", source)
+        self.assertNotIn("ros2 topic pub", source)
+        self.assertNotIn("ros2 service call", source)
+        self.assertNotIn("ros2 action send_goal", source)
+        self.assertNotIn("kill -9", source)
+        self.assertNotIn("pkill", source)
+        self.assertNotIn("killall", source)
+
     def test_deployment_build_excludes_its_own_install_prefix_and_repairs_only_generated_collision(self):
         source = (ROOT / "scripts/deploy_n01_planning_fixes.sh").read_text()
         build_index = source.index("colcon build")
