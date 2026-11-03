@@ -77,7 +77,7 @@ bash scripts/deploy_n01_planning_fixes.sh --confirm-planning-only
 bash scripts/run_n01_planning_smoke_test.sh 0.5 15 120
 ```
 
-参数依次为目标前向距离（米）、等待 B-spline 的秒数、等待 READY 窗口的秒数。默认在当前 `/body_pose` 位姿前方 0.5 m 生成 map-frame 目标，而不是使用固定 map 原点坐标；操作者仍必须确认该前方位置处于已知空旷区域。工具最多等待 120 s 捕获 READY 窗口，并在发布前再次检查：直接订阅的 `/robot_pose` 接收年龄不超过 0.7 s、stamp age 不超过 1.5 s、runtime bridge 同时报告全局位姿和 live anchor fresh、`system_health` 无 blockers、静态 overlay READY、安全状态明确 fail-closed、规划拓扑正确。若窗口关闭则继续等待，不发送目标。
+参数依次为目标前向距离（米）、等待 B-spline 的秒数、等待 READY 窗口的秒数。默认在当前 `/body_pose` 位姿前方 0.5 m 生成 map-frame 目标，而不是使用固定 map 原点坐标；操作者仍必须确认该前方位置处于已知空旷区域。工具最多等待 120 s 捕获 READY 窗口，并在发布前再次检查：直接订阅的 `/robot_pose` 接收年龄不超过 0.7 s、stamp age 不超过 1.5 s；同时把 `system_health` 自身接收年龄加回 bridge 快照中的 pose receive age、stamp age 和 live-anchor delta，避免旧健康快照造成假 READY。还要求 runtime bridge 报告全局位姿和 live anchor fresh、`system_health` 无 blockers、静态 overlay READY、安全状态明确 fail-closed、规划拓扑正确。若窗口关闭则继续等待，不发送目标。
 
 该入口要求恰好一套现存 `live_scan.launch.py`，不会构建或重启节点；它最多发布一个 `/move_base_simple/goal`。它不发布速度、轮速、底盘或执行器命令，且不会改变 operator hold 或执行授权。
 若需要手动启动（不与部署入口同时执行），启动前先确保只存在一套 N-01 live stack：
