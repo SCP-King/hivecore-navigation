@@ -114,6 +114,17 @@ source /home/demo/lyy/hivecore-navigation/install/setup.bash
 ros2 run n01_live_navigation n01_planning_smoke_test --distance 0.8 --timeout 15 --confirm-planning-only
 ```
 
+The one-command deployment and verification entry point is:
+
+```bash
+bash scripts/deploy_n01_planning_fixes.sh --confirm-planning-only
+```
+
+It builds the changed packages, runs the static-inflation equivalence test,
+restarts only the existing live_scan launch (preserving its PCD and launch
+geometry arguments), and then runs the planning-only smoke test. It leaves
+the vendor SLAM process and hardware drivers running.
+
 The test derives a short goal from the current /body_pose, sends one
 PoseStamped through the existing /move_base_simple/goal input, and waits for
 a new /planning/bspline. It refuses to publish unless system health and the

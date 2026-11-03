@@ -1,7 +1,7 @@
 #include "plan_env/static_inflation.hpp"
 
 #include <array>
-#include <cassert>
+#include <cstdlib>
 #include <iostream>
 #include <vector>
 
@@ -55,7 +55,10 @@ void checkCase(
         offsets, z_down, z_up);
   }
 
-  assert(expected == actual);
+  if (expected != actual) {
+    std::cerr << "static inflation row-span output differs from reference\n";
+    std::exit(EXIT_FAILURE);
+  }
 }
 }  // namespace
 
