@@ -615,8 +615,9 @@ if [ -f "$WS_ROOT/scripts/n01_live_stack_preflight.py" ]; then
     printf '[exit_code=%s]\n' "$rc"
   else
     printf 'STACK_PREFLIGHT_NOT_RUN: ROS Python interpreter unavailable\n'
-    printf '{"schema":"n01.live_stack_preflight_import_error.v1","status":"ROS_PYTHON_NOT_FOUND"}\n' \
-      > "$STACK_PREFLIGHT_JSON"
+    cat > "$STACK_PREFLIGHT_JSON" <<'EOF'
+{"schema":"n01.live_stack_preflight_import_error.v1","status":"ROS_PYTHON_NOT_FOUND"}
+EOF
   fi
   if [ -f "$STACK_PREFLIGHT_JSON" ]; then
     printf '\n--- Live stack preflight JSON (publisher endpoints, rates, TF edges) ---\n'
@@ -626,7 +627,11 @@ else
   printf 'STACK_PREFLIGHT_SCRIPT_MISSING: %s/scripts/n01_live_stack_preflight.py\n' "$WS_ROOT"
 fi
 if [ -f "$WS_ROOT/scripts/n01_live_planning_ros_probe.py" ]; then
-  run_cmd 30 "$ROS_PYTHON" "$WS_ROOT/scripts/n01_live_planning_ros_probe.py" --duration 8 --output "$PROBE_JSON"
+  if [ -n "$ROS_PYTHON" ] && [ -x "$ROS_PYTHON" ]; then
+    run_cmd 30 "$ROS_PYTHON" "$WS_ROOT/scripts/n01_live_planning_ros_probe.py" --duration 8 --output "$PROBE_JSON"
+  else
+    printf 'ROS_PROBE_NOT_RUN: ROS Python interpreter unavailable\n'
+  fi
 else
   printf 'ROS_PROBE_SCRIPT_MISSING: %s/scripts/n01_live_planning_ros_probe.py\n' "$WS_ROOT"
 fi
