@@ -66,6 +66,6 @@ bash scripts/run_n01_planning_smoke_test.sh 0.5 15 120
 
 参数依次为前向距离（米）、B-spline 等待秒数、READY 窗口等待秒数。默认目标由当前 map-frame `/body_pose` 沿机器人朝向前移 0.5 m，不是固定 map 原点坐标；执行前必须确认该位置属于已知空旷区域。
 
-测试会最多等待 120 s，并在发布前检查直接接收的 `/robot_pose` 年龄不超过 0.7 s、时间戳年龄不超过 1.5 s，runtime bridge 报告位姿锚点 fresh、system_health 无 blockers、静态 overlay READY、安全状态保持 `DISABLED/NEVER`，以及规划 topic 拓扑正确。检查未通过或 READY 窗口关闭时不发布目标。通过后最多发送一个规划目标，只验证 Goal Gate 和 SCAN B-spline，不发布速度、轮速、底盘或执行器命令，也不改变 operator hold 或执行授权。
+测试会最多等待 120 s，并在发布前检查直接接收的 `/robot_pose` 年龄不超过 0.7 s、时间戳年龄不超过 1.5 s；还会把 `system_health` 消息自身的接收年龄计入 bridge 快照中的 pose receive age、stamp age 和 live-anchor delta，避免使用过期 READY 快照。runtime bridge 必须报告位姿锚点 fresh、system_health 无 blockers、静态 overlay READY、安全状态保持 `DISABLED/NEVER`，且规划 topic 拓扑正确。检查未通过或 READY 窗口关闭时不发布目标。通过后最多发送一个规划目标，只验证 Goal Gate 和 SCAN B-spline，不发布速度、轮速、底盘或执行器命令，也不改变 operator hold 或执行授权。
 
 此 smoke test 是唯一推荐的 READY 窗口规划入口；不要手工运行未经门控的临时 `/move_base_simple/goal` publisher。
