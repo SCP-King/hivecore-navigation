@@ -238,6 +238,31 @@ class PlanningSmokeTest(Node):
 
         baseline = self.bspline_count
         sent_at = time.monotonic()
+        health_at_publish = dict(self.health)
+        bridge_at_publish = health_at_publish.get("bridge", {})
+        if not isinstance(bridge_at_publish, dict):
+            bridge_at_publish = {}
+        safety_at_publish = dict(self.safety)
+        robot_pose_receive_age_at_publish = sent_at - self.robot_pose_rx
+        robot_pose_stamp_at_publish = (
+            self.robot_pose.header.stamp.sec * 1000000000
+            + self.robot_pose.header.stamp.nanosec
+        )
+        robot_pose_stamp_age_at_publish = (
+            self.get_clock().now().nanoseconds - robot_pose_stamp_at_publish
+        ) / 1e9
+        readiness_snapshot = {
+            "status": health_at_publish.get("status"),
+            "blockers": health_at_publish.get("blockers"),
+            "static_overlay_ready": health_at_publish.get("static_overlay_ready"),
+            "robot_pose_receive_fresh": bridge_at_publish.get("robot_pose_receive_fresh"),
+            "robot_pose_receive_age_s": bridge_at_publish.get("robot_pose_receive_age_s"),
+            "robot_pose_stamp_age_s": bridge_at_publish.get("robot_pose_stamp_age_s"),
+            "body_pose_live_anchor_fresh": bridge_at_publish.get("body_pose_live_anchor_fresh"),
+            "body_pose_live_anchor_delta_s": bridge_at_publish.get("body_pose_live_anchor_delta_s"),
+            "observer_robot_pose_receive_age_s": round(robot_pose_receive_age_at_publish, 4),
+            "observer_robot_pose_stamp_age_s": round(robot_pose_stamp_age_at_publish, 4),
+        }
         self.goal_pub.publish(goal)
 
         if not self.spin_until(
@@ -248,6 +273,7 @@ class PlanningSmokeTest(Node):
                 "goal_published": True,
                 "actuator_command_published": False,
                 "execution_authorized": False,
+                "readiness_snapshot": readiness_snapshot,
             }
         gate = self.gate or {}
         if gate.get("accepted") is not True:
@@ -257,6 +283,7 @@ class PlanningSmokeTest(Node):
                 "goal_published": True,
                 "actuator_command_published": False,
                 "execution_authorized": False,
+                "readiness_snapshot": readiness_snapshot,
             }
 
         if not self.spin_until(
@@ -270,6 +297,7 @@ class PlanningSmokeTest(Node):
                 "goal_published": True,
                 "actuator_command_published": False,
                 "execution_authorized": False,
+                "readiness_snapshot": readiness_snapshot,
             }
 
         summary = self.spline_summary(self.bspline)
@@ -277,10 +305,6 @@ class PlanningSmokeTest(Node):
             lambda: self.feasibility_rx is not None and self.feasibility_rx >= self.bspline_rx,
             time.monotonic() + 1.0)
         safety = self.safety or {}
-        health_snapshot = self.health if isinstance(self.health, dict) else {}
-        bridge = health_snapshot.get("bridge", {})
-        if not isinstance(bridge, dict):
-            bridge = {}
         result = {
             "result": "BSPLINE_GENERATED" if summary["valid"] else "BSPLINE_INVALID",
             "goal_map_xyz": [round(goal.pose.position.x, 4),
@@ -289,31 +313,19 @@ class PlanningSmokeTest(Node):
             "bspline": summary,
             "hive2_candidate_feasibility": self.feasibility,
             "safety_status": {
-                "status": safety.get("status"),
-                "operator_hold": safety.get("operator_hold"),
-                "actuator_output": safety.get("actuator_output"),
-                "safety_authorization": safety.get("safety_authorization"),
-                "execution_authorized": safety.get("execution_authorized"),
+                "status": safety_at_publish.get("status"),
+                "operator_hold": safety_at_publish.get("operator_hold"),
+                "actuator_output": safety_at_publish.get("actuator_output"),
+                "safety_authorization": safety_at_publish.get("safety_authorization"),
+                "execution_authorized": safety_at_publish.get("execution_authorized"),
             },
             "published_topic": "/move_base_simple/goal",
             "goal_distance_m": self.distance,
             "goal_published": True,
-            "readiness_snapshot": {
-                "status": health_snapshot.get("status"),
-                "blockers": health_snapshot.get("blockers"),
-                "static_overlay_ready": health_snapshot.get("static_overlay_ready"),
-                "robot_pose_receive_fresh": bridge.get("robot_pose_receive_fresh"),
-                "robot_pose_receive_age_s": bridge.get("robot_pose_receive_age_s"),
-                "robot_pose_stamp_age_s": bridge.get("robot_pose_stamp_age_s"),
-                "body_pose_live_anchor_fresh": bridge.get("body_pose_live_anchor_fresh"),
-                "body_pose_live_anchor_delta_s": bridge.get("body_pose_live_anchor_delta_s"),
-            },
+            "readiness_snapshot": readiness_snapshot,
             "readiness_wait_s": round(time.monotonic() - readiness_started, 3),
-            "robot_pose_receive_age_s": round(time.monotonic() - self.robot_pose_rx, 4),
-            "robot_pose_stamp_age_s": round(
-                (self.get_clock().now().nanoseconds
-                 - (self.robot_pose.header.stamp.sec * 1000000000
-                    + self.robot_pose.header.stamp.nanosec)) / 1e9, 4),
+            "robot_pose_receive_age_s": round(robot_pose_receive_age_at_publish, 4),
+            "robot_pose_stamp_age_s": round(robot_pose_stamp_age_at_publish, 4),
             "actuator_command_published": False,
             "operator_hold_changed": False,
             "execution_authorized": False,
