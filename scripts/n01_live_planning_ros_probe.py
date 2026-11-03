@@ -336,6 +336,7 @@ class PlanningReadinessProbe(Node):
             "ros_minus_system_clock_s": round((now_ros_ns - now_system_ns) / 1e9, 6),
             "topics": topics,
             "timestamp_alignment": alignment,
+            "map_geometry": self._map_geometry_report(),
             "safety": {
                 "probe_is_subscribe_only": True,
                 "goal_published": False,
@@ -430,6 +431,79 @@ class PlanningReadinessProbe(Node):
             "right_samples": len(right),
             "exact_common_stamp_count": len(common),
             "left_covered_by_right_pct": round(100.0 * len(set(left) & right_set) / len(set(left)), 2),
+        }
+
+    def _map_geometry_report(self):
+        body_detail = (
+            self.stats.get("/body_pose", {}).get("last_detail") or {}
+        )
+        body_odom = body_detail.get("odometry") or {}
+        body_position = body_odom.get("position_xyz")
+        body_frame = body_odom.get("frame_id")
+        cloud_detail = (
+            self.stats.get("/cloud", {}).get("last_detail") or {}
+        )
+        cloud = cloud_detail.get("pointcloud") or {}
+        overlay_detail = (
+            self.stats.get("/grid_map/static_overlay_status", {}).get("last_detail") or {}
+        )
+        overlay = overlay_detail.get("json") or {}
+
+        def vector(name):
+            value = overlay.get(name)
+            if isinstance(value, list) and len(value) == 3:
+                try:
+                    return [float(x) for x in value]
+                except (TypeError, ValueError):
+                    return None
+            return None
+
+        source_min = vector("source_min_xyz")
+        source_max = vector("source_max_xyz")
+        window_min = vector("window_min_xyz")
+        window_max = vector("window_max_xyz")
+
+        def inside(point, low, high):
+            return bool(
+                point is not None and low is not None and high is not None
+                and len(point) == 3
+                and all(low[i] <= float(point[i]) <= high[i] for i in range(3))
+            )
+
+        cloud_min = cloud.get("xyz_sample_min")
+        cloud_max = cloud.get("xyz_sample_max")
+        cloud_intersects_window = bool(
+            cloud_min is not None and cloud_max is not None
+            and window_min is not None and window_max is not None
+            and all(cloud_max[i] >= window_min[i] and cloud_min[i] <= window_max[i]
+                    for i in range(3))
+        )
+        source_frame = overlay.get("source_frame")
+        cloud_frame = cloud.get("frame_id")
+        return {
+            "body_pose_frame": body_frame,
+            "body_pose_position_xyz": body_position,
+            "body_pose_frame_is_map": body_frame is not None and body_frame.lstrip("/") == "map",
+            "static_source_frame": source_frame,
+            "static_source_frame_matches_body_pose": (
+                source_frame is not None and body_frame is not None
+                and source_frame.lstrip("/") == body_frame.lstrip("/")
+            ),
+            "static_source_min_xyz": source_min,
+            "static_source_max_xyz": source_max,
+            "active_scan_window_min_xyz": window_min,
+            "active_scan_window_max_xyz": window_max,
+            "robot_inside_static_source_bounds": inside(body_position, source_min, source_max),
+            "robot_inside_active_scan_window": inside(body_position, window_min, window_max),
+            "static_source_window_intersects": overlay.get("window_intersects_source_bounds"),
+            "static_overlay_ready": overlay.get("ready"),
+            "static_overlay_reason": overlay.get("reason"),
+            "cloud_frame": cloud_frame,
+            "cloud_frame_is_map": cloud_frame is not None and cloud_frame.lstrip("/") == "map",
+            "cloud_sample_min_xyz": cloud_min,
+            "cloud_sample_max_xyz": cloud_max,
+            "cloud_sample_intersects_active_window": cloud_intersects_window,
+            "registration_proven_by_pcd": False,
         }
 
     def _alignment_report(self):
