@@ -9,7 +9,7 @@ It deliberately checks the complete chain rather than only `/robot_pose`:
 1. ROS environment, active workspace revision, running processes and duplicate nodes.
 2. SLAM status, global pose, odometry, IMU and LiDAR input timing.
 3. Live bridge outputs: `/cloud`, `/sensor_pose`, `/body_pose` and scan-time body pose, including sampled XYZ bounds and exact timestamp comparisons.
-4. TF frame chain and LiDAR mounting transform.
+4. TF frame chain and LiDAR mounting transform. The current observed contract is `map -> base_footprint -> base_link -> lidar_link -> imu_link -> livox_frame`; `/odom` is a separate Odometry topic and does not imply an `odom` TF frame.
 5. Original PCD parser compatibility, source bounds, retained static occupancy cloud, robot pose versus active rolling-window geometry and the live SCAN overlay.
 6. Native SCAN subscriptions, planner parameters, goal-gate path and B-spline output.
 7. Dynamic-scene diagnostics and Hive2 candidate feasibility.
@@ -41,13 +41,32 @@ The audit creates:
 
 The compressed bundle contains the log and structured ROS probe JSON and is the preferred artifact to attach to the next project turn.
 
+## Hivecore SLAM GUI cross-check
+
+The uploaded Hivecore SLAM Services GUI manual is used as an operational reference, not as the authority for current node/service names. The live ROS graph and the installed vendor release remain authoritative because the manual is an older revision.
+
+The GUI is a service client and external-tool launcher; it does not itself run the SLAM algorithm and does not publish pose or cloud topics. The audit therefore checks the backend nodes, service servers, state topics, and GUI process separately.
+
+Operational state transitions that matter to navigation:
+
+- **Mapping a new map:** Mapping Session Start -> drive/collect -> Save to disk. Mapping Start may stop localization and clear the previous local map/session.
+- **Using a saved map through mapping relocalization:** Stop -> Load from disk -> Relocalization -> provide `/initialpose` -> wait for `reloc_ok` -> Resume. Do not press Start after loading an overlay if the intent is to continue/relocalize against that prior map.
+- **Localization session:** Load the localization map -> Session Start -> enter tracking or relocalization as appropriate. The status topic, not the button highlight alone, is the state evidence.
+- **Preprocessing:** verify Cloud forward is enabled and inspect the current SetGeoFilter configuration. Disabling forwarding mutes `/livox/lidar/geo_filtered`; it is not a harmless display toggle.
+- **Time contract:** live Livox/SLAM should use system time. RViz, bag replay, and the rest of the active desktop stack must not accidentally mix simulated and system time.
+- **Mutual exclusion:** mapping and localization must not simultaneously own `/robot_pose` and the map-to-robot TF path. Multiple publisher endpoints on `/robot_pose` are not automatically proof of two active sessions, but the active session state and message stream must be checked.
+
+`/initialpose` is a localization/relocalization seed. It is not the navigation destination. A navigation goal is a separate input to the N-01 Goal Gate and must not be confused with the GUI's relocalization workflow.
+
+Older manual service names may use `lidar_3d_mapping_node` or a GUI node named `slam_services_gui`; the observed release may expose `/slam3d_node/...` and `/slam3d_services_gui`. The audit checks the current graph's actual services and does not call them.
+
 ## Planning stages
 
 ### P0 — Inputs required to attempt native SCAN planning
 
-- Fresh SLAM tracking status and advancing global pose timestamps.
+- Fresh SLAM tracking status, active localization processing and advancing global pose timestamps.
 - Valid local odometry and scan-time pose/odometry support.
-- Valid `base_footprint <- lidar_link` extrinsic.
+- Valid `map -> base_footprint -> base_link -> lidar_link` chain and sensor extrinsics.
 - Fresh map-frame `/cloud` and scan-stamped `/sensor_pose`.
 - Fresh map-frame `/body_pose` consumed by native SCAN.
 - Static PCD loaded, map-frame asserted, and source bounds intersecting the active SCAN window.
@@ -70,7 +89,7 @@ This stage is separate from planning. The audit only reads the safety state and 
 
 ## Important interpretation limits
 
-- Standard PCD files do not encode or prove their coordinate registration. The PCD parser check proves file-format compatibility and reports bounds; the active static-overlay status reports whether the source intersects the current SCAN window. Coordinate registration still depends on the operator-confirmed vendor SLAM map-frame contract.
+- Standard PCD files do not encode or prove their coordinate registration. The PCD parser check proves file-format compatibility and reports bounds; the audit also compares the SCAN static PCD path with the vendor localization map path when that parameter is available. The active static-overlay status reports whether the source intersects the current SCAN window. Coordinate registration still depends on the operator-confirmed vendor SLAM map-frame contract.
 - A direct `map -> base_footprint` TF edge is not required by the current bridge contract because the bridge derives `/body_pose` from timestamped global SLAM anchors plus relative odometry. The `base_footprint -> lidar_link` extrinsic and `odom -> base_link` motion chain are important.
 - The dynamic obstacle tracker reports unmatched returns for visualization and diagnostics. The native SCAN occupancy map receives `/cloud` and the static overlay independently.
 - The safety supervisor is a monitor, not an actuator controller. Its fail-closed state is expected during planning-only work.
