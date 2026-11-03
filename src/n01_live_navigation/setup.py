@@ -28,6 +28,7 @@ setup(
             "n01_hive2_trajectory_monitor = n01_live_navigation.trajectory_monitor:main",
             "n01_live_safety_supervisor = n01_live_navigation.safety_supervisor:main",
             "n01_navigation_acceptance = n01_live_navigation.acceptance:main",
+            "n01_planning_smoke_test = n01_live_navigation.planning_smoke_test:main",
         ],
     },
 )

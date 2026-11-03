@@ -100,3 +100,28 @@ The audit:
 - does not publish `/move_base_simple/goal`, `/n01/live_navigation/goal_gated`, `/cmd_vel`, `/cmd_wheel`, or chassis commands;
 - does not invoke ROS services or actions;
 - does not change parameters, stop nodes, restart nodes, launch stacks, build packages or run tests.
+
+## Planning-only SCAN smoke test
+
+The latest live-readiness audit can report READY_FOR_GOAL_PLANNING while
+/planning/bspline remains empty: the read-only audit deliberately sends no
+goal. After rebuilding and restarting the live SCAN launch, run one bounded
+candidate-planning test:
+
+```bash
+source /opt/ros/humble/setup.bash
+source /home/demo/lyy/hivecore-navigation/install/setup.bash
+ros2 run n01_live_navigation n01_planning_smoke_test --distance 0.8 --timeout 15 --confirm-planning-only
+```
+
+The test derives a short goal from the current /body_pose, sends one
+PoseStamped through the existing /move_base_simple/goal input, and waits for
+a new /planning/bspline. It refuses to publish unless system health and the
+static overlay are ready, the safety supervisor explicitly reports
+actuator_output=DISABLED and safety_authorization=NEVER, and the B-spline
+graph contains only the runtime supervisor and candidate monitor as
+consumers. It never changes operator hold or publishes actuator commands.
+
+A passing result proves candidate generation only. It does not prove wheel
+contact geometry, physical collision clearance, emergency-stop acceptance,
+or authorization to move the robot.

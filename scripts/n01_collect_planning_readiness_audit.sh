@@ -581,7 +581,15 @@ topic_hz /planning/bspline reliable
 
 section "12. Structured ROS live-data probes: publisher attribution, rates, XYZ bounds and timestamp alignment"
 if [ -f "$WS_ROOT/scripts/n01_live_stack_preflight.py" ]; then
-  run_cmd 30 bash -c "python3 '$WS_ROOT/scripts/n01_live_stack_preflight.py' --duration 8 > '$STACK_PREFLIGHT_JSON' 2>&1"
+  # Run Python directly in this already-sourced shell. A nested bash -c can
+  # lose the ROS shared-library environment on some desktop launch paths.
+  printf '\n$ python3 %s --duration 8 > %s 2>&1\n' \
+    "$WS_ROOT/scripts/n01_live_stack_preflight.py" "$STACK_PREFLIGHT_JSON"
+  timeout --signal=INT --kill-after=2s 30s \
+    python3 "$WS_ROOT/scripts/n01_live_stack_preflight.py" --duration 8 \
+    > "$STACK_PREFLIGHT_JSON" 2>&1
+  rc=$?
+  printf '[exit_code=%s]\n' "$rc"
   if [ -f "$STACK_PREFLIGHT_JSON" ]; then
     printf '\n--- Live stack preflight JSON (publisher endpoints, rates, TF edges) ---\n'
     sed -n '1,260p' "$STACK_PREFLIGHT_JSON"
