@@ -43,6 +43,9 @@ RELIABLE_TOPICS = {
     "/n01/live_navigation/hive2_feasibility": "std_msgs/msg/String",
     "/n01/live_navigation/safety_status": "std_msgs/msg/String",
     "/n01/live_navigation/operator_hold": "std_msgs/msg/Bool",
+    "/n01/live_navigation/navigation_ready": "std_msgs/msg/Bool",
+    "/planning/go2_execution_frozen": "std_msgs/msg/Bool",
+    "/mapping_processing_timings": "geometry_msgs/msg/Vector3Stamped",
     "/grid_map/static_overlay_ready": "std_msgs/msg/Bool",
     "/grid_map/static_overlay_status": "std_msgs/msg/String",
 }
@@ -301,8 +304,17 @@ class PlanningReadinessProbe(Node):
                 detail["json"] = json.loads(msg.data)
             except Exception:
                 detail["raw"] = str(msg.data)[:12000]
-        elif topic in ("/n01/live_navigation/operator_hold", "/grid_map/static_overlay_ready"):
+        elif topic in (
+            "/n01/live_navigation/operator_hold",
+            "/n01/live_navigation/navigation_ready",
+            "/planning/go2_execution_frozen",
+            "/grid_map/static_overlay_ready",
+        ):
             detail["value"] = bool(msg.data)
+        elif topic == "/mapping_processing_timings":
+            detail["vendor_timings_xyz_raw"] = [
+                float(msg.vector.x), float(msg.vector.y), float(msg.vector.z)
+            ]
         elif topic == "/localization_status":
             detail["localization_status_fields"] = primitive_fields(msg)
         stat["last_detail"] = detail
