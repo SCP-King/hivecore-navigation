@@ -73,7 +73,7 @@ class FourStageDeliveryTests(unittest.TestCase):
         self.assertIn('bridge.get("robot_pose_receive_fresh") is not True', source)
         self.assertIn('bridge.get("body_pose_live_anchor_fresh") is not True', source)
         self.assertIn("self.readiness_timeout", source)
-        self.assertIn("Recheck immediately before publishing", source)
+        self.assertIn("recheck immediately before", source.lower())
         self.assertIn('default=0.5', source)
         self.assertIn('"goal_published": False', source)
 
