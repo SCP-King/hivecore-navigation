@@ -666,5 +666,6 @@ printf '%s\n' \
 
 printf '\nOUTPUTS:\n'
 printf 'LOG_FILE=%s\n' "$LOG_FILE"
+printf 'STACK_PREFLIGHT_JSON=%s\n' "$STACK_PREFLIGHT_JSON"
 printf 'ROS_PROBE_JSON=%s\n' "$PROBE_JSON"
 printf 'The script has not published /move_base_simple/goal, /initialpose, /goal_gated, /cmd_vel, /cmd_wheel or any chassis command.\n'
