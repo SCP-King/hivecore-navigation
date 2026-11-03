@@ -54,7 +54,7 @@ n01_active_pids_matching() {
     fi
   done
   if (( ${#active[@]} )); then
-    printf '%s\\n' "${active[@]}"
+    printf '%s\n' "${active[@]}"
   fi
 }
 
@@ -138,7 +138,7 @@ else
   done
   if (( ${#ORPHAN_N01_PIDS[@]} )); then
     echo "ERROR: N-01 live nodes exist without one identifiable live_scan launch parent."
-    printf '  active PID: %s\\n' "${ORPHAN_N01_PIDS[@]}"
+    printf '  active PID: %s\n' "${ORPHAN_N01_PIDS[@]}"
     echo "Refusing to start a duplicate navigation stack."
     exit 3
   fi
@@ -202,7 +202,7 @@ if (( ${#LIVE_LAUNCH_PIDS[@]} == 1 )); then
       pstree -ap "$OLD_PID" || true
     fi
     LATEST_LAUNCH_LOG="$(find "$HOME/lyy/n01_runtime/runs/planning_deploy" \
-      -maxdepth 1 -type f -name 'n01_live_scan_*.log' -printf '%T@ %p\\n' 2>/dev/null \
+      -maxdepth 1 -type f -name 'n01_live_scan_*.log' -printf '%T@ %p\n' 2>/dev/null \
       | sort -nr | head -n 1 | cut -d' ' -f2-)"
     if [[ -n "$LATEST_LAUNCH_LOG" ]]; then
       echo "--- latest live_scan log: $LATEST_LAUNCH_LOG ---"
@@ -226,7 +226,7 @@ if (( ${#LIVE_LAUNCH_PIDS[@]} == 1 )); then
     mapfile -t ACTIVE_NODE_PIDS < <(n01_active_pids_matching "$pattern")
     if (( ${#ACTIVE_NODE_PIDS[@]} )); then
       echo "ERROR: old N-01 process remains after launch shutdown: $pattern"
-      printf '  active PID: %s\\n' "${ACTIVE_NODE_PIDS[@]}"
+      printf '  active PID: %s\n' "${ACTIVE_NODE_PIDS[@]}"
       ACTIVE_NODE_PID_LIST="$(IFS=,; echo "${ACTIVE_NODE_PIDS[*]}")"
       ps -o pid,ppid,pgid,sid,stat,etime,args -p "$ACTIVE_NODE_PID_LIST" || true
       exit 5
