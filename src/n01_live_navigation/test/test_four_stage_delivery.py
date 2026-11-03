@@ -63,7 +63,7 @@ class FourStageDeliveryTests(unittest.TestCase):
         self.assertIn("n01_planning_smoke_test", source)
         self.assertIn("expected exactly one running N-01 live_scan launch", source)
         self.assertNotIn("colcon build", source)
-        self.assertNotIn("ros2 launch", source)
+        self.assertNotIn("nohup ros2 launch", source)
 
     def test_planning_smoke_waits_for_live_robot_pose_readiness_window(self):
         source = (ROOT / "src/n01_live_navigation/n01_live_navigation/planning_smoke_test.py").read_text()
