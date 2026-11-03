@@ -53,7 +53,9 @@ n01_active_pids_matching() {
       active+=("$pid")
     fi
   done
-  printf '%s\\n' "${active[@]}"
+  if (( ${#active[@]} )); then
+    printf '%s\\n' "${active[@]}"
+  fi
 }
 
 echo "=== N-01 deployment preflight ==="
@@ -95,7 +97,13 @@ echo "build/test: scan_planner + n01_live_navigation"
 echo "actuator commands: NEVER"
 echo
 
-mapfile -t LIVE_LAUNCH_PIDS < <(pgrep -f '[r]os2 launch n01_live_navigation live_scan.launch.py' || true)
+mapfile -t FOUND_LIVE_LAUNCH_PIDS < <(pgrep -f '[r]os2 launch n01_live_navigation live_scan.launch.py' || true)
+LIVE_LAUNCH_PIDS=()
+for pid in "${FOUND_LIVE_LAUNCH_PIDS[@]}"; do
+  if n01_pid_is_running "$pid"; then
+    LIVE_LAUNCH_PIDS+=("$pid")
+  fi
+done
 if (( ${#LIVE_LAUNCH_PIDS[@]} > 1 )); then
   echo "ERROR: multiple live_scan launch parents found; refusing ambiguous restart:"
   printf '  %s\n' "${LIVE_LAUNCH_PIDS[@]}"
@@ -118,8 +126,19 @@ if (( ${#LIVE_LAUNCH_PIDS[@]} == 1 )); then
     esac
   done
 else
-  if pgrep -f '[s]can_planner_node|[n]01_live_scan_bridge|[n]01_live_static_pcd' >/dev/null; then
+  ORPHAN_N01_PIDS=()
+  for pattern in \
+    '[s]can_planner_node' '[n]01_live_scan_bridge' '[n]01_live_static_pcd' \
+    '[n]01_live_runtime_supervisor' '[n]01_live_safety_supervisor' \
+    '[n]01_live_dynamic_obstacle_tracker' '[n]01_hive2_trajectory_monitor' \
+    '[n]01_live_scan_goal_gate'
+  do
+    mapfile -t FOUND_NODE_PIDS < <(n01_active_pids_matching "$pattern")
+    ORPHAN_N01_PIDS+=("${FOUND_NODE_PIDS[@]}")
+  done
+  if (( ${#ORPHAN_N01_PIDS[@]} )); then
     echo "ERROR: N-01 live nodes exist without one identifiable live_scan launch parent."
+    printf '  active PID: %s\\n' "${ORPHAN_N01_PIDS[@]}"
     echo "Refusing to start a duplicate navigation stack."
     exit 3
   fi
