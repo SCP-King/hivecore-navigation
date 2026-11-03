@@ -135,7 +135,9 @@ class PlanningSmokeTest(Node):
 
         if self.health is None or self.health_rx is None or now - self.health_rx > 0.75:
             return False, "system_health_missing_or_stale"
-        bridge = self.health.get("bridge", {})
+        bridge = self.health.get("bridge")
+        if not isinstance(bridge, dict):
+            return False, "system_health_bridge_snapshot_missing"
         if (bridge.get("robot_pose_receive_fresh") is not True
                 or bridge.get("body_pose_live_anchor_fresh") is not True):
             return False, "global_robot_pose_or_live_anchor_not_fresh"
@@ -204,15 +206,14 @@ class PlanningSmokeTest(Node):
             ok, reason = self.preflight()
             if not ok:
                 continue
-            try:
-                candidate_goal = self.make_goal()
-            except ValueError as exc:
-                return 2, {"result": "PREFLIGHT_FAILED", "reason": str(exc)}
-            # Recheck immediately before publishing to close the readiness-window
-            # race while the pose freshness budget is only 0.7 seconds.
+            # Recheck immediately before goal construction/publication to close
+            # the readiness-window race while the pose freshness budget is 0.7 s.
             ok, reason = self.preflight()
             if ok:
-                goal = candidate_goal
+                try:
+                    goal = self.make_goal()
+                except ValueError as exc:
+                    return 2, {"result": "PREFLIGHT_FAILED", "reason": str(exc)}
                 break
         if not ok or goal is None:
             return 2, {
@@ -230,23 +231,41 @@ class PlanningSmokeTest(Node):
         if not self.spin_until(
             lambda: self.gate_rx is not None and self.gate_rx >= sent_at,
             sent_at + min(3.0, self.timeout)):
-            return 3, {"result": "GOAL_GATE_TIMEOUT"}
+            return 3, {
+                "result": "GOAL_GATE_TIMEOUT",
+                "goal_published": True,
+                "actuator_command_published": False,
+                "execution_authorized": False,
+            }
         gate = self.gate or {}
         if gate.get("accepted") is not True:
-            return 3, {"result": "GOAL_REJECTED", "goal_gate_status": gate}
+            return 3, {
+                "result": "GOAL_REJECTED",
+                "goal_gate_status": gate,
+                "goal_published": True,
+                "actuator_command_published": False,
+                "execution_authorized": False,
+            }
 
         if not self.spin_until(
             lambda: self.bspline_count > baseline and self.bspline_rx is not None
             and self.bspline_rx >= sent_at,
             sent_at + self.timeout):
-            return 4, {"result": "BSPLINE_NOT_GENERATED", "goal_gate_status": gate,
-                       "system_health": self.health}
+            return 4, {
+                "result": "BSPLINE_NOT_GENERATED",
+                "goal_gate_status": gate,
+                "system_health": self.health,
+                "goal_published": True,
+                "actuator_command_published": False,
+                "execution_authorized": False,
+            }
 
         summary = self.spline_summary(self.bspline)
         self.spin_until(
             lambda: self.feasibility_rx is not None and self.feasibility_rx >= self.bspline_rx,
             time.monotonic() + 1.0)
         safety = self.safety or {}
+        bridge = self.health.get("bridge", {}) if isinstance(self.health, dict) else {}
         result = {
             "result": "BSPLINE_GENERATED" if summary["valid"] else "BSPLINE_INVALID",
             "goal_map_xyz": [round(goal.pose.position.x, 4),
@@ -262,6 +281,18 @@ class PlanningSmokeTest(Node):
                 "execution_authorized": safety.get("execution_authorized"),
             },
             "published_topic": "/move_base_simple/goal",
+            "goal_distance_m": self.distance,
+            "goal_published": True,
+            "readiness_snapshot": {
+                "status": self.health.get("status"),
+                "blockers": self.health.get("blockers"),
+                "static_overlay_ready": self.health.get("static_overlay_ready"),
+                "robot_pose_receive_fresh": bridge.get("robot_pose_receive_fresh"),
+                "robot_pose_receive_age_s": bridge.get("robot_pose_receive_age_s"),
+                "robot_pose_stamp_age_s": bridge.get("robot_pose_stamp_age_s"),
+                "body_pose_live_anchor_fresh": bridge.get("body_pose_live_anchor_fresh"),
+                "body_pose_live_anchor_delta_s": bridge.get("body_pose_live_anchor_delta_s"),
+            },
             "readiness_wait_s": round(time.monotonic() - readiness_started, 3),
             "robot_pose_receive_age_s": round(time.monotonic() - self.robot_pose_rx, 4),
             "robot_pose_stamp_age_s": round(
