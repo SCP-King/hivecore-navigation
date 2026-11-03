@@ -379,11 +379,32 @@ do
   node_params "$node"
 done
 
+section "8B. use_sim_time contract across SLAM, GUI, visualization and N-01 nodes"
+for node in \
+  /slam3d_node /slam3d_services_gui /slam_services_gui /vis_world \
+  /chassis_controller /lidar_cloud_preprocess_node /n01_live_scan_bridge \
+  /n01_live_static_pcd /scan_planner_node
+do
+  if has_node "$node"; then
+    run_cmd 5 ros2 param get "$node" use_sim_time
+  else
+    printf 'NODE_NOT_RUNNING_SKIP_USE_SIM_TIME: %s\n' "$node"
+  fi
+done
+printf 'NOTE: live Livox and live SLAM should use system time; GUI-launched RViz/bag replay must follow the same time contract as the active stack.\n'
+
 section "9. Static PCD source file: actual runtime path, parser contract and bounds"
 PCD_PATH="$(param_value /n01_live_static_pcd pcd_path)"
 PCD_RES="$(param_value /n01_live_static_pcd resolution)"
 PCD_MIN_Z="$(param_value /n01_live_static_pcd min_z)"
 PCD_MAX_Z="$(param_value /n01_live_static_pcd max_z)"
+MAP_YAML="$WS_ROOT/src/n01_static_map/config/static_map.yaml"
+if [ -f "$MAP_YAML" ]; then
+  [ -z "$PCD_PATH" ] && PCD_PATH="$(awk -F: '$1 ~ /^[[:space:]]*pcd_path[[:space:]]*$/ {sub(/^[^:]*:[[:space:]]*/, ""); gsub(/"/, ""); print; exit}' "$MAP_YAML")"
+  [ -z "$PCD_RES" ] && PCD_RES="$(awk -F: '$1 ~ /^[[:space:]]*resolution[[:space:]]*$/ {gsub(/[[:space:]]/, "", $2); print $2; exit}' "$MAP_YAML")"
+  [ -z "$PCD_MIN_Z" ] && PCD_MIN_Z="$(awk -F: '$1 ~ /^[[:space:]]*min_z[[:space:]]*$/ {gsub(/[[:space:]]/, "", $2); print $2; exit}' "$MAP_YAML")"
+  [ -z "$PCD_MAX_Z" ] && PCD_MAX_Z="$(awk -F: '$1 ~ /^[[:space:]]*max_z[[:space:]]*$/ {gsub(/[[:space:]]/, "", $2); print $2; exit}' "$MAP_YAML")"
+fi
 if [ -z "$PCD_PATH" ] && [ -f "$WS_ROOT/src/n01_static_map/config/static_map.yaml" ]; then
   PCD_PATH="$(sed -n 's/^[[:space:]]*pcd_path:[[:space:]]*"\{0,1\}\([^"]*\)"\{0,1\}[[:space:]]*$/\1/p' "$WS_ROOT/src/n01_static_map/config/static_map.yaml" | head -n 1)"
 fi
@@ -391,6 +412,19 @@ printf 'RUNTIME_PCD_PATH=%s\n' "${PCD_PATH:-NOT_REPORTED}"
 printf 'RUNTIME_PCD_RESOLUTION=%s\n' "${PCD_RES:-NOT_REPORTED}"
 printf 'RUNTIME_PCD_MIN_Z=%s\n' "${PCD_MIN_Z:-NOT_REPORTED}"
 printf 'RUNTIME_PCD_MAX_Z=%s\n' "${PCD_MAX_Z:-NOT_REPORTED}"
+STATIC_MAP_CONFIG_FRAME="$(awk -F: '$1 ~ /^[[:space:]]*frame_id[[:space:]]*$/ {gsub(/"/, "", $2); gsub(/[[:space:]]/, "", $2); print $2; exit}' "$MAP_YAML" 2>/dev/null)"
+printf 'STATIC_MAP_CONFIG_FRAME=%s\n' "${STATIC_MAP_CONFIG_FRAME:-NOT_REPORTED}"
+SLAM_LOCALIZATION_MAP_PATH="$(param_value /slam3d_node localization.map_path)"
+printf 'SLAM_LOCALIZATION_MAP_PATH=%s\n' "${SLAM_LOCALIZATION_MAP_PATH:-NOT_REPORTED}"
+if [ -n "$SLAM_LOCALIZATION_MAP_PATH" ]; then
+  if [ -r "$SLAM_LOCALIZATION_MAP_PATH" ]; then
+    run_cmd 5 file "$SLAM_LOCALIZATION_MAP_PATH"
+    run_cmd 5 stat "$SLAM_LOCALIZATION_MAP_PATH"
+    run_cmd 8 sha256sum "$SLAM_LOCALIZATION_MAP_PATH"
+  else
+    printf 'SLAM_LOCALIZATION_MAP_NOT_READABLE_OR_MISSING: %s\n' "$SLAM_LOCALIZATION_MAP_PATH"
+  fi
+fi
 if [ -n "$PCD_PATH" ]; then
   run_cmd 5 file "$PCD_PATH"
   run_cmd 5 stat "$PCD_PATH"
