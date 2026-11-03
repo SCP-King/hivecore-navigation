@@ -13,6 +13,7 @@ fi
 
 WS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$WS_ROOT/scripts/lib/ros_env.sh"
+source "$WS_ROOT/scripts/lib/colcon_build_guard.sh"
 PCD_PATH="$HOME/lyy/slam_data/maps/cloud_map_20261027_225549.pcd"
 PCD_ASSERTED="true"
 GROUND_Z="-0.55"
@@ -45,11 +46,11 @@ fi
 # Intentionally source with nounset disabled (the script does not enable it):
 # ROS Humble setup uses optional variables such as AMENT_TRACE_SETUP_FILES.
 n01_source_setup /opt/ros/humble/setup.bash
-if [[ -f "$WS_ROOT/install/setup.bash" ]]; then
-  n01_source_setup "$WS_ROOT/install/setup.bash"
-else
-  echo "WARNING: workspace install/setup.bash is missing; build will create the overlay."
-fi
+# Do NOT source this workspace's own install/setup.bash before building it.
+# Doing so makes colcon treat the old install/ packages as underlays of the
+# same source packages, causing self-override warnings and stale prefix order.
+# All packages required by --packages-up-to are discovered and built from src.
+echo "build environment: ROS Humble underlay only (workspace overlay deferred until after build)"
 cd "$WS_ROOT"
 
 if ! command -v colcon >/dev/null 2>&1; then
@@ -109,17 +110,21 @@ if [[ "$PCD_ASSERTED" != "true" ]]; then
 fi
 
 echo
-echo "=== 1/4 Build changed ROS packages ==="
+echo "=== 0/4 Repair only a verified stale generated Python-link collision ==="
+n01_repair_generated_python_link_collision "$WS_ROOT" "$HOME/lyy/n01_runtime"
+
+echo
+echo "=== 1/4 Build changed ROS packages (without self-sourcing install overlay) ==="
 colcon build --symlink-install --packages-up-to scan_planner n01_live_navigation \
   --parallel-workers 2 --event-handlers console_direct+
+
+# The source overlay is loaded only after colcon has completed the build.
+n01_source_setup "$WS_ROOT/install/setup.bash"
 
 echo
 echo "=== 2/4 Run static inflation equivalence test ==="
 colcon test --packages-select plan_env --ctest-args -R test_static_inflation --output-on-failure
 colcon test-result --test-result-base "$WS_ROOT/build/plan_env" --verbose
-
-# Refresh package paths after build/test.
-n01_source_setup "$WS_ROOT/install/setup.bash"
 
 echo
 echo "=== 3/4 Restart only the N-01 live_scan launch ==="
