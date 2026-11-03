@@ -14,6 +14,10 @@ DURATION="${1:-10}"
 mkdir -p "$REPORT_DIR"
 # shellcheck disable=SC1091
 source "$ROOT/scripts/lib/ros_env.sh"
+# Match the active N-01 deployment defaults while preserving explicit overrides.
+export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-55}"
+export RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}"
+export ROS_LOCALHOST_ONLY="${ROS_LOCALHOST_ONLY:-0}"
 
 write_error_report() {
   local status="$1"
