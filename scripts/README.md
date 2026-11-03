@@ -54,6 +54,27 @@ bash scripts/n01_collect_planning_readiness_audit.sh
 
 此入口只读取 ROS 图、话题、参数和文件；不发送导航目标、不发布底盘控制命令、不调用 SLAM 业务服务、不修改参数、不停止或重启节点，也不构建或运行机器人。
 
+## N-01 /robot_pose 双发布端点专项诊断
+
+当前运行日志曾出现 `robot_pose_publisher_count=2`，并伴随 `NAVIGATION READY/BLOCKED` 反复切换。先定位两个发布端点的节点名、DDS endpoint GID、QoS 和节点接线，不放宽 0.7 s 位姿接收新鲜度门限，也不重启 SLAM。
+
+```bash
+cd ~/lyy/hivecore-navigation
+git fetch origin fix/n01-pose-freshness-watchdogs
+git switch fix/n01-pose-freshness-watchdogs
+git pull --ff-only origin fix/n01-pose-freshness-watchdogs
+bash scripts/run_n01_robot_pose_source_audit.sh 20
+```
+
+脚本调用现有只读 ROS 图预检，采样 20 秒，并自动收集：
+
+- `/robot_pose` 每个 publisher endpoint 的节点名、GID、类型和 QoS；
+- 合并后的接收频率、接收间隔、消息时间戳年龄及帧 ID；
+- bridge 的 `pose_duplicate`、`pose_out_of_order`、`drop_pose_duplicate_conflict` 等计数；
+- 每个发布节点的 `ros2 node info`、topic verbose 信息及相关进程快照。
+
+完成后终端会打印 `UPLOAD THIS BUNDLE: ...tar.gz`。直接上传该压缩包即可，不用复制终端输出。此脚本只订阅/读取，不创建 publisher/client，不发目标、不调用服务、不写参数、不重启节点、不输出底盘命令。ROS 2 普通订阅回调不能把单条消息直接归属到 DDS GID，因此报告会把 endpoint 身份与聚合消息时间序列分开呈现，不会伪称逐消息来源归属。
+
 ## N-01 READY 窗口内的一次性规划验证
 
 当前实机证据已确认 `/grid_map/static_overlay_ready=true`。主要入口风险是甲方 `/robot_pose` 约 2.6 Hz、最大接收间隔 0.754 s，超过 N-01 0.7 s 接收新鲜度预算；不允许通过放宽门限掩盖上游发布节奏问题。
