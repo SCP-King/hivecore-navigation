@@ -7,6 +7,7 @@ umask 077
 set +e
 
 WS_ROOT="$(cd "$(dirname "$0")/.." 2>/dev/null && pwd)"
+source "$WS_ROOT/scripts/lib/ros_env.sh"
 STAMP="$(date +%Y%m%d_%H%M%S)"
 OUT_DIR="$HOME/lyy/n01_runtime/runs/planning_readiness_audit"
 mkdir -p "$OUT_DIR" || exit 2
@@ -83,7 +84,14 @@ topic_echo() {
       run_cmd 4 ros2 topic echo "$topic" --once --qos-reliability best_effort
       ;;
     latched)
-      run_cmd 4 ros2 topic echo "$topic" --once --qos-durability transient_local
+      printf '\\n$ ros2 topic echo %s --once --qos-durability transient_local (first choice)\\n' "$topic"
+      timeout --signal=INT --kill-after=1s 4s ros2 topic echo "$topic" --once --qos-durability transient_local
+      rc=$?
+      printf '[transient_local_exit_code=%s]\\n' "$rc"
+      if [ "$rc" -eq 124 ] || [ "$rc" -eq 2 ]; then
+        printf 'Retrying %s with VOLATILE durability to detect a volatile publisher/QoS mismatch.\\n' "$topic"
+        run_cmd 4 ros2 topic echo "$topic" --once --qos-durability volatile
+      fi
       ;;
     *)
       run_cmd 4 ros2 topic echo "$topic" --once
@@ -178,22 +186,26 @@ fi
 
 section "1. Source ROS Humble and this exact workspace overlay"
 if [ -f /opt/ros/humble/setup.bash ]; then
-  # shellcheck disable=SC1091
-  source /opt/ros/humble/setup.bash
-  printf 'SOURCED: /opt/ros/humble/setup.bash\n'
+  if n01_source_setup /opt/ros/humble/setup.bash; then
+    printf 'SOURCED: /opt/ros/humble/setup.bash\n'
+  else
+    printf 'ERROR: ROS Humble setup failed\n'
+  fi
 else
   printf 'ERROR: /opt/ros/humble/setup.bash missing\n'
 fi
 if [ -f "$WS_ROOT/install/setup.bash" ]; then
-  # Use setup.bash so the workspace's vendor underlay chain (including Hivecore
-  # generated message libraries) is sourced as well as this workspace overlay.
-  # shellcheck disable=SC1090
-  source "$WS_ROOT/install/setup.bash"
-  printf 'SOURCED: %s/install/setup.bash (underlays + overlay)\n' "$WS_ROOT"
+  if n01_source_setup "$WS_ROOT/install/setup.bash"; then
+    printf 'SOURCED: %s/install/setup.bash (underlays + overlay)\n' "$WS_ROOT"
+  else
+    printf 'ERROR: workspace setup failed: %s/install/setup.bash\n' "$WS_ROOT"
+  fi
 elif [ -f "$WS_ROOT/install/local_setup.bash" ]; then
-  # shellcheck disable=SC1090
-  source "$WS_ROOT/install/local_setup.bash"
-  printf 'SOURCED_FALLBACK: %s/install/local_setup.bash (overlay only)\n' "$WS_ROOT"
+  if n01_source_setup "$WS_ROOT/install/local_setup.bash"; then
+    printf 'SOURCED_FALLBACK: %s/install/local_setup.bash (overlay only)\n' "$WS_ROOT"
+  else
+    printf 'ERROR: workspace local_setup failed: %s/install/local_setup.bash\n' "$WS_ROOT"
+  fi
 else
   printf 'WARNING: install/setup.bash and install/local_setup.bash missing\n'
 fi
@@ -203,6 +215,16 @@ printf 'RMW_IMPLEMENTATION(after source)=%s\n' "$(printenv RMW_IMPLEMENTATION 2>
 printf 'ROS_LOCALHOST_ONLY(after source)=%s\n' "$(printenv ROS_LOCALHOST_ONLY 2>/dev/null || echo unset)"
 printf 'AMENT_PREFIX_PATH=%s\n' "$(printenv AMENT_PREFIX_PATH 2>/dev/null || echo unset)"
 printf 'LD_LIBRARY_PATH(after source)=%s\n' "$(printenv LD_LIBRARY_PATH 2>/dev/null || echo unset)"
+ROS_PYTHON="${N01_ROS_PYTHON:-/usr/bin/python3}"
+if [ ! -x "$ROS_PYTHON" ]; then
+  ROS_PYTHON="$(command -v python3 2>/dev/null)"
+fi
+printf 'ROS_PYTHON=%s\n' "${ROS_PYTHON:-NOT_FOUND}"
+if [ -n "$ROS_PYTHON" ] && [ -x "$ROS_PYTHON" ]; then
+  run_cmd 8 "$ROS_PYTHON" -c 'import rclpy; import std_msgs.msg; print("ROS_PYTHON_IMPORT_OK", rclpy.__file__)'
+else
+  printf 'ROS_PYTHON_IMPORT_CHECK_SKIPPED: no Python interpreter found\n'
+fi
 SLAM_PREFIX="$(ros2 pkg prefix hivecore_slam3d 2>/dev/null)"
 printf 'HIVECORE_SLAM3D_PREFIX=%s\n' "${SLAM_PREFIX:-NOT_FOUND}"
 if [ -n "$SLAM_PREFIX" ]; then
@@ -586,7 +608,7 @@ if [ -f "$WS_ROOT/scripts/n01_live_stack_preflight.py" ]; then
   printf '\n$ python3 %s --duration 8 > %s 2>&1\n' \
     "$WS_ROOT/scripts/n01_live_stack_preflight.py" "$STACK_PREFLIGHT_JSON"
   timeout --signal=INT --kill-after=2s 30s \
-    python3 "$WS_ROOT/scripts/n01_live_stack_preflight.py" --duration 8 \
+    "$ROS_PYTHON" "$WS_ROOT/scripts/n01_live_stack_preflight.py" --duration 8 \
     > "$STACK_PREFLIGHT_JSON" 2>&1
   rc=$?
   printf '[exit_code=%s]\n' "$rc"
@@ -598,7 +620,7 @@ else
   printf 'STACK_PREFLIGHT_SCRIPT_MISSING: %s/scripts/n01_live_stack_preflight.py\n' "$WS_ROOT"
 fi
 if [ -f "$WS_ROOT/scripts/n01_live_planning_ros_probe.py" ]; then
-  run_cmd 30 python3 "$WS_ROOT/scripts/n01_live_planning_ros_probe.py" --duration 8 --output "$PROBE_JSON"
+  run_cmd 30 "$ROS_PYTHON" "$WS_ROOT/scripts/n01_live_planning_ros_probe.py" --duration 8 --output "$PROBE_JSON"
 else
   printf 'ROS_PROBE_SCRIPT_MISSING: %s/scripts/n01_live_planning_ros_probe.py\n' "$WS_ROOT"
 fi
