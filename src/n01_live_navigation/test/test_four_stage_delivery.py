@@ -110,6 +110,9 @@ class FourStageDeliveryTests(unittest.TestCase):
         self.assertIn("n01_strip_workspace_prefixes", source)
         self.assertIn("n01_repair_generated_python_link_collision", source)
         self.assertIn("without self-sourcing install overlay", source)
+        self.assertIn('DISTANCE="0.5"', source)
+        self.assertIn('READINESS_TIMEOUT="120"', source)
+        self.assertIn('--readiness-timeout "$READINESS_TIMEOUT"', source)
 
     def test_dynamic_tracker_uses_sensor_time_and_publishes_invalid_status(self):
         source = (ROOT / "src/n01_live_navigation/n01_live_navigation/dynamic_obstacle_tracker.py").read_text()
