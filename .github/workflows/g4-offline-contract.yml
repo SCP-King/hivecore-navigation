@@ -12,6 +12,7 @@ on:
       - 'scripts/build_n01_fast_lio2.sh'
       - 'scripts/run_n01_fast_lio2_bag.sh'
       - 'docs/n01_development_environment.md'
+      - 'docs/n01_four_stage_navigation_delivery.md'
       - 'src/n01_live_navigation/n01_live_navigation/planning_smoke_test.py'
       - 'src/scan_planner/plan_env/**'
       - 'scripts/n01_live_planning_ros_probe.py'
