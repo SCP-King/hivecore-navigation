@@ -114,6 +114,10 @@ class PlanningSmokeTest(Node):
         if (self.robot_pose is None or self.robot_pose_rx is None
                 or now - self.robot_pose_rx > ROBOT_POSE_MAX_RX_AGE_S):
             return False, "robot_pose_receive_missing_or_stale"
+        if self.robot_pose.header.frame_id.lstrip("/") != "map":
+            return False, "robot_pose_frame_must_be_map"
+        if self.robot_pose.child_frame_id.lstrip("/") != "base_footprint":
+            return False, "robot_pose_child_frame_must_be_base_footprint"
         robot_stamp = (
             self.robot_pose.header.stamp.sec * 1000000000
             + self.robot_pose.header.stamp.nanosec
@@ -141,6 +145,11 @@ class PlanningSmokeTest(Node):
         if (bridge.get("robot_pose_receive_fresh") is not True
                 or bridge.get("body_pose_live_anchor_fresh") is not True):
             return False, "global_robot_pose_or_live_anchor_not_fresh"
+        bridge_rx_age = bridge.get("robot_pose_receive_age_s")
+        if (not isinstance(bridge_rx_age, (int, float))
+                or not math.isfinite(float(bridge_rx_age))
+                or not 0.0 <= float(bridge_rx_age) <= ROBOT_POSE_MAX_RX_AGE_S):
+            return False, "global_robot_pose_receive_age_outside_budget"
         bridge_stamp_age = bridge.get("robot_pose_stamp_age_s")
         if (not isinstance(bridge_stamp_age, (int, float))
                 or not math.isfinite(float(bridge_stamp_age))
@@ -265,7 +274,10 @@ class PlanningSmokeTest(Node):
             lambda: self.feasibility_rx is not None and self.feasibility_rx >= self.bspline_rx,
             time.monotonic() + 1.0)
         safety = self.safety or {}
-        bridge = self.health.get("bridge", {}) if isinstance(self.health, dict) else {}
+        health_snapshot = self.health if isinstance(self.health, dict) else {}
+        bridge = health_snapshot.get("bridge", {})
+        if not isinstance(bridge, dict):
+            bridge = {}
         result = {
             "result": "BSPLINE_GENERATED" if summary["valid"] else "BSPLINE_INVALID",
             "goal_map_xyz": [round(goal.pose.position.x, 4),
@@ -284,9 +296,9 @@ class PlanningSmokeTest(Node):
             "goal_distance_m": self.distance,
             "goal_published": True,
             "readiness_snapshot": {
-                "status": self.health.get("status"),
-                "blockers": self.health.get("blockers"),
-                "static_overlay_ready": self.health.get("static_overlay_ready"),
+                "status": health_snapshot.get("status"),
+                "blockers": health_snapshot.get("blockers"),
+                "static_overlay_ready": health_snapshot.get("static_overlay_ready"),
                 "robot_pose_receive_fresh": bridge.get("robot_pose_receive_fresh"),
                 "robot_pose_receive_age_s": bridge.get("robot_pose_receive_age_s"),
                 "robot_pose_stamp_age_s": bridge.get("robot_pose_stamp_age_s"),
