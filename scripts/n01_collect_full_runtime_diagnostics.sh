@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # N-01 one-shot full runtime diagnostics for A/B/C/D.
-# READ ONLY: no command publication, ROS service calls, parameter writes, builds, tests, or node restarts.
+# READ ONLY: no motion command publication, application service/action invocation, parameter writes, builds, tests, or node restarts.
 
-set -u
 umask 077
 
 LYY_ROOT="$HOME/lyy"
@@ -18,7 +17,7 @@ finish() {
   printf '\n============================================================\n'
   printf 'N-01 full runtime diagnostic finished: %s\n' "$(date --iso-8601=seconds)"
   printf 'LOG_FILE: %s\n' "$LOG_FILE"
-  printf 'READ_ONLY: no command publication, no service calls, no parameter writes\n'
+  printf 'READ_ONLY: no motion commands, no application service/action invocation, no parameter writes\n'
   printf '============================================================\n'
 }
 trap finish EXIT
@@ -62,7 +61,7 @@ topic_echo() {
   topic="$1"
   shift
   if has_topic "$topic"; then
-    run_cmd 8 ros2 topic echo "$topic" --once "$@"
+    run_cmd 6 ros2 topic echo "$topic" --once "$@"
   else
     printf '\nTOPIC_MISSING: %s\n' "$topic"
   fi
@@ -235,7 +234,6 @@ node_info /n01_hive2_trajectory_monitor
 printf '\nC-chain relevant topic endpoints:\n'
 topic_info /n01/live_navigation/hive2_feasibility
 topic_info /n01/live_navigation/trajectory_status
-topic_info /planning/bspline
 topic_info /joint_states
 printf '\nC-chain one-shot messages:\n'
 topic_echo /n01/live_navigation/hive2_feasibility
@@ -324,7 +322,8 @@ printf 'Collected: host/time/ROS env, git revision, active processes, ROS nodes/
 printf 'A localization+IMU+body pose, B static map+dynamic obstacle+SCAN, C Hive2 feasibility,\n'
 printf 'D safety/control topology, live params, message contracts, TF samples, local source refs,\n'
 printf 'and vendor SLAM archive source matches when the archive is present.\n'
-printf 'No ROS command topic was published. No ROS service/action was called.\n'
+printf 'No ROS command topic was published. No application service/action was invoked.
+ROS parameter services are used only to read parameter values.\n'
 printf 'No ROS parameter was changed. No node was stopped or restarted. No build/test was run.\n'
  | head -n 40)"
   printf '%s\n' "$MEMBERS"
