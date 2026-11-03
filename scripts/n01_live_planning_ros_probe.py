@@ -46,6 +46,7 @@ RELIABLE_TOPICS = {
     "/n01/live_navigation/navigation_ready": "std_msgs/msg/Bool",
     "/planning/go2_execution_frozen": "std_msgs/msg/Bool",
     "/mapping_processing_timings": "geometry_msgs/msg/Vector3Stamped",
+    "/grid_map/static_occupancy": "sensor_msgs/msg/PointCloud2",
     "/grid_map/static_overlay_ready": "std_msgs/msg/Bool",
     "/grid_map/static_overlay_status": "std_msgs/msg/String",
 }
@@ -226,7 +227,7 @@ class PlanningReadinessProbe(Node):
                 stat["first_stamp_ns"] = stamp
             stat["last_stamp_ns"] = stamp
             stat["stamp_samples_ns"].append(stamp)
-        if topic in ("/livox/lidar/geo_filtered", "/cloud"):
+        if topic in ("/livox/lidar/geo_filtered", "/cloud", "/grid_map/static_occupancy"):
             detail["pointcloud"] = pointcloud_summary(msg)
         elif topic in (
             "/robot_pose", "/odom", "/sensor_pose", "/body_pose",
@@ -456,6 +457,10 @@ class PlanningReadinessProbe(Node):
             self.stats.get("/cloud", {}).get("last_detail") or {}
         )
         cloud = cloud_detail.get("pointcloud") or {}
+        static_detail = (
+            self.stats.get("/grid_map/static_occupancy", {}).get("last_detail") or {}
+        )
+        static_cloud = static_detail.get("pointcloud") or {}
         overlay_detail = (
             self.stats.get("/grid_map/static_overlay_status", {}).get("last_detail") or {}
         )
@@ -510,6 +515,14 @@ class PlanningReadinessProbe(Node):
             "static_source_window_intersects": overlay.get("window_intersects_source_bounds"),
             "static_overlay_ready": overlay.get("ready"),
             "static_overlay_reason": overlay.get("reason"),
+            "static_cloud_frame": static_cloud.get("frame_id"),
+            "static_cloud_point_count": static_cloud.get("point_count"),
+            "static_cloud_sample_min_xyz": static_cloud.get("xyz_sample_min"),
+            "static_cloud_sample_max_xyz": static_cloud.get("xyz_sample_max"),
+            "static_cloud_frame_is_map": (
+                static_cloud.get("frame_id") is not None
+                and static_cloud.get("frame_id").lstrip("/") == "map"
+            ),
             "cloud_frame": cloud_frame,
             "cloud_frame_is_map": cloud_frame is not None and cloud_frame.lstrip("/") == "map",
             "cloud_sample_min_xyz": cloud_min,
