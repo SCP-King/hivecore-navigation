@@ -1,3 +1,4 @@
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -123,6 +124,12 @@ class FourStageDeliveryTests(unittest.TestCase):
         self.assertIn("READ_ONLY: subscriber only", source)
         self.assertNotIn("ros2 topic pub", source)
         self.assertNotIn("ros2 service call", source)
+
+    def test_robot_pose_source_audit_runner_has_valid_bash_syntax(self):
+        script = ROOT / "scripts/run_n01_robot_pose_source_audit.sh"
+        result = subprocess.run(
+            ["bash", "-n", str(script)], capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_robot_pose_source_audit_runner_is_read_only_and_bundles_endpoint_evidence(self):
         source = (ROOT / "scripts/run_n01_robot_pose_source_audit.sh").read_text()
