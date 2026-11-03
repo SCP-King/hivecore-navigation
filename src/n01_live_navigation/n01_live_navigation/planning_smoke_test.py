@@ -157,12 +157,13 @@ class PlanningSmokeTest(Node):
         }
 
     def run_test(self):
-        if not self.spin_until(
-            lambda: self.body is not None and self.health is not None and self.safety is not None,
-            time.monotonic() + min(10.0, self.timeout)):
-            return 2, {"result": "PREFLIGHT_FAILED", "reason": "required_status_not_received"}
-
-        ok, reason = self.preflight()
+        preflight_deadline = time.monotonic() + min(30.0, self.timeout)
+        ok, reason = False, "navigation_preflight_timeout"
+        while rclpy.ok() and time.monotonic() < preflight_deadline:
+            rclpy.spin_once(self, timeout_sec=0.1)
+            ok, reason = self.preflight()
+            if ok:
+                break
         if not ok:
             return 2, {"result": "PREFLIGHT_FAILED", "reason": reason}
         try:
