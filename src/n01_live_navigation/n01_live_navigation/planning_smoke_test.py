@@ -304,7 +304,6 @@ class PlanningSmokeTest(Node):
         self.spin_until(
             lambda: self.feasibility_rx is not None and self.feasibility_rx >= self.bspline_rx,
             time.monotonic() + 1.0)
-        safety = self.safety or {}
         result = {
             "result": "BSPLINE_GENERATED" if summary["valid"] else "BSPLINE_INVALID",
             "goal_map_xyz": [round(goal.pose.position.x, 4),
