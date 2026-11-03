@@ -530,31 +530,26 @@ else
   printf 'MAP_DIRECTORY_MISSING\n'
 fi
 
-section "10. TF frame-chain checks (direct map->base may be optional; sensor mount is required)"
-run_cmd 5 ros2 run tf2_ros tf2_echo base_footprint lidar_link
-run_cmd 5 ros2 run tf2_ros tf2_echo odom base_link
-run_cmd 5 ros2 run tf2_ros tf2_echo map odom
-run_cmd 5 ros2 run tf2_ros tf2_echo map base_footprint
+section "10. TF frame-chain checks (current SLAM tree: map -> base_footprint -> base_link -> sensors)"
+run_cmd 8 ros2 run tf2_ros tf2_echo map base_footprint
+run_cmd 8 ros2 run tf2_ros tf2_echo base_footprint base_link
+run_cmd 8 ros2 run tf2_ros tf2_echo base_link lidar_link
+run_cmd 8 ros2 run tf2_ros tf2_echo base_link lpms_imu_link
+run_cmd 8 ros2 run tf2_ros tf2_echo lidar_link imu_link
+run_cmd 8 ros2 run tf2_ros tf2_echo imu_link livox_frame
+printf 'NOTE: /odom is an Odometry topic; do not assume an odom TF frame exists.\n'
 if ros2 pkg prefix tf2_tools >/dev/null 2>&1; then
   cd "$OUT_DIR"
   run_cmd 9 ros2 run tf2_tools view_frames
+  [ -f "$OUT_DIR/frames.pdf" ] && mv -f "$OUT_DIR/frames.pdf" "$TF_PDF"
+  [ -f "$OUT_DIR/frames.gv" ] && mv -f "$OUT_DIR/frames.gv" "$TF_GV"
   cd "$WS_ROOT"
 else
   printf 'tf2_tools package unavailable; skipped frame graph PDF\n'
 fi
 
-section "11. Live sensor, cloud, pose, map and trajectory rates"
-topic_hz /robot_pose sensor
-topic_hz /odom sensor
-topic_hz /imu/data sensor
-topic_hz /livox/lidar/geo_filtered sensor
-topic_hz /cloud sensor
-topic_hz /sensor_pose sensor
-topic_hz /body_pose sensor
-topic_hz /grid_map/occupancy sensor
-topic_hz /grid_map/occupancy_inflate sensor
+section "11. Live rates (sensor-data QoS rates are measured by the structured Python probe)"
 topic_hz /planning/bspline reliable
-topic_hz /joint_states sensor
 
 section "12. Structured ROS live-data probe: cloud geometry, pose frames, IMU and exact stamp alignment"
 if [ -f "$WS_ROOT/scripts/n01_live_planning_ros_probe.py" ]; then
@@ -635,4 +630,4 @@ printf '%s\n' \
 printf '\nOUTPUTS:\n'
 printf 'LOG_FILE=%s\n' "$LOG_FILE"
 printf 'ROS_PROBE_JSON=%s\n' "$PROBE_JSON"
-printf 'The script has not published /move_base_simple/goal, /goal_gated, /cmd_vel, /cmd_wheel or any chassis command.\n'
+printf 'The script has not published /move_base_simple/goal, /initialpose, /goal_gated, /cmd_vel, /cmd_wheel or any chassis command.\n'
