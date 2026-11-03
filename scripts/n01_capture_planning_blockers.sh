@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Focused, read-only capture for the first N-01 planning blockers.
-set -uo pipefail
+set -o pipefail
 
 WS_ROOT="${WS_ROOT:-$HOME/lyy/hivecore-navigation}"
 PCD_PATH="${PCD_PATH:-$HOME/lyy/slam_data/maps/cloud_map_20261027_225549.pcd}"
@@ -10,7 +10,8 @@ OUT_DIR="$BASE_DIR/planning_blockers_$STAMP"
 BUNDLE="$BASE_DIR/n01_planning_blockers_$STAMP.tar.gz"
 mkdir -p "$OUT_DIR" || exit 1
 
-exec > >(tee "$OUT_DIR/capture.log") 2>&1
+exec 3>&1 4>&2
+exec > "$OUT_DIR/capture.log" 2>&1
 
 echo "N-01 focused planning blocker capture"
 echo "timestamp=$(date --iso-8601=ns)"
@@ -25,6 +26,15 @@ fi
 if [ -f "$WS_ROOT/install/setup.bash" ]; then
   # shellcheck disable=SC1090
   source "$WS_ROOT/install/setup.bash"
+fi
+
+# Prefer the exact PCD path used by the running static-map node over the
+# historical default. The parameter read is diagnostic-only.
+if command -v ros2 >/dev/null 2>&1; then
+  LIVE_PCD_PATH="$(timeout 5s ros2 param get /n01_live_static_pcd pcd_path 2>/dev/null | sed -n 's/^String value is: //p' | tail -n 1)"
+  if [ -n "$LIVE_PCD_PATH" ]; then
+    PCD_PATH="$LIVE_PCD_PATH"
+  fi
 fi
 
 if ! command -v ros2 >/dev/null 2>&1; then
@@ -52,12 +62,18 @@ else
   capture localization_status ros2 topic echo /localization_status --once
   capture robot_pose ros2 topic echo /robot_pose --once --qos-reliability best_effort
   capture body_pose ros2 topic echo /body_pose --once --qos-reliability best_effort
+  capture scan_body_pose ros2 topic echo /n01/live_navigation/scan_body_pose --once --qos-reliability best_effort
+  capture sensor_pose ros2 topic echo /sensor_pose --once --qos-reliability best_effort
 
   capture static_map_node_info ros2 node info /n01_live_static_pcd
   capture scan_planner_node_info ros2 node info /scan_planner_node
   capture bridge_node_info ros2 node info /n01_live_scan_bridge
   capture runtime_supervisor_node_info ros2 node info /n01_live_runtime_supervisor
+  capture goal_gate_node_info ros2 node info /n01_live_scan_goal_gate
   capture static_cloud_endpoints ros2 topic info -v /grid_map/static_occupancy
+  capture planner_cloud_endpoints ros2 topic info -v /cloud
+  capture sensor_pose_endpoints ros2 topic info -v /sensor_pose
+  capture scan_body_pose_endpoints ros2 topic info -v /n01/live_navigation/scan_body_pose
   capture static_status_endpoints ros2 topic info -v /grid_map/static_overlay_status
   capture robot_pose_endpoints ros2 topic info -v /robot_pose
   capture body_pose_endpoints ros2 topic info -v /body_pose
@@ -104,10 +120,14 @@ echo "SAVED: $OUT_DIR/pcd_file.txt"
 } > "$OUT_DIR/workspace_revision.txt"
 echo "SAVED: $OUT_DIR/workspace_revision.txt"
 
-if tar -czf "$BUNDLE" --exclude="$(basename "$OUT_DIR")/capture.log" -C "$BASE_DIR" "$(basename "$OUT_DIR")"; then
-  echo "BUNDLE_FILE: $BUNDLE"
+# Close the capture log before archiving so tar receives a complete,
+# stable file rather than a log that is still being appended.
+exec 1>&3 2>&4
+exec 3>&- 4>&-
+if tar -czf "$BUNDLE" -C "$BASE_DIR" "$(basename "$OUT_DIR")"; then
+  printf "BUNDLE_FILE: %s\\n" "$BUNDLE"
   sha256sum "$BUNDLE"
 else
-  echo "ERROR: failed to create bundle"
+  printf "ERROR: failed to create bundle\\n" >&2
   exit 1
 fi
