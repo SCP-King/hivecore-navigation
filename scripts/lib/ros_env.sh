@@ -12,6 +12,53 @@
 #   n01_source_setup /opt/ros/humble/setup.bash
 #   n01_source_setup "$ROOT/install/setup.bash"
 
+# Remove only this workspace's generated install prefixes from an inherited
+# shell. Preserve ROS/vendor underlays already sourced by the operator.
+# This prevents colcon from treating the workspace being rebuilt as its own
+# underlay while retaining vendor message libraries and environment hooks.
+n01_strip_workspace_prefixes() {
+  local workspace_root="${1:-}"
+  local workspace_real install_real variable value entry entry_real joined
+  local -a entries=()
+  local -a kept=()
+
+  if [[ -z "$workspace_root" || ! -d "$workspace_root" ]]; then
+    printf '[N01 ROS ENV] ERROR: workspace root is missing: %s\n' "$workspace_root" >&2
+    return 2
+  fi
+  workspace_real="$(cd "$workspace_root" && pwd -P)" || return 2
+  install_real="$workspace_real/install"
+
+  for variable in \
+    AMENT_PREFIX_PATH COLCON_PREFIX_PATH CMAKE_PREFIX_PATH \
+    LD_LIBRARY_PATH PYTHONPATH PKG_CONFIG_PATH ROS_PACKAGE_PATH
+  do
+    value="${!variable:-}"
+    [[ -n "$value" ]] || continue
+    entries=()
+    kept=()
+    IFS=: read -r -a entries <<< "$value"
+    for entry in "${entries[@]}"; do
+      [[ -n "$entry" ]] || continue
+      entry_real="$(realpath -m "$entry" 2>/dev/null || printf '%s' "$entry")"
+      case "$entry_real" in
+        "$install_real"|"$install_real"/*)
+          continue
+          ;;
+      esac
+      kept+=("$entry")
+    done
+    if (( ${#kept[@]} )); then
+      joined="$(IFS=:; printf '%s' "${kept[*]}")"
+      printf -v "$variable" '%s' "$joined"
+      export "$variable"
+    else
+      unset "$variable"
+    fi
+  done
+  printf '[N01 ROS ENV] Removed only %s/install entries from inherited ROS/build paths; other underlays were preserved.\n' "$workspace_real"
+}
+
 n01_source_setup() {
   local setup_file="${1:-}"
   local had_nounset=0
