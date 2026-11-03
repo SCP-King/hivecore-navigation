@@ -235,7 +235,8 @@ for topic in \
   /cloud /sensor_pose /body_pose /n01/live_navigation/scan_body_pose \
   /tf /tf_static \
   /grid_map/static_occupancy /grid_map/static_overlay_ready /grid_map/static_overlay_status \
-  /grid_map/occupancy /grid_map/occupancy_inflate \
+  /grid_map/occupancy /grid_map/occupancy_inflate /grid_map/unknown \
+  /mapping_processing_timings /n01/live_navigation/navigation_ready \
   /move_base_simple/goal /n01/live_navigation/goal_gated \
   /planning/bspline /planning/data_display \
   /n01/live_navigation/dynamic_obstacle_status \
