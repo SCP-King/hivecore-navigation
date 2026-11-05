@@ -148,20 +148,20 @@ class FourStageDeliveryTests(unittest.TestCase):
         self.assertNotIn("pkill", source)
         self.assertNotIn("killall", source)
 
-    def test_slam_pose_pipeline_audit_is_syntax_valid_and_read_only(self):
+    def test_slam_pose_pipeline_audit_is_syntax_valid_and_reads_only_robot_pose(self):
         script = ROOT / "scripts/n01_slam_pose_pipeline_audit.py"
         source = script.read_text()
         ast.parse(source, filename=str(script))
-        for topic in (
-            '"/robot_pose"', '"/odom"', '"/imu/data"',
-            '"/livox/lidar/geo_filtered"', '"/cloud"',
-            '"/mapping_processing_timings"', '"/localization_status"',
-        ):
-            self.assertIn(topic, source)
-        self.assertIn("create_subscription(", source)
-        self.assertIn("get_publishers_info_by_topic", source)
-        self.assertIn('"slam3d_node_param_dump"', source)
-        self.assertIn("inspect_source_tree", source)
+        self.assertIn('Odometry, "/robot_pose"', source)
+        self.assertEqual(source.count("self.create_subscription("), 1)
+        self.assertIn("self._pose_subscription", source)
+        self.assertIn("receive_gap_p95_s", source)
+        self.assertIn("stamp_age_ros_p95_s", source)
+        self.assertIn("latest_pose_stamp_age_ros_at_end_s", source)
+        self.assertNotIn('"/odom"', source)
+        self.assertNotIn('"/imu/data"', source)
+        self.assertNotIn('"/cloud"', source)
+        self.assertNotIn("subscriptions =", source)
         self.assertNotIn("create_publisher(", source)
         self.assertNotIn("create_client(", source)
         self.assertIn('"actuator_output": "DISABLED"', source)
