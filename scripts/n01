@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# Canonical command router for N-01 repository workflows.
+# Keep implementation in focused scripts; this file is the stable user-facing entrypoint.
+set -Eeuo pipefail
+
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+COMMAND="${1:-help}"
+if [[ $# -gt 0 ]]; then shift; fi
+
+usage() {
+  cat <<'EOF'
+N-01 workflow command router
+
+Usage:
+  bash scripts/n01 <command> [arguments...]
+
+FAST-LIO2 (isolated optional backend):
+  fast-lio-import       Fetch pinned upstream FAST-LIO2 source and apply local patch
+  fast-lio-build        Build n01_fast_lio against ROS 2 Humble and Livox
+  fast-lio-bag BAG [PCD]
+                        Replay raw Livox Bag in isolated domain and save private map
+
+Offline validation (ROS_DOMAIN_ID=88 / localhost-only):
+  g1-smoke              Short G1 isolated smoke test
+  g1-acceptance         Full G1 multi-scenario offline acceptance
+  bag-functional        Historical Bag read-only functional replay
+  offline-framework     Isolated N-01 framework pipeline
+  g4-research           G4 historical-map research preflight/full chain
+
+Demo and evidence:
+  demo-replay           Historical Bag -> read-only RViz demo and media export
+  record-demo OUTPUT.mp4 [RVIZ_PID]
+                        Record only the RViz window (X11 required)
+
+Package-local research workflows:
+  fusion-min-loop       Phase-5 static-map/fusion/A* simulated closed loop
+  fusion-phase-c        Phase-5C simulated obstacle-injection closed loop
+  fusion-bag-replay     Isolated Bag + static-map/fusion/A* replay
+  static-map-bag-replay Isolated perception/SCAN Bag replay
+
+General:
+  help                  Show this help
+
+The router does not source robot/SLAM overlays or start hardware by itself.
+Each target script retains its own preflight and safety checks. Read
+scripts/README.md before running any command; never infer real-robot safety
+from an offline test result.
+EOF
+}
+
+case "$COMMAND" in
+  help|-h|--help) usage ;;
+  fast-lio-import) exec bash "$ROOT/scripts/import_n01_fast_lio2.sh" "$@" ;;
+  fast-lio-build) exec bash "$ROOT/scripts/build_n01_fast_lio2.sh" "$@" ;;
+  fast-lio-bag) exec bash "$ROOT/scripts/run_n01_fast_lio2_bag.sh" "$@" ;;
+  g1-smoke) exec bash "$ROOT/scripts/run_g1_offline.sh" "$@" ;;
+  g1-acceptance) exec bash "$ROOT/scripts/run_g1_acceptance.sh" "$@" ;;
+  bag-functional) exec bash "$ROOT/scripts/run_n01_bag_functional.sh" "$@" ;;
+  offline-framework) exec bash "$ROOT/scripts/run_n01_offline_framework.sh" "$@" ;;
+  g4-research) exec bash "$ROOT/scripts/run_n01_g4_full_chain.sh" "$@" ;;
+  demo-replay) exec bash "$ROOT/scripts/run_n01_demo_replay.sh" "$@" ;;
+  record-demo) exec bash "$ROOT/scripts/record_n01_demo.sh" "$@" ;;
+  fusion-min-loop) exec bash "$ROOT/src/n01_map_fusion/scripts/nav_min_loop.sh" "$@" ;;
+  fusion-phase-c) exec bash "$ROOT/src/n01_map_fusion/scripts/nav_phase_c.sh" "$@" ;;
+  fusion-bag-replay) exec bash "$ROOT/src/n01_map_fusion/scripts/replay_fusion_a_star.sh" "$@" ;;
+  static-map-bag-replay) exec bash "$ROOT/src/n01_static_map/scripts/replay_nav_chain.sh" "$@" ;;
+  *)
+    echo "Unknown N-01 command: $COMMAND" >&2
+    echo "Run 'bash scripts/n01 help' to list supported commands." >&2
+    exit 2
+    ;;
+esac
