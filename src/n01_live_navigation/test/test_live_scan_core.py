@@ -28,19 +28,19 @@ from n01_live_navigation.core import (
 
 class LiveScanCoreTests(unittest.TestCase):
     def test_status_requires_real_tracking_and_published_tf(self):
-        msg = SimpleNamespace(
-            config_context_map_loaded=True,
-            control_signal_outer_role="localization",
-            control_signal_session_mode="tracking",
-            registration_output_pose_published=True,
-            registration_output_tf_published=True,
-            registration_output_fitness_evaluation_ok=True,
-            registration_output_tracking_compose_ok=True,
-            fusion_path_imu_sync_ok=False,
-        )
-        self.assertEqual(localization_is_tracking(msg), (True, "tracking_ready"))
-        msg.control_signal_session_mode = "relocalization"
-        self.assertFalse(localization_is_tracking(msg)[0])
+        status = {
+            "map_loaded": "true",
+            "role": "localization",
+            "mode": "tracking",
+            "pose_valid": "true",
+            "tf_valid": "true",
+            "quality_valid": "true",
+            "tracking_valid": "true",
+            "imu_sync_ok": "false",
+        }
+        self.assertEqual(localization_is_tracking(status), (True, "tracking_ready"))
+        status["mode"] = "relocalization"
+        self.assertFalse(localization_is_tracking(status)[0])
 
     def test_status_contract_mismatch_fails_closed(self):
         self.assertEqual(
