@@ -29,8 +29,10 @@ External SLAM3D Lite (independently managed)
 N-01 Localization Adapter (only vendor-specific boundary)
   - discovers status ROS type at runtime
   - maps verified LocStatus fields explicitly
-  - checks nonzero source stamp and configured pose frames
-  - preserves original Odometry payload and timestamp
+  - validates source stamp and configured pose frames for diagnostics only
+  - forwards every Odometry sample unchanged, including samples with unexpected frame/stamp (downstream freshness/frame gates decide usability)
+  - uses RELIABLE KeepLast QoS with configurable depth (default 50) for pose input/output
+  - reports received/published and invalid stamp/frame counters periodically
           |
           +--> /n01/localization/status : DiagnosticArray
           +--> /n01/localization/pose   : nav_msgs/Odometry
@@ -51,7 +53,7 @@ The adapter emits a DiagnosticStatus named `localization` with:
 - `status_mapping_valid`, `status_mapping_errors`
 - `source_stamp_valid`, `readiness_semantics`
 
-Readiness is true only when source stamp is nonzero, mapping succeeds, `map_loaded=true`, `session=tracking`, and `reloc_ok=true`. Consumers also enforce receive-freshness timeouts.
+Readiness is true only when source stamp is nonzero, mapping succeeds, `map_loaded=true`, `session=tracking`, and `reloc_ok=true`. Consumers also enforce receive-freshness timeouts. This readiness gate applies to localization status; it MUST NOT gate or suppress raw Odometry forwarding.
 
 LocStatus does NOT expose independent `tf_valid`, `imu_sync_ok`, `pose_valid`, or general tracking-quality fields. N-01 must not synthesize these as true. Pose frame and stamp checks are performed on the actual Odometry stream. TF availability, sensor synchronization, and other health checks remain separate N-01 runtime checks.
 

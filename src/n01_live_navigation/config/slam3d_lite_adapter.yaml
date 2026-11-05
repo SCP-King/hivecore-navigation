@@ -13,3 +13,6 @@ n01_localization_adapter:
     pose_output_topic: /n01/localization/pose
     expected_pose_frame: map
     expected_pose_child_frame: base_footprint
+    # Reliable KeepLast queue prevents BEST_EFFORT/depth-5 pose loss.
+    pose_qos_depth: 50
+    pose_stats_period_s: 10.0

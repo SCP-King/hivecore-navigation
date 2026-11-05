@@ -11,6 +11,7 @@ import rclpy
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.qos import qos_profile_sensor_data
 from rosidl_runtime_py.utilities import get_message
 
@@ -39,6 +40,21 @@ def strict_bool(value):
             return False
     raise ValueError("boolean_value_unrecognized")
 
+ 
+def pose_contract_issues(message, expected_frame, expected_child_frame):
+    """Return diagnostics only; never decide whether an Odometry sample is forwarded."""
+    issues = []
+    stamp_ns = int(message.header.stamp.sec) * 1000000000 + int(message.header.stamp.nanosec)
+    frame = str(message.header.frame_id).lstrip("/")
+    child = str(message.child_frame_id).lstrip("/")
+    if stamp_ns <= 0:
+        issues.append("zero_or_invalid_stamp")
+    if frame != expected_frame:
+        issues.append("unexpected_frame_id:" + frame)
+    if child != expected_child_frame:
+        issues.append("unexpected_child_frame_id:" + child)
+    return issues
+
 
 class N01LocalizationAdapter(Node):
     def __init__(self):
@@ -55,6 +71,8 @@ class N01LocalizationAdapter(Node):
             "pose_output_topic": "/n01/localization/pose",
             "expected_pose_frame": "map",
             "expected_pose_child_frame": "base_footprint",
+            "pose_qos_depth": 50,
+            "pose_stats_period_s": 10.0,
         }
         for name, value in defaults.items():
             self.declare_parameter(name, value)
@@ -69,27 +87,44 @@ class N01LocalizationAdapter(Node):
         self.pose_output_topic = str(get("pose_output_topic"))
         self.expected_pose_frame = str(get("expected_pose_frame")).lstrip("/")
         self.expected_pose_child_frame = str(get("expected_pose_child_frame")).lstrip("/")
+        pose_qos_depth = int(get("pose_qos_depth"))
+        pose_stats_period_s = float(get("pose_stats_period_s"))
         period = float(get("status_discovery_period_s"))
         if not all((self.status_input_topic.startswith("/"),
                     self.status_output_topic.startswith("/"),
                     self.pose_input_topic.startswith("/"),
                     self.pose_output_topic.startswith("/"),
                     0.2 <= period <= 5.0,
+                    1 <= pose_qos_depth <= 1000,
+                    1.0 <= pose_stats_period_s <= 60.0,
                     isinstance(self.field_paths, dict),
                     isinstance(self.expected_values, dict))):
             raise ValueError("invalid localization adapter configuration")
 
+        # The observed Lite Odometry publisher offers RELIABLE QoS. Use a
+        # reliable, deeper queue on both sides to avoid the shallow BEST_EFFORT
+        # sensor-data queue silently losing pose samples under scheduling load.
+        self.pose_qos = QoSProfile(
+            history=HistoryPolicy.KEEP_LAST,
+            depth=pose_qos_depth,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.VOLATILE,
+        )
         self.status_pub = self.create_publisher(
             DiagnosticArray, self.status_output_topic, qos_profile_sensor_data)
         self.pose_pub = self.create_publisher(
-            Odometry, self.pose_output_topic, qos_profile_sensor_data)
+            Odometry, self.pose_output_topic, self.pose_qos)
         self.pose_sub = self.create_subscription(
-            Odometry, self.pose_input_topic, self.on_pose, qos_profile_sensor_data)
+            Odometry, self.pose_input_topic, self.on_pose, self.pose_qos)
         self.status_sub = None
         self.status_type = ""
         self.status_counts = {"received": 0, "published": 0, "mapping_errors": 0}
-        self.pose_counts = {"received": 0, "published": 0, "rejected": 0}
+        self.pose_counts = {
+            "received": 0, "published": 0, "invalid_stamp": 0,
+            "unexpected_frame": 0, "unexpected_child_frame": 0,
+        }
         self.create_timer(period, self.discover_status_type)
+        self.create_timer(pose_stats_period_s, self.report_pose_stats)
         self.get_logger().info(
             "N-01 backend adapter: status %s -> %s; pose %s -> %s"
             % (self.status_input_topic, self.status_output_topic,
@@ -182,18 +217,28 @@ class N01LocalizationAdapter(Node):
             self.status_counts["mapping_errors"] += 1
 
     def on_pose(self, message):
+        """Forward every source Odometry unchanged; validation is diagnostic-only."""
         self.pose_counts["received"] += 1
-        stamp_ns = self.stamp_ns(message.header.stamp)
-        frame = str(message.header.frame_id).lstrip("/")
-        child = str(message.child_frame_id).lstrip("/")
-        if (stamp_ns <= 0 or not self.expected_pose_frame
-                or not self.expected_pose_child_frame
-                or frame != self.expected_pose_frame
-                or child != self.expected_pose_child_frame):
-            self.pose_counts["rejected"] += 1
-            return
+        issues = pose_contract_issues(
+            message, self.expected_pose_frame, self.expected_pose_child_frame)
+        for issue in issues:
+            if issue == "zero_or_invalid_stamp":
+                self.pose_counts["invalid_stamp"] += 1
+            elif issue.startswith("unexpected_frame_id:"):
+                self.pose_counts["unexpected_frame"] += 1
+            elif issue.startswith("unexpected_child_frame_id:"):
+                self.pose_counts["unexpected_child_frame"] += 1
+        # Do not gate forwarding on reloc_ok, frame checks, or stamp checks.
+        # Downstream readiness/temporal guards decide whether a sample is usable.
         self.pose_pub.publish(message)
         self.pose_counts["published"] += 1
+
+    def report_pose_stats(self):
+        counts = self.pose_counts
+        self.get_logger().info(
+            "pose_forward_stats received={received} published={published} "
+            "invalid_stamp={invalid_stamp} unexpected_frame={unexpected_frame} "
+            "unexpected_child_frame={unexpected_child_frame}".format(**counts))
 
 
 def main(args=None):

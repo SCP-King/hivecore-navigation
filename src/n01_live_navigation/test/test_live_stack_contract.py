@@ -143,6 +143,18 @@ class LocalizationBackendDecouplingTests(unittest.TestCase):
         self.assertNotIn("hivecore_slam3d", adapter)
         self.assertNotIn("from hivecore", adapter)
 
+    def test_adapter_forwards_every_pose_and_uses_reliable_deep_qos(self):
+        adapter = (ROOT / "src/n01_live_navigation/n01_live_navigation/localization_adapter.py").read_text()
+        callback = adapter.split("    def on_pose(self, message):", 1)[1].split("    def report_pose_stats", 1)[0]
+        self.assertIn("self.pose_pub.publish(message)", callback)
+        self.assertNotIn("return", callback)
+        self.assertNotIn("reloc_ok", callback)
+        self.assertIn("ReliabilityPolicy.RELIABLE", adapter)
+        self.assertIn("depth=pose_qos_depth", adapter)
+        self.assertIn('"pose_qos_depth": 50', adapter)
+        self.assertIn('"invalid_stamp": 0', adapter)
+        self.assertIn("pose_forward_stats", adapter)
+
     def test_adapter_profile_uses_vendor_topics_only_at_boundary(self):
         profile = (ROOT / "src/n01_live_navigation/config/slam3d_lite_adapter.yaml").read_text()
         self.assertIn("status_input_topic: /loc_status", profile)
