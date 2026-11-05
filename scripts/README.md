@@ -1,98 +1,70 @@
-# G1 一键离线测试与进程清理
+# N-01 工程脚本目录规范
 
-只在与机器人底盘、真实 SLAM、真实控制 SDK 完全隔离的 Ubuntu 22.04 / ROS 2 Humble 电脑执行：
+本目录只保留可重复使用的工程入口、运维入口和测试入口。临时诊断脚本不得提交到仓库；运行报告、Bag、PCD、录屏和压缩包统一放在 ~/lyy/n01_runtime/，不进入 Git。
 
-```bash
-cd /home/demo/lyy/hivecore-navigation
-git pull --ff-only origin main
-bash -n scripts/run_g1_offline.sh && bash scripts/run_g1_offline.sh
-```
+## 项目命名与目录边界
 
-脚本执行算法单元测试和构建、启动 SCAN/离线模拟/监测器、生成报告，并在退出时执行**进程清理验收**：
+- 产品/工程名称：N-01 Navigation。
+- Git 仓库暂时保留 hivecore-navigation，避免破坏现有 clone、remote、桌面快捷方式和部署路径。
+- ROS 包统一使用 n01_ 前缀；第三方原生算法包保留上游名称（例如 scan_planner）。
+- ROS 节点统一使用 n01_<功能名>；N-01 内部话题统一使用 /n01/<domain>/<name>。
+- 外部传感器/定位输入话题保持原样，由 adapter 负责接入；禁止把厂商消息类型直接带入规划核心。
+- Shell 入口统一采用 <domain>_<action>.sh，内部公共函数放 scripts/lib/；新增脚本必须登记在本文件。
 
-1. 给本轮测试启动的进程及其子进程分配唯一环境标识 `N01_G1_RUN_TOKEN`，在 Linux `/proc` 中精确查找。不会执行系统级 `pkill` 或 `killall`，也不会因 ROS 节点名称相同而结束其他项目的进程。
-2. 测试正常完成、失败或收到 Ctrl+C/SIGTERM/SIGHUP 后，按 INT、TERM、KILL 逐级停止仅属于这轮测试的进程。
-3. 验证本轮进程清零，再通过临时 `rclpy` 进程检查 ROS_DOMAIN_ID=88 的 ROS 节点图。检测到任何进程残留或 ROS 节点残留，就把结果标为 `CLEANUP_FAILED`，不虚报测试通过。
-4. 生成 `summary.txt`，包含 `owned_process_cleanup=CLEAN` 和 `post_cleanup_ros_graph=CLEAN`；生成清理前后进程快照、信号记录和 ROS 图记录。
+## 唯一推荐入口
 
-`CLEAN` 只表示脚本在结束时**观察不到本轮可识别的存活进程及隔离域内节点**，不能承诺断电、SIGKILL 强杀脚本、主动清除环境标识的后台进程等异常情况下的绝对保证；未识别或无法停止的进程须人工核实，脚本不会越权结束其他 ROS 项目。
+| 场景 | 唯一推荐入口 | 用途 |
+|---|---|---|
+| 环境检查 | n01_environment_preflight.sh | 主机、ROS、工作区和数据路径只读检查 |
+| 规划阻塞诊断 | n01_collect_planning_readiness_audit.sh | 汇总当前 live stack 规划阻塞证据 |
+| 位姿发布源专项 | run_n01_robot_pose_source_audit.sh | 检查 /robot_pose publisher endpoints 与聚合时间序列 |
+| Live Stack 快速预检 | run_n01_live_stack_preflight.sh | 单独运行只读 ROS 预检节点 |
+| 构建/部署规划修复 | deploy_n01_planning_fixes.sh | 构建并按安全规则重启 N-01 live_scan |
+| 单次规划冒烟 | run_n01_planning_smoke_test.sh | 已有 live_scan 运行时，只做 READY 门控的规划测试 |
 
-日志保存在源码库之外：
+不要为同一个场景再增加第二个包装脚本。需要新功能时优先扩展对应 Python 工具或已有入口。
 
-`/home/demo/lyy/n01_runtime/runs/g1_scan/<timestamp>/`
+## 脚本目录清单
 
-脚本结束时会打印：
+### 工程维护
+- lib/ros_env.sh：ROS setup 安全加载及环境路径处理公共函数。
+- lib/colcon_build_guard.sh：构建隔离与安全检查公共函数。
+- n01_environment_preflight.sh：环境只读预检。
+- deploy_n01_planning_fixes.sh：N-01 规划相关包构建/部署入口。
 
-`UPLOAD THIS LOG ARCHIVE: /home/demo/lyy/n01_runtime/runs/g1_scan/g1_scan_<timestamp>.tar.gz`
+### 实机 Live Stack
+- n01_collect_planning_readiness_audit.sh：完整规划就绪审计入口。
+- run_n01_live_stack_preflight.sh：单独运行实时栈只读预检。
+- run_n01_robot_pose_source_audit.sh：位姿发布端点专项审计。
+- run_n01_planning_smoke_test.sh：READY 窗口内单次规划冒烟。
+- record_n01_demo.sh：演示录制入口。
 
-把该压缩包直接上传到聊天，无需复制终端输出。即使测试失败也会保存诊断证据。
+### 离线验收与历史数据
+- run_g1_offline.sh：G1 隔离冒烟。
+- run_g1_acceptance.sh：G1 完整离线验收。
+- run_n01_bag_functional.sh：历史 Bag 功能验收。
+- run_n01_demo_replay.sh：演示回放。
+- run_n01_g4_full_chain.sh：G4 全链离线验证。
+- run_n01_offline_framework.sh：历史离线框架验证。
 
-**安全前提：**不能在测试期间连接真机或启动真实控制链。此 G1 冒烟测试不等于完整三维避障及实机安全验收。
+### 可选 FAST-LIO2 后端研究
+- import_n01_fast_lio2.sh：导入固定版本上游代码。
+- build_n01_fast_lio2.sh：构建可选 FAST-LIO2。
+- run_n01_fast_lio2_bag.sh：隔离 Bag 回放。
 
+### 脚本自测
+- test_colcon_build_guard.sh：构建保护函数自测。
+- test_ros_env_compat.sh：ROS 环境加载兼容性自测。
 
-完整 G1 离线验收请参考 [G1_ACCEPTANCE.md](G1_ACCEPTANCE.md)，命令是 `bash scripts/run_g1_acceptance.sh`；原 `run_g1_offline.sh` 只做冒烟测试。
+### 子包自有脚本
+- src/n01_map_fusion/scripts/ 与 src/n01_static_map/scripts/：对应研究子包的回放/阶段脚本，不作为全仓库通用入口。
 
+## 冗余清理规则
 
-## N-01 当前规划故障诊断（唯一入口）
+当前先完成入口分类和唯一推荐入口登记。历史离线脚本分别覆盖不同 Bag、G4、演示或隔离域，不因文件名相似就直接删除。下一轮清理必须先检查是否被 launch、README、测试、桌面快捷方式或其他脚本引用；是否与另一脚本执行完全相同的工作；是否有独有安全检查、数据采集或清理语义。只有满足无引用、功能重复、无独有安全行为才删除，并同步删掉对应测试和文档引用。
 
-当前从 Hivecore Tracking 进入 N-01 / SCAN 规划时，统一使用仓库内这一份完整只读诊断入口：
+## 当前约束
 
-```bash
-cd ~/lyy/hivecore-navigation
-git fetch origin fix/n01-pose-freshness-watchdogs
-git switch fix/n01-pose-freshness-watchdogs
-git pull --ff-only origin fix/n01-pose-freshness-watchdogs
-bash scripts/n01_collect_planning_readiness_audit.sh
-```
-
-不要把脚本复制到 `/tmp`。主脚本会直接调用同一仓库 `scripts/` 下的两个配套只读探针：
-
-- `n01_live_stack_preflight.py`：发布端点身份、频率、TF 边和实时链路预检。
-- `n01_live_planning_ros_probe.py`：点云几何、位姿、IMU 和时间戳对齐。
-
-诊断结果自动保存在 `~/lyy/n01_runtime/runs/planning_readiness_audit/`，并生成包含日志、JSON 探针和 TF 图的 `n01_planning_readiness_bundle_<timestamp>.tar.gz`。上传压缩包即可，不需要复制终端滚屏。
-
-此入口只读取 ROS 图、话题、参数和文件；不发送导航目标、不发布底盘控制命令、不调用 SLAM 业务服务、不修改参数、不停止或重启节点，也不构建或运行机器人。
-
-## N-01 /robot_pose 双发布端点专项诊断
-
-当前运行日志曾出现 `robot_pose_publisher_count=2`，并伴随 `NAVIGATION READY/BLOCKED` 反复切换。先定位两个发布端点的节点名、DDS endpoint GID、QoS 和节点接线，不放宽 0.7 s 位姿接收新鲜度门限，也不重启 SLAM。
-
-```bash
-cd ~/lyy/hivecore-navigation
-git fetch origin fix/n01-pose-freshness-watchdogs
-git switch fix/n01-pose-freshness-watchdogs
-git pull --ff-only origin fix/n01-pose-freshness-watchdogs
-bash scripts/run_n01_robot_pose_source_audit.sh 20
-```
-
-脚本调用现有只读 ROS 图预检，采样 20 秒，并自动收集：
-
-- `/robot_pose` 每个 publisher endpoint 的节点名、GID、类型和 QoS；
-- 合并后的接收频率、接收间隔、消息时间戳年龄及帧 ID；
-- bridge 的 `pose_duplicate`、`pose_out_of_order`、`drop_pose_duplicate_conflict` 等计数；
-- 每个发布节点的 `ros2 node info`、topic verbose 信息及相关进程快照。
-
-完成后终端会打印 `UPLOAD THIS BUNDLE: ...tar.gz`。直接上传该压缩包即可，不用复制终端输出。此脚本只订阅/读取，不创建 publisher/client，不发目标、不调用服务、不写参数、不重启节点、不输出底盘命令。ROS 2 普通订阅回调不能把单条消息直接归属到 DDS GID，因此报告会把 endpoint 身份与聚合消息时间序列分开呈现，不会伪称逐消息来源归属。
-
-## N-01 READY 窗口内的一次性规划验证
-
-当前实机证据已确认 `/grid_map/static_overlay_ready=true`。主要入口风险是甲方 `/robot_pose` 约 2.6 Hz、最大接收间隔 0.754 s，超过 N-01 0.7 s 接收新鲜度预算；不允许通过放宽门限掩盖上游发布节奏问题。
-
-构建/部署成功且现有 `live_scan.launch.py` 正在运行时，使用：
-
-```bash
-bash scripts/run_n01_planning_smoke_test.sh 0.5 15 120
-```
-
-参数依次为前向距离（米）、B-spline 等待秒数、READY 窗口等待秒数。默认目标由当前 map-frame `/body_pose` 沿机器人朝向前移 0.5 m，不是固定 map 原点坐标；执行前必须确认该位置属于已知空旷区域。
-
-测试会最多等待 120 s，并在发布前检查直接接收的 `/robot_pose` 年龄不超过 0.7 s、时间戳年龄不超过 1.5 s；还会把 `system_health` 消息自身的接收年龄计入 bridge 快照中的 pose receive age、stamp age 和 live-anchor delta，避免使用过期 READY 快照。runtime bridge 必须报告位姿锚点 fresh、system_health 无 blockers、静态 overlay READY、安全状态保持 `DISABLED/NEVER`，且规划 topic 拓扑正确。检查未通过或 READY 窗口关闭时不发布目标。通过后最多发送一个规划目标，只验证 Goal Gate 和 SCAN B-spline，不发布速度、轮速、底盘或执行器命令，也不改变 operator hold 或执行授权。
-
-此 smoke test 是唯一推荐的 READY 窗口规划入口；不要手工运行未经门控的临时 `/move_base_simple/goal` publisher。
-
-## N-01 live_scan 安全重启说明
-
-`scripts/deploy_n01_planning_fixes.sh --confirm-planning-only` 只重启 N-01 `live_scan.launch.py`，不停止甲方 SLAM 或 Livox。部署脚本按 Linux 进程状态判断旧 launch 是否退出：`Z`（zombie）和 `X` 状态不再被 `kill -0` 误判为仍在运行；若进程仍存活，会打印 PID/PPID/PGID/SID、进程树和最近的 live_scan 日志，然后安全退出，不执行强杀。
-
-旧版本启动的 launch 若没有独立 session，只向已识别的 launch PID 发送 SIGINT，绝不向未知进程组发信号。新版本使用 `setsid` 将 N-01 launch 及其子节点放入专用 session；后续仅在 PGID 与 SID 都等于 launch PID 时，才允许向该隔离进程组发送 SIGINT。launch 退出后逐一确认 SCAN、bridge、static map、supervisor、goal gate、trajectory monitor 和 RViz 等 N-01 节点均已退出，再启动新实例。不会使用 `kill -9`、`pkill` 或 `killall`。
+- 任何会构建、重启、发布目标或影响设备状态的入口，必须在文件头说明副作用和安全边界。
+- 只读诊断必须明确不创建 publisher/client、不调用服务/动作、不写参数、不重启进程。
+- 每次脚本变更必须通过 bash -n、静态合同测试及 GitHub Actions；不得把基础语法检查交给现场操作者。

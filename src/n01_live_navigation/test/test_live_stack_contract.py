@@ -123,3 +123,20 @@ class LiveStackContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    def test_navigation_core_isolated_from_vendor_localization_schema(self):
+        root = Path(__file__).resolve().parents[3]
+        core = (root / "src/n01_live_navigation/n01_live_navigation/core.py").read_text()
+        bridge = (root / "src/n01_live_navigation/n01_live_navigation/live_scan_bridge.py").read_text()
+        adapter = (root / "src/n01_live_navigation/n01_live_navigation/localization_adapter.py").read_text()
+        launch = (root / "src/n01_live_navigation/launch/live_scan.launch.py").read_text()
+        for vendor_marker in (
+            "hivecore_slam3d", "config_context_map_loaded",
+            "registration_output_tracking_compose_ok",
+        ):
+            self.assertNotIn(vendor_marker, core)
+            self.assertNotIn(vendor_marker, bridge)
+            self.assertIn(vendor_marker, adapter)
+        self.assertIn('"/n01/localization/status"', bridge)
+        self.assertIn("DiagnosticArray", bridge)
+        self.assertIn("n01_hivecore_localization_adapter", launch)
