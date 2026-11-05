@@ -1,4 +1,3 @@
-import ast
 import subprocess
 import unittest
 from pathlib import Path
@@ -147,31 +146,6 @@ class FourStageDeliveryTests(unittest.TestCase):
         self.assertNotIn("kill -9", source)
         self.assertNotIn("pkill", source)
         self.assertNotIn("killall", source)
-
-    def test_slam_pose_pipeline_audit_is_syntax_valid_and_reads_only_robot_pose(self):
-        script = ROOT / "scripts/n01_slam_pose_pipeline_audit.py"
-        source = script.read_text()
-        ast.parse(source, filename=str(script))
-        self.assertIn('Odometry, "/robot_pose"', source)
-        self.assertEqual(source.count("self.create_subscription("), 1)
-        self.assertIn("self._pose_subscription", source)
-        self.assertIn("receive_gap_p95_s", source)
-        self.assertIn("stamp_age_ros_p95_s", source)
-        self.assertIn("latest_pose_stamp_age_ros_at_end_s", source)
-        self.assertNotIn('"/odom"', source)
-        self.assertNotIn('"/imu/data"', source)
-        self.assertNotIn('"/cloud"', source)
-        self.assertNotIn("subscriptions =", source)
-        self.assertNotIn("create_publisher(", source)
-        self.assertNotIn("create_client(", source)
-        self.assertIn('"actuator_output": "DISABLED"', source)
-        self.assertIn('"safety_authorization": "NEVER"', source)
-
-    def test_slam_pose_pipeline_audit_runner_has_valid_bash_syntax(self):
-        script = ROOT / "scripts/run_n01_slam_pose_pipeline_audit.sh"
-        result = subprocess.run(
-            ["bash", "-n", str(script)], capture_output=True, text=True, check=False)
-        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_deployment_build_excludes_its_own_install_prefix_and_repairs_only_generated_collision(self):
         source = (ROOT / "scripts/deploy_n01_planning_fixes.sh").read_text()

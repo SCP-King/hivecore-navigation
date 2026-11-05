@@ -54,22 +54,6 @@ bash scripts/n01_collect_planning_readiness_audit.sh
 
 此入口只读取 ROS 图、话题、参数和文件；不发送导航目标、不发布底盘控制命令、不调用 SLAM 业务服务、不修改参数、不停止或重启节点，也不构建或运行机器人。
 
-## Hivecore SLAM 位姿实时性专项验证
-
-当前只验证更新后的 SLAM 是否及时发布全局位姿，不再扫描其他话题、参数、源码或处理耗时。
-
-```bash
-cd ~/lyy/hivecore-navigation
-git fetch origin fix/n01-pose-freshness-watchdogs
-git switch fix/n01-pose-freshness-watchdogs
-git pull --ff-only origin fix/n01-pose-freshness-watchdogs
-bash scripts/run_n01_slam_pose_pipeline_audit.sh 60
-```
-
-脚本只订阅现有的 `/robot_pose`（`nav_msgs/msg/Odometry`），自动统计发布频率、接收间隔 P50/P95/最大值、位姿时间戳年龄 P50/P95/最大值，以及采样结束时最后一条位姿的接收年龄和时间戳年龄。ROS 时间年龄为主指标，同时给出系统墙钟年龄作交叉检查。
-
-当前参考预算：接收年龄 0.7 s、位姿时间戳年龄 1.5 s。脚本只测量、不修改阈值，不创建 publisher/client，不发目标、不调用服务、不写参数、不重启节点、不输出底盘命令。完成后上传终端显示的 `UPLOAD THIS BUNDLE: ...tar.gz`。
-
 ## N-01 /robot_pose 双发布端点专项诊断
 
 当前运行日志曾出现 `robot_pose_publisher_count=2`，并伴随 `NAVIGATION READY/BLOCKED` 反复切换。先定位两个发布端点的节点名、DDS endpoint GID、QoS 和节点接线，不放宽 0.7 s 位姿接收新鲜度门限，也不重启 SLAM。
