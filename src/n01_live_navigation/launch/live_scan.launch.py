@@ -44,6 +44,9 @@ def _nodes(context):
                 "output_topic": "/n01/localization/status",
             }],
             output="screen",
+            condition=IfCondition(PythonExpression([
+                "'", LaunchConfiguration("localization_backend"), "' == 'hivecore'"
+            ])),
         ),
         Node(
             package="n01_static_map", executable="static_map_node",
@@ -53,9 +56,6 @@ def _nodes(context):
                 "frame_id": "map", "min_z": -1.75, "max_z": 3.35, "seed": 0,
             }],
             output="screen",
-            condition=IfCondition(PythonExpression([
-                "'", LaunchConfiguration("localization_backend"), "' == 'hivecore'"
-            ])),
         ),
         Node(
             package="n01_live_navigation", executable="n01_live_scan_bridge",
