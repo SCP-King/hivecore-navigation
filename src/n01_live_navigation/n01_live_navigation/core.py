@@ -4,35 +4,32 @@ from bisect import bisect_left
 import numpy as np
 
 
-def localization_is_tracking(msg):
-    """Validate the vendor LocalizationStatus wire contract."""
+def localization_is_tracking(status):
+    """Validate the N-01 normalized localization status contract.
+
+    The navigation core consumes a plain mapping produced by a backend adapter;
+    it must not import or inspect vendor-specific ROS message classes.
+    """
     required = (
-        "config_context_map_loaded",
-        "control_signal_outer_role",
-        "control_signal_session_mode",
-        "registration_output_pose_published",
-        "registration_output_tf_published",
-        "registration_output_fitness_evaluation_ok",
-        "registration_output_tracking_compose_ok",
+        "map_loaded", "role", "mode", "pose_valid", "tf_valid",
+        "quality_valid", "tracking_valid",
     )
-    if any(not hasattr(msg, name) for name in required):
+    if not isinstance(status, dict) or any(name not in status for name in required):
         return False, "localization_status_contract_mismatch"
-    if not bool(msg.config_context_map_loaded):
+    if str(status["map_loaded"]).lower() != "true":
         return False, "localization_map_not_loaded"
-    if str(msg.control_signal_outer_role).lower() != "localization":
+    if str(status["role"]).lower() != "localization":
         return False, "localization_outer_role_not_localization"
-    if str(msg.control_signal_session_mode).lower() != "tracking":
+    if str(status["mode"]).lower() != "tracking":
         return False, "localization_not_tracking"
-    if not bool(msg.registration_output_pose_published):
+    if str(status["pose_valid"]).lower() != "true":
         return False, "localization_pose_not_published"
-    if not bool(msg.registration_output_tf_published):
+    if str(status["tf_valid"]).lower() != "true":
         return False, "localization_tf_not_published"
-    if not bool(msg.registration_output_fitness_evaluation_ok):
+    if str(status["quality_valid"]).lower() != "true":
         return False, "localization_fitness_not_accepted"
-    if not bool(msg.registration_output_tracking_compose_ok):
+    if str(status["tracking_valid"]).lower() != "true":
         return False, "localization_tracking_compose_not_ok"
-    # Vendor IMU synchronization remains an independent diagnostic, not silently
-    # converted into a successful synchronization flag.
     return True, "tracking_ready"
 
 

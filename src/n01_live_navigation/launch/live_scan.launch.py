@@ -33,6 +33,16 @@ def _nodes(context):
     rviz_config = LaunchConfiguration("rviz_config").perform(context)
     return [
         Node(
+            package="n01_live_navigation", executable="n01_hivecore_localization_adapter",
+            name="n01_hivecore_localization_adapter",
+            parameters=[{
+                "input_topic": "/localization_status",
+                "input_type": "hivecore_slam3d/msg/LocalizationStatus",
+                "output_topic": "/n01/localization/status",
+            }],
+            output="screen",
+        ),
+        Node(
             package="n01_static_map", executable="static_map_node",
             name="n01_live_static_pcd",
             parameters=[{
@@ -45,8 +55,7 @@ def _nodes(context):
             package="n01_live_navigation", executable="n01_live_scan_bridge",
             name="n01_live_scan_bridge",
             parameters=[{
-                "status_topic": "/localization_status",
-                "status_type": "hivecore_slam3d/msg/LocalizationStatus",
+                "status_topic": "/n01/localization/status",
                 "cloud_topic": "/livox/lidar/geo_filtered",
                 "pose_topic": "/robot_pose",
                 "odom_topic": "/odom", "odom_frame": "odom",
