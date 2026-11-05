@@ -11,7 +11,7 @@ This file records environment facts observed in project terminal transcripts and
 - Static map directory: `/home/demo/lyy/slam_data/maps/`
 - Runtime/evidence directory: `/home/demo/lyy/n01_runtime/`
 - Main Git remote: `https://github.com/SCP-King/hivecore-navigation`
-- Active development branch in the current task: `fix/n01-pose-freshness-watchdogs`
+- Active development branch in the current task: `dev/n01-current`
 
 The Ubuntu release, kernel, CPU, RAM, GPU, driver versions, installed ROS package versions, and current runtime graph have not yet been verified from a fresh host report.
 
@@ -34,7 +34,7 @@ Run:
 
 ```bash
 cd /home/demo/lyy/hivecore-navigation
-git pull --ff-only origin fix/n01-pose-freshness-watchdogs
+git pull --ff-only origin dev/n01-current
 bash scripts/n01_environment_preflight.sh
 ```
 

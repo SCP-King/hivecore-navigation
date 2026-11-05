@@ -21,7 +21,7 @@ From the checked-out repository:
 
 ```bash
 cd ~/lyy/hivecore-navigation
-git pull --ff-only origin fix/n01-pose-freshness-watchdogs
+git pull --ff-only origin dev/n01-current
 bash scripts/n01_collect_planning_readiness_audit.sh
 ```
 

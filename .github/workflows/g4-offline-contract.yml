@@ -50,6 +50,19 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+      - name: Enforce the two-branch repository policy
+        run: |
+          case "${GITHUB_REF_NAME}" in
+            main|dev/n01-current) ;;
+            *) echo "Forbidden branch: ${GITHUB_REF_NAME}. Use only main or dev/n01-current." >&2; exit 1 ;;
+          esac
+      - name: Static Bash syntax for all repository shell workflows
+        run: |
+          bash -n scripts/n01
+          while IFS= read -r -d '' script; do
+            echo "Checking $script"
+            bash -n "$script"
+          done < <(find scripts src -type f -name '*.sh' -print0)
       - name: Static Bash syntax (never launch ROS or control)
         run: |
           bash -n scripts/run_n01_g4_full_chain.sh

@@ -56,14 +56,14 @@
 
 ## 构建与启动
 
-当前四阶段实机集成代码维护在 `fix/n01-pose-freshness-watchdogs`。旧版文档曾要求切换到 `feat/n01-four-stage-navigation`，但该分支在本次核对时并不存在于 origin；不要照旧文档创建或切换到不存在的分支。
+当前四阶段实机集成代码维护在 `dev/n01-current`。旧版文档曾要求切换到 `dev/n01-current`，但该分支在本次核对时并不存在于 origin；不要照旧文档创建或切换到不存在的分支。
 
 先检查工作树；若存在本地修改，不要 reset/clean，先备份或提交。随后使用仓库唯一部署入口：
 
 ```bash
 cd /home/demo/lyy/hivecore-navigation
 git status --short
-git pull --ff-only origin fix/n01-pose-freshness-watchdogs
+git pull --ff-only origin dev/n01-current
 bash scripts/deploy_n01_planning_fixes.sh --confirm-planning-only
 ```
 

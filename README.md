@@ -268,3 +268,13 @@ Build/launch and limitations: [N-01 live six-module stack](docs/n01_live_navigat
 The repository's product boundary is N-01 Navigation. The native SCAN planner and N-01 runtime are independent of any one SLAM implementation. Vendor-specific localization status is translated by a backend adapter into the stable ROS interface /n01/localization/status (diagnostic_msgs/DiagnosticArray). The navigation bridge consumes that normalized interface plus standard nav_msgs/Odometry, sensor_msgs/PointCloud2, and TF contracts. The current Hivecore-specific adapter is one backend implementation; other localization systems can provide the same normalized contract without changing SCAN or navigation-core algorithms.
 
 Repository name hivecore-navigation is retained for path/remote compatibility. ROS package/node/internal-topic names follow the n01_ and /n01/<domain>/... conventions. See docs/n01_localization_backend_contract.md and scripts/README.md.
+
+
+---
+
+## 仓库统一入口与分支约束
+
+- 日常命令：bash scripts/n01 help
+- 当前架构、模块边界、文档索引和安全验收层级：docs/N01_PROJECT_GUIDE.md
+- Shell 目录、命名与安全清理规则：docs/n01_repository_structure_and_script_policy.md
+- 远程只保留 main 和 dev/n01-current；所有开发直接在 dev/n01-current 进行，不再创建其他迭代分支。

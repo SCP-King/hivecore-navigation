@@ -68,3 +68,16 @@
 - 任何会构建、重启、发布目标或影响设备状态的入口，必须在文件头说明副作用和安全边界。
 - 只读诊断必须明确不创建 publisher/client、不调用服务/动作、不写参数、不重启进程。
 - 每次脚本变更必须通过 bash -n、静态合同测试及 GitHub Actions；不得把基础语法检查交给现场操作者。
+
+
+## 统一命令入口
+
+操作人员优先使用唯一命令路由：
+
+    bash scripts/n01 help
+
+它只负责分发，不替代各工作流自身的 ROS 环境检查、进程所有权和安全门控。已有脚本路径暂时保留兼容性，不因入口统一就删除。
+
+## Git 分支约束
+
+只允许两个远程分支：main 与 dev/n01-current。所有日常开发直接在 dev/n01-current 进行；发布时仅从该分支向 main 提交 PR。禁止创建新的 feat/fix/refactor/日期迭代分支。完整规则见 docs/n01_repository_structure_and_script_policy.md。

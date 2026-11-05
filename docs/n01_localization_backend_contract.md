@@ -63,3 +63,8 @@ Implement a small adapter that publishes the normalized DiagnosticArray contract
 ## Current scope and remaining work
 
 This first decoupling increment isolates vendor-specific localization status. Pose and point-cloud topics already use standard ROS message types, but their topic/frame/time semantics remain configured integration contracts. A subsequent increment should extract topic/frame/QoS settings into a named backend/robot profile and add a second fake backend conformance test. The current Hivecore adapter still needs a real ROS 2 runtime build and live verification on the target machine.
+
+
+## Contract reconciliation and authority
+
+An earlier proposal on the retired feat/n01-interface-decoupling branch described separate normalized topics /n01/localization/pose and /n01/localization/diagnostics. That proposal is not the active implementation contract. The current repository contract is the one defined above: /n01/localization/status as diagnostic_msgs/msg/DiagnosticArray, plus the standard timestamped pose input /robot_pose and the existing scan/odometry interfaces. Keep vendor-specific status interpretation inside the backend adapter; do not add the proposal's alternate topic names unless a separately reviewed migration changes all publishers, subscribers, launch files, tests, and documentation together.
