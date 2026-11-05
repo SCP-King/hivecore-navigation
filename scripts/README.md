@@ -54,23 +54,21 @@ bash scripts/n01_collect_planning_readiness_audit.sh
 
 此入口只读取 ROS 图、话题、参数和文件；不发送导航目标、不发布底盘控制命令、不调用 SLAM 业务服务、不修改参数、不停止或重启节点，也不构建或运行机器人。
 
-## Hivecore SLAM 位姿发布与处理耗时专项诊断
+## Hivecore SLAM 位姿实时性专项验证
 
-上一次只读预检已确认：`/robot_pose` 有两个同名 `/slam3d_node` 发布端点，单进程快照只发现一个 `slam3d_node`；位姿时间戳年龄中位数约 1.23 s，P95 约 1.80 s，而 `/odom` 约 49.4 Hz、`/localization_status` 约 5.0 Hz。不要直接删除发布端点或放宽新鲜度门限。
-
-先执行一次完整的 SLAM 上游只读取证：
+当前只验证更新后的 SLAM 是否及时发布全局位姿，不再扫描其他话题、参数、源码或处理耗时。
 
 ```bash
 cd ~/lyy/hivecore-navigation
 git fetch origin fix/n01-pose-freshness-watchdogs
 git switch fix/n01-pose-freshness-watchdogs
 git pull --ff-only origin fix/n01-pose-freshness-watchdogs
-bash scripts/run_n01_slam_pose_pipeline_audit.sh 30
+bash scripts/run_n01_slam_pose_pipeline_audit.sh 60
 ```
 
-此脚本连续采样 `/robot_pose`、`/odom`、`/imu/data`、Livox 输入点云、SLAM 输出点云、`/mapping_processing_timings` 和定位状态；检查位姿重复时间戳/相同时间戳冲突；读取 SLAM 参数、节点接线、DDS 端点、进程资源、已加载库，并在本机安装工作区存在源码时搜索 `robot_pose` 和 Publisher 创建位置。
+脚本只订阅现有的 `/robot_pose`（`nav_msgs/msg/Odometry`），自动统计发布频率、接收间隔 P50/P95/最大值、位姿时间戳年龄 P50/P95/最大值，以及采样结束时最后一条位姿的接收年龄和时间戳年龄。ROS 时间年龄为主指标，同时给出系统墙钟年龄作交叉检查。
 
-执行完成后上传终端打印的 `UPLOAD THIS BUNDLE: ...tar.gz`。脚本不创建 publisher/client，不调用服务或 action，不发布目标，不修改参数，不重启进程，也不发送执行器命令。普通 ROS 订阅回调无法直接识别每条消息的 DDS publisher GID；报告会明确区分端点图与消息时间序列证据。
+当前参考预算：接收年龄 0.7 s、位姿时间戳年龄 1.5 s。脚本只测量、不修改阈值，不创建 publisher/client，不发目标、不调用服务、不写参数、不重启节点、不输出底盘命令。完成后上传终端显示的 `UPLOAD THIS BUNDLE: ...tar.gz`。
 
 ## N-01 /robot_pose 双发布端点专项诊断
 
