@@ -1,6 +1,6 @@
-"""Live Hivecore localization + LiDAR adapter for native SCAN.
+"""Backend-neutral localization + LiDAR bridge for native SCAN.
 
-Global robot pose comes from the vendor's timestamped /robot_pose Odometry.
+Global robot pose comes from a timestamped /robot_pose Odometry contract.
 The bridge interpolates that pose at the original LiDAR stamp and composes it
 with the robot-description sensor extrinsic (body_frame <- lidar_frame).
 It never substitutes latest pose/TF or rewrites the scan timestamp.
@@ -43,7 +43,7 @@ class LiveScanBridge(Node):
     def __init__(self):
         super().__init__("n01_live_scan_bridge")
         defaults = {
-            "status_topic": "/localization_status",
+            "status_topic": "/n01/localization/status",
             "cloud_topic": "/livox/lidar/geo_filtered",
             "pose_topic": "/robot_pose",
             "odom_topic": "/odom",
