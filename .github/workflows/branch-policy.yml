@@ -1,0 +1,32 @@
+name: Enforce canonical branches
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  branch-policy:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Allow only main and dev/n01-current
+        shell: bash
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            if [[ "${GITHUB_HEAD_REF}" != "dev/n01-current" || "${GITHUB_BASE_REF}" != "main" ]]; then
+              echo "Only dev/n01-current -> main pull requests are allowed." >&2
+              echo "head=${GITHUB_HEAD_REF} base=${GITHUB_BASE_REF}" >&2
+              exit 1
+            fi
+          else
+            case "${GITHUB_REF}" in
+              refs/heads/main|refs/heads/dev/n01-current) ;;
+              *)
+                echo "Forbidden branch ref: ${GITHUB_REF}" >&2
+                echo "Only main and dev/n01-current may receive commits." >&2
+                exit 1
+                ;;
+            esac
+          fi
