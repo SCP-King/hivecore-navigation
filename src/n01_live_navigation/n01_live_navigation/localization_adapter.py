@@ -228,7 +228,7 @@ class N01LocalizationAdapter(Node):
                 self.pose_counts["unexpected_frame"] += 1
             elif issue.startswith("unexpected_child_frame_id:"):
                 self.pose_counts["unexpected_child_frame"] += 1
-        # Do not gate forwarding on reloc_ok, frame checks, or stamp checks.
+        # Do not gate forwarding on localization readiness or message validation.
         # Downstream readiness/temporal guards decide whether a sample is usable.
         self.pose_pub.publish(message)
         self.pose_counts["published"] += 1
