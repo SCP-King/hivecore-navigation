@@ -13,9 +13,26 @@
 - 最新输入扫描与最近完成输出之间允许最多 450 ms 的有界处理滞后；输出和输入各自仍必须满足 600 ms 最大年龄。超过任一门限时 readiness 关闭。
 - `navigation_ready` 仅表示可以向原生规划器提交目标，不表示可以驱动底盘。
 
+### 2026-11-03 实机新鲜度测量结论
+
+本轮实机采集已确认静态 overlay 门打开：`/grid_map/static_overlay_ready=true`，此前该话题的超时属于 CLI QoS 观测不匹配，不应继续把静态地图作为当前首要 blocker。
+
+同一轮采集得到：
+
+| 指标 | 实测 | 当前门限 | 结论 |
+|---|---:|---:|---|
+| `/robot_pose` 频率 | 2.57–2.59 Hz | 接收年龄 0.7 s | 发布间隔均值约 0.39 s，最大 0.754 s，周期性越界 |
+| `/robot_pose` stamp age | 均值约 1.0–1.2 s，最大 1.305 s | 全局位姿 1.5 s；扫描锚点 1.25 s | 最大样本仍低于 1.5 s，但超过 1.25 s 扫描锚点预算 |
+| `/localization_status` | 5.004 Hz | 年龄 1.0 s | 发布节奏稳定 |
+| `body_pose_live_anchor_delta_s` | 1.333 s | 1.4 s | 仅剩约 67 ms 余量 |
+
+当前首要外部依赖因此收敛为甲方 SLAM 的 `/robot_pose` 发布节奏和时间戳延迟。接收年龄与 stamp age 是两个独立判据，不能相加替代；任一判据越界都可能使桥接或目标门关闭。不得通过放宽 N-01 的 0.7/1.25/1.4/1.5 s 预算掩盖上游时序问题。
+
+给甲方 SLAM 的改进要求：将 `/robot_pose` 提升至稳定至少 5 Hz，优先 10 Hz，并尽可能让消息时间戳贴近实际估计时刻；同时提供发布周期和 stamp-age 的稳定性数据。此改动属于甲方 SLAM 发布链路，乙方 N-01 不应伪造或重写其全局位姿时间戳。
+
 ## B. 静态地图、动态障碍与原生规划
 
-- 静态 PCD 继续由 `n01_static_map` 以 retained transient-local 点云发布，由 native SCAN 加载到静态占用层。
+- 静态 PCD 继续由 `n01_static_map` 以 retained transient-local 点云发布，由 native SCAN 加载到静态占用层。就绪状态以源地图通过 frame/点数/有限值校验且活动滑窗与源地图边界相交为准；当前滑窗内占用体素数单独诊断，空旷窗口不再被误判为整张地图未加载。`/grid_map/static_overlay_status` 提供源点数、窗口内点数、占用体素数、窗口/地图边界及阻塞原因。
 - 完整 map-frame `/cloud` 仍直接进入 native SCAN，作为动态 raycasting 的权威输入；动态候选跟踪器只提供聚类可视化，不替代或过滤规划器输入。
 - 动态候选速度使用点云传感器时间戳计算，不使用 ROS 回调到达时间；无效时间差会把速度标记为无效，不伪造速度。无效坐标系、点云解码失败和静态地图未就绪都会发布明确诊断状态。
 - 系统健康分别报告 B 阶段规划入口是否就绪、动态场景诊断是否同时满足接收新鲜度和传感器时间戳新鲜度、规划器轨迹是否新鲜；等待目标导致尚无 B-spline 不会被误报成 A 阶段定位故障。
@@ -39,29 +56,35 @@
 
 ## 构建与启动
 
-停止旧的 `live_scan.launch.py` 实例（Ctrl+C），保留甲方 SLAM、Livox、IMU、robot_state_publisher 和底盘状态节点运行：
+当前四阶段实机集成代码维护在 `fix/n01-pose-freshness-watchdogs`。旧版文档曾要求切换到 `feat/n01-four-stage-navigation`，但该分支在本次核对时并不存在于 origin；不要照旧文档创建或切换到不存在的分支。
+
+先检查工作树；若存在本地修改，不要 reset/clean，先备份或提交。随后使用仓库唯一部署入口：
 
 ```bash
 cd /home/demo/lyy/hivecore-navigation
-source /opt/ros/humble/setup.bash
 git status --short
-# 先确认上一步没有未提交改动；若有输出，先备份/提交后再切分支。
-git fetch origin
-if git show-ref --verify --quiet refs/heads/feat/n01-four-stage-navigation; then
-  git switch feat/n01-four-stage-navigation
-  git pull --ff-only origin feat/n01-four-stage-navigation
-else
-  git switch --track -c feat/n01-four-stage-navigation origin/feat/n01-four-stage-navigation
-fi
-colcon build --packages-up-to n01_live_navigation scan_planner n01_static_map n01_scan_dynacbf_bridge --event-handlers console_direct+
-source install/setup.bash
-colcon test --packages-select n01_live_navigation
-colcon test-result --verbose
+git pull --ff-only origin fix/n01-pose-freshness-watchdogs
+bash scripts/deploy_n01_planning_fixes.sh --confirm-planning-only
 ```
 
-启动命令：
+部署入口会先保留已加载的 Hivecore/Livox 等 vendor underlay、移除当前工作空间自身的 install 前缀，再加载 ROS Humble 并构建；构建完成后才加载工作空间 overlay。若检测到 `scan_planner_msgs` 的 ament Python 生成目录与 symlink 冲突，只会先归档并清理该精确生成目录，不会删除整个 `build` 或 `install`。构建或测试失败时，旧的 `live_scan.launch.py` 不会被停止。
+
+构建和静态膨胀测试成功后，入口才会停止并重启 N-01 的 `live_scan.launch.py`，保留甲方 SLAM、Livox、IMU 和底盘状态节点运行，并执行一次只规划 smoke test。它不会发布底盘、轮速、速度或执行器命令；`execution_authorized=false`、`actuator_output=DISABLED`、`safety_authorization=NEVER` 仍是固定边界。
+
+如果构建/重启已成功，但只规划 smoke test 因现场状态或验收条件失败，不要为了重试而再次重启 live stack。更新代码后可单独执行：
 
 ```bash
+bash scripts/run_n01_planning_smoke_test.sh 0.5 15 120
+```
+
+参数依次为目标前向距离（米）、等待 B-spline 的秒数、等待 READY 窗口的秒数。默认在当前 `/body_pose` 位姿前方 0.5 m 生成 map-frame 目标，而不是使用固定 map 原点坐标；操作者仍必须确认该前方位置处于已知空旷区域。工具最多等待 120 s 捕获 READY 窗口，并在发布前再次检查：直接订阅的 `/robot_pose` 接收年龄不超过 0.7 s、stamp age 不超过 1.5 s；同时把 `system_health` 自身接收年龄加回 bridge 快照中的 pose receive age、stamp age 和 live-anchor delta，避免旧健康快照造成假 READY。还要求 runtime bridge 报告全局位姿和 live anchor fresh、`system_health` 无 blockers、静态 overlay READY、安全状态明确 fail-closed、规划拓扑正确。若窗口关闭则继续等待，不发送目标。
+
+该入口要求恰好一套现存 `live_scan.launch.py`，不会构建或重启节点；它最多发布一个 `/move_base_simple/goal`。它不发布速度、轮速、底盘或执行器命令，且不会改变 operator hold 或执行授权。
+若需要手动启动（不与部署入口同时执行），启动前先确保只存在一套 N-01 live stack：
+
+```bash
+source /opt/ros/humble/setup.bash
+source /home/demo/lyy/hivecore-navigation/install/setup.bash
 ros2 launch n01_live_navigation live_scan.launch.py \
   pcd_path:=/home/demo/lyy/slam_data/maps/cloud_map_20261027_225549.pcd \
   pcd_map_frame_asserted:=true \
@@ -75,11 +98,14 @@ ros2 launch n01_live_navigation live_scan.launch.py \
 ## 一次性采集状态
 
 ```bash
+cd /home/demo/lyy/hivecore-navigation
 ros2 run n01_live_navigation n01_navigation_acceptance
 
-# 只读采集 10 秒：话题频率、时间戳年龄、ExactTime 配对、publisher endpoint 拓扑和四阶段状态
-python3 scripts/n01_live_stack_preflight.py --duration 10
+# 单命令只读采集；只启动订阅型 observer，不发送目标或控制命令
+bash scripts/run_n01_live_stack_preflight.sh 10
 ```
+
+预检自动加载 ROS Humble 和当前工作空间，默认连接 N-01 部署使用的 ROS domain 55（可通过环境变量覆盖）。它同时报告 `/robot_pose` 的接收频率、最大接收间隔、stamp age，以及 `/localization_status` 的接收/时间戳新鲜度；不能只凭 `body_pose_live_anchor_delta_s` 推断上游发布频率。静态 overlay 的 `/grid_map/static_overlay_status` 会单独记录实际 publisher QoS、源地图点数、活动窗口相交情况和 ready/reason。结构化报告保存在 `~/lyy/n01_runtime/runs/live_stack_preflight/`；即使 ROS Python 导入或运行期审计异常，也会生成有效 JSON 诊断，不再只留下无法解析的 traceback。
 
 安全监视器的软件保持默认开启。若只需在静态规划测试中解除软件保持，可发送：
 
@@ -91,8 +117,8 @@ ros2 topic pub --once /n01/live_navigation/operator_hold std_msgs/msg/Bool "{dat
 
 ## 调试顺序
 
-1. A 阶段：确认桥接状态 `LIVE_SCAN_INPUTS_READY`、`navigation_ready=true`、`/body_pose` 稳定接近 20 Hz，且 scan lag 不超过 450 ms；同时核对 `body_pose_live_anchor_delta_s` 不超过 1.4 s，扫描时刻 `motion_compensation_anchor_delta_s` 不超过 1.25 s，且所有传播都具有新鲜的定位状态和完整的 `/odom` 时间插值。检查预检中的 `multiple_publisher_endpoints`，不要把同名节点的多个 DDS publisher endpoint 误判成多个 SLAM 进程。
-2. B 阶段：确认静态地图 READY、实时 `/cloud` 连续进入 SCAN、RViz 中 occupancy/inflation 与动态候选可视化正确；再发送短距离、位于已知空旷区域的 map-frame 目标。
+1. A 阶段：确认桥接状态 `LIVE_SCAN_INPUTS_READY`、`navigation_ready=true`、`/body_pose` 稳定接近 20 Hz，且 scan lag 不超过 450 ms；同时核对 `body_pose_live_anchor_delta_s` 不超过 1.4 s，扫描时刻 `motion_compensation_anchor_delta_s` 不超过 1.25 s，且所有传播都具有新鲜的定位状态和完整的 `/odom` 时间插值。当前已知现场问题是 `/robot_pose` 约 2.6 Hz、最大间隔 0.754 s，越过 0.7 s 接收年龄预算；先要求甲方提高发布频率并降低 stamp age，不得放宽门限。检查预检中的 `multiple_publisher_endpoints`，不要把同名节点的多个 DDS publisher endpoint 误判成多个 SLAM 进程。
+2. B 阶段：静态 overlay 已在本轮现场确认 READY；确认实时 `/cloud` 连续进入 SCAN、RViz 中 occupancy/inflation 与动态候选可视化正确。使用上述 guarded smoke test 等待新鲜 READY 窗口并发送 0.5 m 前向规划目标，检查 Goal Gate 接受和新 B-spline；目标必须位于已知空旷区域。
 3. C 阶段：检查 B-spline、候选 Path、四轮转向向量、joint feedback 和 pitch reference；不把 necessary-condition pass 当作可执行许可。
 4. D 阶段：确认动态障碍诊断的接收时间与点云源时间戳均持续新鲜；出现候选簇时核对 RViz 标记与实际场景，并确认 D 阶段进入 `DYNAMIC_OBSTACLE_REVIEW_REQUIRED`。随后逐项进行物理安全测试并留存证据。任何急停/失联/定位丢失/障碍物测试都应在机器人被机械支撑、驱动禁止或受控测试场地内执行，按现场安全规程进行。
 

@@ -1,9 +1,13 @@
 #include "plan_env/grid_map.h"
 #include <cmath>
+#include <chrono>
 #include <limits>
 #include <string>
 #include <stdexcept>
 #include <cstdint>
+#include <iomanip>
+#include <limits>
+#include <sstream>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 
 namespace
@@ -180,6 +184,10 @@ void GridMap::initMap(rclcpp::Node *node)
     static_ready_pub_ = node_->create_publisher<std_msgs::msg::Bool>(
         "/grid_map/static_overlay_ready",
         rclcpp::QoS(1).reliable().transient_local());
+    static_status_pub_ = node_->create_publisher<std_msgs::msg::String>(
+        "/grid_map/static_overlay_status",
+        rclcpp::QoS(1).reliable().transient_local());
+    publishStaticOverlayStatus(false, "waiting_for_static_cloud");
     // Static PCD is immutable and published once with transient-local QoS.
     // Request the retained sample even when SCAN starts after the map provider.
     static_cloud_sub_ = node_->create_subscription<sensor_msgs::msg::PointCloud2>(
@@ -244,10 +252,13 @@ void GridMap::rebuildInflationOffsets()
 {
   const double double_radius = std::max(0.0, mp_.double_cylinder_radius_);
   const int inf_step_xy = ceil(double_radius / mp_.resolution_);
-  const int inf_step_z_up = ceil(mp_.obstacles_inflation_z_up / mp_.resolution_);
-  const int inf_step_z_down = ceil(mp_.obstacles_inflation_z_down / mp_.resolution_);
+  static_inflate_z_up_steps_ =
+      std::max(0, static_cast<int>(ceil(mp_.obstacles_inflation_z_up / mp_.resolution_)));
+  static_inflate_z_down_steps_ =
+      std::max(0, static_cast<int>(ceil(mp_.obstacles_inflation_z_down / mp_.resolution_)));
 
   md_.inflate_offsets_.clear();
+  static_inflate_xy_offsets_.clear();
   for (int x = -inf_step_xy; x <= inf_step_xy; ++x)
     for (int y = -inf_step_xy; y <= inf_step_xy; ++y)
     {
@@ -255,7 +266,8 @@ void GridMap::rebuildInflationOffsets()
       if (offset_xy.norm() >= double_radius)
         continue;
 
-      for (int z = -inf_step_z_down; z <= inf_step_z_up; ++z)
+      static_inflate_xy_offsets_.push_back({x, y});
+      for (int z = -static_inflate_z_down_steps_; z <= static_inflate_z_up_steps_; ++z)
         md_.inflate_offsets_.push_back(Eigen::Vector3i(x, y, z));
     }
 }
@@ -929,6 +941,7 @@ void GridMap::staticCloudCallback(
     RCLCPP_ERROR(node_->get_logger(),
                  "[GridMap] refuse static PCD in frame %s; expected %s",
                  cloud->header.frame_id.c_str(), mp_.frame_id_.c_str());
+    publishStaticOverlayStatus(false, "static_map_frame_mismatch");
     return;
   }
   const uint64_t points =
@@ -938,6 +951,7 @@ void GridMap::staticCloudCallback(
                  "[GridMap] static PCD point count %llu exceeds bounded limit %d; "
                  "no partial map silently accepted",
                  static_cast<unsigned long long>(points), static_cloud_max_points_);
+    publishStaticOverlayStatus(false, "static_map_point_count_out_of_bounds");
     return;
   }
   pcl::PointCloud<pcl::PointXYZ> decoded;
@@ -945,22 +959,112 @@ void GridMap::staticCloudCallback(
     pcl::fromROSMsg(*cloud, decoded);
   } catch (const std::exception& exc) {
     RCLCPP_ERROR(node_->get_logger(), "[GridMap] bad static PCD: %s", exc.what());
+    publishStaticOverlayStatus(false, "static_map_decode_failed");
     return;
   }
-  if (decoded.empty()) return;
+  if (decoded.empty()) {
+    publishStaticOverlayStatus(false, "static_map_empty");
+    return;
+  }
+
+  Eigen::Vector3d source_min = Eigen::Vector3d::Constant(
+      std::numeric_limits<double>::infinity());
+  Eigen::Vector3d source_max = Eigen::Vector3d::Constant(
+      -std::numeric_limits<double>::infinity());
+  size_t finite_points = 0;
+  static_source_decoded_.clear();
+  static_source_decoded_.points.reserve(decoded.points.size());
+  for (const auto& pt : decoded.points) {
+    if (!std::isfinite(pt.x) || !std::isfinite(pt.y) || !std::isfinite(pt.z))
+      continue;
+    source_min = source_min.cwiseMin(Eigen::Vector3d(pt.x, pt.y, pt.z));
+    source_max = source_max.cwiseMax(Eigen::Vector3d(pt.x, pt.y, pt.z));
+    static_source_decoded_.points.push_back(pt);
+    ++finite_points;
+  }
+  static_source_decoded_.width = static_cast<uint32_t>(finite_points);
+  static_source_decoded_.height = 1;
+  static_source_decoded_.is_dense = true;
+  if (finite_points == 0) {
+    publishStaticOverlayStatus(false, "static_map_has_no_finite_points");
+    return;
+  }
+
   static_source_cloud_ = cloud;
+  static_source_min_ = source_min;
+  static_source_max_ = source_max;
+  static_source_points_ = finite_points;
+  static_source_valid_ = true;
   rebuildStaticOverlay();
+}
+
+void GridMap::publishStaticOverlayStatus(bool ready, const std::string& reason)
+{
+  if (static_ready_pub_) {
+    std_msgs::msg::Bool ready_msg;
+    ready_msg.data = ready;
+    static_ready_pub_->publish(ready_msg);
+  }
+  if (!static_status_pub_) return;
+
+  std::ostringstream out;
+  out << std::fixed << std::setprecision(3)
+      << "{\"schema\":\"n01.static_overlay_status.v1\","
+      << "\"enabled\":" << (static_cloud_enabled_ ? "true" : "false")
+      << ",\"source_received\":" << (static_source_valid_ ? "true" : "false")
+      << ",\"source_frame\":\"" << mp_.frame_id_ << "\""
+      << ",\"source_points\":" << static_source_points_
+      << ",\"window_points\":" << static_window_points_
+      << ",\"occupied_voxels_in_window\":" << static_occupied_voxels_
+      << ",\"rebuild_duration_ms\":" << static_overlay_rebuild_ms_
+      << ",\"inflation_xy_kernel_size\":" << static_inflate_xy_offsets_.size()
+      << ",\"inflation_z_down_voxels\":" << static_inflate_z_down_steps_
+      << ",\"inflation_z_up_voxels\":" << static_inflate_z_up_steps_
+      << ",\"inflation_strategy\":\"xy_row_span_fill\""
+      << ",\"window_intersects_source_bounds\":"
+      << (static_window_intersects_source_bounds_ ? "true" : "false")
+      << ",\"ready\":" << (ready ? "true" : "false")
+      << ",\"reason\":\"" << reason << "\""
+      << ",\"window_min_xyz\":["
+      << mp_.map_min_boundary_.x() << "," << mp_.map_min_boundary_.y() << ","
+      << mp_.map_min_boundary_.z() << "]"
+      << ",\"window_max_xyz\":["
+      << mp_.map_max_boundary_.x() << "," << mp_.map_max_boundary_.y() << ","
+      << mp_.map_max_boundary_.z() << "]";
+  if (static_source_valid_) {
+    out << ",\"source_min_xyz\":["
+        << static_source_min_.x() << "," << static_source_min_.y() << ","
+        << static_source_min_.z() << "]"
+        << ",\"source_max_xyz\":["
+        << static_source_max_.x() << "," << static_source_max_.y() << ","
+        << static_source_max_.z() << "]";
+  }
+  out << "}";
+  std_msgs::msg::String status_msg;
+  status_msg.data = out.str();
+  static_status_pub_->publish(status_msg);
 }
 
 void GridMap::rebuildStaticOverlay()
 {
-  if (!static_cloud_enabled_ || !static_source_cloud_) return;
-  // Static layer is independent of dynamic occupancy probabilities. It
-  // survives raycasting clears and is reprojected after sliding window moves.
+  if (!static_cloud_enabled_ || !static_source_cloud_ || !static_source_valid_) return;
+  const auto rebuild_start = std::chrono::steady_clock::now();
+
+  // Static layer is independent of dynamic occupancy probabilities. Cache the
+  // decoded PCD once; sliding-window rebuilds only reproject the cached points.
   std::fill(static_occupancy_buffer_.begin(), static_occupancy_buffer_.end(), 0);
   std::fill(static_inflate_buffer_.begin(), static_inflate_buffer_.end(), 0);
-  pcl::PointCloud<pcl::PointXYZ> cloud;
-  pcl::fromROSMsg(*static_source_cloud_, cloud);
+  static_window_points_ = 0;
+  const auto& cloud = static_source_decoded_;
+
+  // A sparse occupancy map can legitimately contain no obstacle returns in
+  // the active local window. Readiness therefore means that a valid, finite,
+  // correctly framed source map was loaded and its bounds overlap this window;
+  // the local occupied-voxel count remains a separate diagnostic.
+  static_window_intersects_source_bounds_ =
+      (static_source_max_.array() >= mp_.map_min_boundary_.array()).all() &&
+      (static_source_min_.array() <= mp_.map_max_boundary_.array()).all();
+
   std::vector<Eigen::Vector3i> occupied;
   occupied.reserve(std::min(cloud.points.size(), static_occupancy_buffer_.size()));
   for (const auto& pt : cloud.points) {
@@ -968,6 +1072,7 @@ void GridMap::rebuildStaticOverlay()
       continue;
     const Eigen::Vector3d p(pt.x, pt.y, pt.z);
     if (!isInMap(p)) continue;
+    ++static_window_points_;
     Eigen::Vector3i id;
     posToIndex(p, id);
     const int addr = toAddress(id);
@@ -977,20 +1082,34 @@ void GridMap::rebuildStaticOverlay()
     }
   }
   for (const auto& id : occupied) {
-    for (const auto& offset : md_.inflate_offsets_) {
-      const Eigen::Vector3i inf_id = id + offset;
-      if (isInMap(inf_id)) static_inflate_buffer_[toAddress(inf_id)] = 1;
-    }
+    plan_env_detail::markStaticInflationRows(
+        static_inflate_buffer_,
+        mp_.map_voxel_num_(0), mp_.map_voxel_num_(1), mp_.map_voxel_num_(2),
+        mp_.map_bound_min_idx_(0), mp_.map_bound_min_idx_(1), mp_.map_bound_min_idx_(2),
+        mp_.map_bound_max_idx_(0), mp_.map_bound_max_idx_(1), mp_.map_bound_max_idx_(2),
+        id(0), id(1), id(2),
+        static_inflate_xy_offsets_,
+        static_inflate_z_down_steps_, static_inflate_z_up_steps_);
   }
   static_occupied_voxels_ = occupied.size();
-  if (static_ready_pub_) {
-    std_msgs::msg::Bool ready;
-    ready.data = (static_occupied_voxels_ > 0);
-    static_ready_pub_->publish(ready);
-  }
+  static_overlay_rebuild_ms_ = std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - rebuild_start).count();
+
+  const bool ready = static_source_valid_ && static_window_intersects_source_bounds_;
+  const std::string reason = !static_source_valid_
+      ? "waiting_for_static_cloud"
+      : (!static_window_intersects_source_bounds_
+          ? "active_window_outside_static_map_bounds"
+          : (static_occupied_voxels_ == 0
+              ? "map_loaded_window_has_no_occupied_voxels"
+              : "ready"));
+  publishStaticOverlayStatus(ready, reason);
+
   RCLCPP_INFO(node_->get_logger(),
-              "[GridMap] immutable static PCD overlay: %zu occupied voxels in current "
-              "window, dynamic updates remain separate", static_occupied_voxels_);
+              "[GridMap] immutable static PCD overlay: source=%zu points, "
+              "window=%zu points/%zu occupied voxels, rebuild=%.3f ms, ready=%s (%s)",
+              static_source_points_, static_window_points_, static_occupied_voxels_,
+              static_overlay_rebuild_ms_, ready ? "true" : "false", reason.c_str());
 }
 
 void GridMap::cloudCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr &img)

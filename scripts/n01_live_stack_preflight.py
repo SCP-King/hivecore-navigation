@@ -5,25 +5,110 @@ This tool subscribes only. It never publishes goals, velocity, wheel or actuator
 Run after sourcing ROS 2 Humble and the workspace install/setup.bash.
 """
 import argparse
+import ctypes.util
+import glob
 import json
 import math
+import os
+import platform
+import re
+import subprocess
+import sys
 import time
+import traceback
 from collections import Counter, defaultdict
 
-import rclpy
-from rclpy.node import Node
-from rclpy.qos import (
-    QoSProfile,
-    ReliabilityPolicy,
-    DurabilityPolicy,
-    qos_profile_sensor_data,
-)
-from rosidl_runtime_py.utilities import get_message
 
-from nav_msgs.msg import Odometry
-from sensor_msgs.msg import JointState, PointCloud2
-from std_msgs.msg import Bool, String
-from tf2_msgs.msg import TFMessage
+def _emit_ros_import_failure(stage, exc):
+    """Emit valid machine-readable diagnostics instead of a traceback-only JSON file."""
+    prefixes = []
+    for variable in ("AMENT_PREFIX_PATH", "COLCON_PREFIX_PATH", "CMAKE_PREFIX_PATH"):
+        prefixes.extend(item for item in os.environ.get(variable, "").split(os.pathsep) if item)
+    prefixes = list(dict.fromkeys(["/opt/ros/humble", *prefixes]))
+    soname_match = re.search(r"(lib[^\s:]+\.so(?:\.[0-9]+)*)", str(exc))
+    missing_soname = soname_match.group(1) if soname_match else None
+    library_candidates = []
+    if missing_soname:
+        for prefix in prefixes:
+            for candidate in (
+                os.path.join(prefix, "lib", missing_soname),
+                os.path.join(prefix, "lib", "x86_64-linux-gnu", missing_soname),
+            ):
+                if os.path.exists(candidate):
+                    library_candidates.append(candidate)
+            library_candidates.extend(
+                path for path in glob.glob(
+                    os.path.join(prefix, "lib", "**", missing_soname), recursive=True)
+                if path not in library_candidates
+            )
+    ldconfig_matches = []
+    try:
+        result = subprocess.run(
+            ["ldconfig", "-p"], capture_output=True, text=True, timeout=3, check=False)
+        if missing_soname:
+            ldconfig_matches = [
+                line.strip() for line in result.stdout.splitlines()
+                if missing_soname in line
+            ][:20]
+    except Exception as diagnostic_exc:
+        ldconfig_matches = ["ldconfig_probe_error: " + str(diagnostic_exc)]
+
+    report = {
+        "schema": "n01.live_stack_preflight_import_error.v1",
+        "status": "ROS_PYTHON_IMPORT_FAILED",
+        "import_stage": stage,
+        "exception_type": type(exc).__name__,
+        "exception": str(exc),
+        "missing_shared_object": missing_soname,
+        "python_executable": sys.executable,
+        "python_version": platform.python_version(),
+        "working_directory": os.getcwd(),
+        "environment": {
+            key: os.environ.get(key, "")
+            for key in (
+                "ROS_DISTRO", "ROS_DOMAIN_ID", "RMW_IMPLEMENTATION",
+                "ROS_LOCALHOST_ONLY", "AMENT_PREFIX_PATH", "COLCON_PREFIX_PATH",
+                "CMAKE_PREFIX_PATH", "PYTHONPATH", "LD_LIBRARY_PATH",
+            )
+        },
+        "ld_library_path_entries": [
+            item for item in os.environ.get("LD_LIBRARY_PATH", "").split(os.pathsep) if item
+        ],
+        "missing_library_candidates_found": library_candidates,
+        "ldconfig_matches": ldconfig_matches,
+        "ctypes_find_std_msgs_generator": ctypes.util.find_library(
+            "std_msgs__rosidl_generator_py"),
+        "python_sys_path": sys.path,
+        "traceback": traceback.format_exc()[-4000:],
+    }
+    print(json.dumps(report, indent=2, ensure_ascii=False, sort_keys=True), flush=True)
+    raise SystemExit(2)
+
+
+_import_stage = "rclpy"
+try:
+    import rclpy
+    _import_stage = "rclpy.node"
+    from rclpy.node import Node
+    _import_stage = "rclpy.qos"
+    from rclpy.qos import (
+        QoSProfile,
+        ReliabilityPolicy,
+        DurabilityPolicy,
+        qos_profile_sensor_data,
+    )
+    _import_stage = "rosidl_runtime_py.utilities"
+    from rosidl_runtime_py.utilities import get_message
+    _import_stage = "nav_msgs.msg"
+    from nav_msgs.msg import Odometry
+    _import_stage = "sensor_msgs.msg"
+    from sensor_msgs.msg import JointState, PointCloud2
+    _import_stage = "std_msgs.msg"
+    from std_msgs.msg import Bool, String
+    _import_stage = "tf2_msgs.msg"
+    from tf2_msgs.msg import TFMessage
+except Exception as exc:
+    _emit_ros_import_failure(_import_stage, exc)
 
 
 EXPECTED_TYPES = {
@@ -43,6 +128,7 @@ EXPECTED_TYPES = {
     "/n01/live_navigation/dynamic_obstacle_status": "std_msgs/msg/String",
     "/n01/live_navigation/safety_status": "std_msgs/msg/String",
     "/grid_map/static_overlay_ready": "std_msgs/msg/Bool",
+    "/grid_map/static_overlay_status": "std_msgs/msg/String",
     "/n01/live_navigation/navigation_ready": "std_msgs/msg/Bool",
     "/joint_states": "sensor_msgs/msg/JointState",
     "/tf": "tf2_msgs/msg/TFMessage",
@@ -111,6 +197,15 @@ def json_summary(topic, value):
             "status", "blockers", "operator_hold", "physical_acceptance_missing",
             "execution_authorized", "actuator_output", "safety_authorization",
         )
+    elif topic == "/grid_map/static_overlay_status":
+        keys = (
+            "schema", "enabled", "source_received", "source_frame", "source_points",
+            "window_points", "occupied_voxels_in_window", "rebuild_duration_ms",
+            "inflation_xy_kernel_size", "inflation_z_down_voxels",
+            "inflation_z_up_voxels", "inflation_strategy",
+            "window_intersects_source_bounds", "ready", "reason",
+            "window_min_xyz", "window_max_xyz", "source_min_xyz", "source_max_xyz",
+        )
     else:
         keys = tuple(value.keys())[:16]
     return {key: value[key] for key in keys if key in value}
@@ -137,7 +232,10 @@ class LiveStackPreflight(Node):
             "tf_edges": Counter(),
         })
         self.topic_types = {}
-        self.subscriptions = []
+        # Avoid rclpy.node.Node's read-only `subscriptions` property.
+        self._audit_subscriptions = []
+        self._subscriptions_by_topic = {}
+        self._subscription_qos = {}
         self.subscribed_topics = set()
         self.topic_presence = {}
         self.topic_discovery_error = ""
@@ -168,13 +266,32 @@ class LiveStackPreflight(Node):
                     "expected_type": expected_type, "type_mismatch": True,
                 }
                 continue
+            try:
+                publisher_infos = self.get_publishers_info_by_topic(topic)
+            except Exception:
+                publisher_infos = []
+            qos = self._qos_for(topic, publisher_infos)
+            qos_signature = (qos.reliability, qos.durability, qos.depth)
+            if (
+                topic in self.subscribed_topics
+                and self._subscription_qos.get(topic) != qos_signature
+            ):
+                old_subscription = self._subscriptions_by_topic.pop(topic, None)
+                if old_subscription is not None:
+                    self.destroy_subscription(old_subscription)
+                    self._audit_subscriptions = [
+                        item for item in self._audit_subscriptions
+                        if item is not old_subscription
+                    ]
+                self.subscribed_topics.discard(topic)
             if topic not in self.subscribed_topics:
                 try:
                     message_class = get_message(actual_type)
-                    qos = self._qos_for(topic)
                     subscription = self.create_subscription(
                         message_class, topic, self._callback(topic), qos)
-                    self.subscriptions.append(subscription)
+                    self._audit_subscriptions.append(subscription)
+                    self._subscriptions_by_topic[topic] = subscription
+                    self._subscription_qos[topic] = qos_signature
                     self.subscribed_topics.add(topic)
                 except Exception as exc:
                     self.topic_presence[topic] = {
@@ -188,19 +305,44 @@ class LiveStackPreflight(Node):
             }
 
     @staticmethod
-    def _qos_for(topic):
-        if topic in ("/tf_static", "/grid_map/static_overlay_ready",
-                     "/grid_map/static_occupancy"):
-            return QoSProfile(
-                depth=1,
-                reliability=ReliabilityPolicy.RELIABLE,
-                durability=DurabilityPolicy.TRANSIENT_LOCAL,
+    def _qos_for(topic, publisher_infos=None):
+        latched_topics = (
+            "/tf_static", "/grid_map/static_overlay_ready",
+            "/grid_map/static_overlay_status", "/grid_map/static_occupancy",
+        )
+        if topic in latched_topics:
+            # Request the durability/reliability actually offered by the live
+            # publisher. VOLATILE is compatible with either durability, while
+            # TRANSIENT_LOCAL is incompatible with a VOLATILE publisher.
+            infos = publisher_infos or []
+            offered_reliability = [
+                getattr(getattr(info, "qos_profile", None), "reliability", None)
+                for info in infos
+            ]
+            offered_durability = [
+                getattr(getattr(info, "qos_profile", None), "durability", None)
+                for info in infos
+            ]
+            reliability = (
+                ReliabilityPolicy.BEST_EFFORT
+                if ReliabilityPolicy.BEST_EFFORT in offered_reliability
+                else ReliabilityPolicy.RELIABLE
             )
+            durability = (
+                DurabilityPolicy.VOLATILE
+                if DurabilityPolicy.VOLATILE in offered_durability
+                else DurabilityPolicy.TRANSIENT_LOCAL
+            )
+            return QoSProfile(
+                depth=1, reliability=reliability, durability=durability)
         if topic == "/tf":
             return QoSProfile(depth=100, reliability=ReliabilityPolicy.RELIABLE)
         if topic in SENSOR_TOPICS:
             return qos_profile_sensor_data
-        return 10
+        # Keep the ROS 2 default depth-10 behavior, but return a QoSProfile
+        # consistently because the observer records its reliability,
+        # durability and depth for every subscription.
+        return QoSProfile(depth=10)
 
     def _callback(self, topic):
         def callback(msg):
@@ -259,10 +401,16 @@ class LiveStackPreflight(Node):
             gid = bytes(info.endpoint_gid).hex()
         except Exception:
             gid = str(getattr(info, "endpoint_gid", ""))
+        qos = getattr(info, "qos_profile", None)
         return {
             "node": (str(info.node_namespace).rstrip("/") + "/" + str(info.node_name)),
             "type": str(info.topic_type),
             "gid": gid,
+            "qos": {
+                "reliability": str(getattr(qos, "reliability", "UNKNOWN")),
+                "durability": str(getattr(qos, "durability", "UNKNOWN")),
+                "depth": int(getattr(qos, "depth", 0) or 0),
+            } if qos is not None else None,
         }
 
     def _topic_summary(self, topic):
@@ -380,6 +528,8 @@ class LiveStackPreflight(Node):
         health_diag = topics["/n01/live_navigation/system_health"].get("latest_diagnostic", {})
         safety_diag = topics["/n01/live_navigation/safety_status"].get("latest_diagnostic", {})
         static_ready = topics["/grid_map/static_overlay_ready"].get("latest_value")
+        static_overlay_status = topics["/grid_map/static_overlay_status"].get(
+            "latest_diagnostic", {})
         navigation_ready = topics["/n01/live_navigation/navigation_ready"].get("latest_value")
         body_rate = topics["/body_pose"]["receive_rate_hz"]
         warnings = []
@@ -408,6 +558,8 @@ class LiveStackPreflight(Node):
             warnings.append("no_exact_cloud_sensor_pose_pairs_observed")
         if static_ready is not True:
             warnings.append("static_overlay_not_ready_or_not_observed")
+        if not static_overlay_status.get("ready", False):
+            warnings.append("static_overlay_status_not_ready_or_not_observed")
         if navigation_ready is not True:
             warnings.append("navigation_ready_false_or_not_observed")
         if duplicate_names:
@@ -428,6 +580,7 @@ class LiveStackPreflight(Node):
                 "system_health_status": health_diag.get("status"),
                 "system_health_blockers": health_diag.get("blockers", []),
                 "static_overlay_ready": static_ready,
+                "static_overlay_status": static_overlay_status,
                 "body_pose_receive_rate_hz": body_rate,
                 "safety_status": safety_diag.get("status"),
                 "multiple_publisher_endpoint_topics": sorted(multiple_publisher_endpoints),
@@ -453,15 +606,32 @@ def main():
     if not math.isfinite(args.duration) or not 3.0 <= args.duration <= 60.0:
         parser.error("--duration must be between 3 and 60 seconds")
 
-    rclpy.init(args=None)
-    node = LiveStackPreflight(args.duration)
+    node = None
     try:
+        rclpy.init(args=None)
+        node = LiveStackPreflight(args.duration)
         deadline = time.monotonic() + args.duration
         while rclpy.ok() and time.monotonic() < deadline:
             rclpy.spin_once(node, timeout_sec=0.1)
         print(json.dumps(node.report(), indent=2, ensure_ascii=False, sort_keys=True))
+    except Exception as exc:
+        # Runtime graph/QoS errors must still produce a parseable audit artifact.
+        failure = {
+            "schema": "n01.live_stack_preflight_runtime_error.v1",
+            "status": "ROS_RUNTIME_AUDIT_FAILED",
+            "exception_type": type(exc).__name__,
+            "exception": str(exc),
+            "traceback": traceback.format_exc()[-6000:],
+            "read_only": True,
+            "actuator_output": "DISABLED",
+            "execution_authorized": False,
+            "safety_authorization": "NEVER",
+        }
+        print(json.dumps(failure, indent=2, ensure_ascii=False, sort_keys=True))
+        raise SystemExit(3)
     finally:
-        node.destroy_node()
+        if node is not None:
+            node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
 

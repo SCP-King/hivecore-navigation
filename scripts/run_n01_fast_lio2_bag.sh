@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT/scripts/lib/ros_env.sh"
 BAG="${1:-}"
 if [[ -z "$BAG" || ! -d "$BAG" ]]; then
   echo "Usage: bash scripts/run_n01_fast_lio2_bag.sh /path/to/rosbag2 [output.pcd]" >&2
@@ -13,13 +14,13 @@ MAP_OUT="${2:-/home/demo/lyy/n01_runtime/slam/fast_lio2_${STAMP}.pcd}"
 RUN_DIR="/home/demo/lyy/n01_runtime/runs/fast_lio2_bag/${STAMP}"
 mkdir -p "$RUN_DIR" "$(dirname "$MAP_OUT")"
 
-if [[ "${ROS_DISTRO:-}" != "humble" ]]; then
-  source /opt/ros/humble/setup.bash
+if [[ "${ROS_DISTRO:-}" != "humble" ]] || ! command -v ros2 >/dev/null 2>&1; then
+  n01_source_setup /opt/ros/humble/setup.bash
 fi
 if [[ -n "${LIVOX_SETUP:-}" ]]; then
-  source "$LIVOX_SETUP"
+  n01_source_setup "$LIVOX_SETUP"
 fi
-source "$ROOT/install/setup.bash"
+n01_source_setup "$ROOT/install/setup.bash"
 
 export ROS_DOMAIN_ID=88
 export ROS_LOCALHOST_ONLY=1

@@ -262,3 +262,9 @@ env -u N01_G4_GROUND_Z_MAP_M -u N01_G4_FLOOR_Z_VERIFIED bash scripts/run_n01_g4_
 The `feat/live-localization-scan-bridge` branch integrates the vendor's existing localization with native SCAN: scan-time TF FIFO, exact-stamp `/cloud` + `/sensor_pose` pairing inside SCAN, static PCD overlay, dynamic occupancy plus visualization-only unmatched obstacle tracks, native SCAN B-spline planning, a non-actuating Hive2 four-wheel steering necessary-condition screen, runtime readiness and RViz visualization.
 
 Build/launch and limitations: [N-01 live six-module stack](docs/n01_live_navigation_full_stack.md). The launch remains planning-only; the Hive2 controller allocation, physical wheel-contact geometry, pitch-hold feedback, full-body collision envelope and braking distance are not verified. No actuator command publisher is included.
+
+## N-01 Navigation architecture boundary
+
+The repository's product boundary is N-01 Navigation. The native SCAN planner and N-01 runtime are independent of any one SLAM implementation. Vendor-specific localization status is translated by a backend adapter into the stable ROS interface /n01/localization/status (diagnostic_msgs/DiagnosticArray). The navigation bridge consumes that normalized interface plus standard nav_msgs/Odometry, sensor_msgs/PointCloud2, and TF contracts. The current Hivecore-specific adapter is one backend implementation; other localization systems can provide the same normalized contract without changing SCAN or navigation-core algorithms.
+
+Repository name hivecore-navigation is retained for path/remote compatibility. ROS package/node/internal-topic names follow the n01_ and /n01/<domain>/... conventions. See docs/n01_localization_backend_contract.md and scripts/README.md.

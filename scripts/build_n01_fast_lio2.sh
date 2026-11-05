@@ -3,36 +3,23 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# Colcon-generated local_setup.bash scripts may read COLCON_CURRENT_PREFIX
-# before initializing it. This build script uses nounset, so source overlays
-# with -u temporarily disabled, then restore strict mode immediately.
-source_overlay_compat() {
-  local setup_file="$1"
-  local source_rc=0
-  set +u
-  if source "$setup_file"; then
-    source_rc=0
-  else
-    source_rc=$?
-  fi
-  set -u
-  return "$source_rc"
-}
+# All ROS/colcon setup files are sourced through the shared nounset-safe loader.
+source "$ROOT/scripts/lib/ros_env.sh"
 
 if [[ ! -f /opt/ros/humble/setup.bash ]]; then
   echo "[N01-FAST-LIO2] ROS 2 Humble not found at /opt/ros/humble." >&2
   exit 2
 fi
 # Source ROS underlay first, then an optional existing Livox driver overlay.
-if [[ "${ROS_DISTRO:-}" != "humble" ]]; then
-  source /opt/ros/humble/setup.bash
+if [[ "${ROS_DISTRO:-}" != "humble" ]] || ! command -v ros2 >/dev/null 2>&1; then
+  n01_source_setup /opt/ros/humble/setup.bash
 fi
 if [[ -n "${LIVOX_SETUP:-}" ]]; then
   if [[ ! -f "$LIVOX_SETUP" ]]; then
     echo "[N01-FAST-LIO2] LIVOX_SETUP does not exist: $LIVOX_SETUP" >&2
     exit 2
   fi
-  source_overlay_compat "$LIVOX_SETUP"
+  n01_source_setup "$LIVOX_SETUP"
 fi
 
 if [[ "${ROS_DISTRO:-}" != "humble" ]]; then
@@ -67,7 +54,7 @@ if ! LIVOX_PREFIX="$(ament_package_prefix livox_ros_driver2)"; then
   if [[ -f "$HIVE2_LIVOX_LOCAL_SETUP" ]]; then
     echo "[N01-FAST-LIO2] Livox ament index not in current prefixes; sourcing:"
     echo "  $HIVE2_LIVOX_LOCAL_SETUP"
-    source_overlay_compat "$HIVE2_LIVOX_LOCAL_SETUP"
+    n01_source_setup "$HIVE2_LIVOX_LOCAL_SETUP"
   fi
   LIVOX_PREFIX="$(ament_package_prefix livox_ros_driver2 || true)"
 fi
@@ -103,7 +90,7 @@ colcon build --packages-up-to n01_fast_lio \
   --cmake-args -DCMAKE_BUILD_TYPE=Release \
   --event-handlers console_direct+
 
-source "$ROOT/install/setup.bash"
+n01_source_setup "$ROOT/install/setup.bash"
 ros2 pkg prefix fast_lio
 ros2 pkg prefix n01_fast_lio
 echo "[N01-FAST-LIO2] Build complete. No SLAM node or robot hardware was started."

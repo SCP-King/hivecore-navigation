@@ -1,6 +1,6 @@
-"""Live Hivecore localization + LiDAR adapter for native SCAN.
+"""Backend-neutral localization + LiDAR bridge for native SCAN.
 
-Global robot pose comes from the vendor's timestamped /robot_pose Odometry.
+Global robot pose comes from a timestamped /robot_pose Odometry contract.
 The bridge interpolates that pose at the original LiDAR stamp and composes it
 with the robot-description sensor extrinsic (body_frame <- lidar_frame).
 It never substitutes latest pose/TF or rewrites the scan timestamp.
@@ -17,12 +17,12 @@ from rclpy.duration import Duration
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from rclpy.time import Time
-from rosidl_runtime_py.utilities import get_message
 from tf2_ros import Buffer, TransformListener, TransformException
 
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import PointCloud2, PointField
 from std_msgs.msg import String
+from diagnostic_msgs.msg import DiagnosticArray
 
 from .core import (
     localization_is_tracking,
@@ -43,8 +43,7 @@ class LiveScanBridge(Node):
     def __init__(self):
         super().__init__("n01_live_scan_bridge")
         defaults = {
-            "status_topic": "/localization_status",
-            "status_type": "hivecore_slam3d/msg/LocalizationStatus",
+            "status_topic": "/n01/localization/status",
             "cloud_topic": "/livox/lidar/geo_filtered",
             "pose_topic": "/robot_pose",
             "odom_topic": "/odom",
@@ -129,7 +128,6 @@ class LiveScanBridge(Node):
         ):
             raise ValueError("live bridge parameters outside bounded limits")
 
-        self.status_class = get_message(str(get("status_type")))
         self.status_ok = False
         self.status_reason = "waiting_localization_status"
         self.status_rx_monotonic = 0.0
@@ -202,7 +200,7 @@ class LiveScanBridge(Node):
         self.tf_buffer = Buffer(cache_time=Duration(seconds=30.0))
         self.tf_listener = TransformListener(self.tf_buffer, self, spin_thread=True)
         self.status_sub = self.create_subscription(
-            self.status_class, self.status_topic, self.on_status, qos_profile_sensor_data)
+            DiagnosticArray, self.status_topic, self.on_status, qos_profile_sensor_data)
         self.pose_sub = self.create_subscription(
             Odometry, self.pose_topic, self.on_robot_pose, qos_profile_sensor_data)
         self.odom_sub = self.create_subscription(
@@ -232,7 +230,14 @@ class LiveScanBridge(Node):
         return int(stamp.sec) * 1000000000 + int(stamp.nanosec)
 
     def on_status(self, msg):
-        ok, reason = localization_is_tracking(msg)
+        # Backend-neutral contract: DiagnosticArray status named
+        # "localization" with stable N-01 key/value fields.
+        normalized = {}
+        for item in msg.status:
+            if item.name == "localization":
+                normalized = {entry.key: entry.value for entry in item.values}
+                break
+        ok, reason = localization_is_tracking(normalized)
         self.status_ok = ok
         self.status_reason = reason
         self.status_rx_monotonic = time.monotonic()
@@ -242,9 +247,11 @@ class LiveScanBridge(Node):
                 self.get_clock().now().nanoseconds - self.status_stamp_ns) / 1e9
         else:
             self.status_stamp_age_s = None
-        self.status_imu_sync = bool(getattr(msg, "fusion_path_imu_sync_ok", False))
-        self.status_fitness = float(
-            getattr(msg, "registration_output_fitness_mse", float("nan")))
+        self.status_imu_sync = normalized.get("imu_sync_ok", "false").lower() == "true"
+        try:
+            self.status_fitness = float(normalized.get("fitness_mse", "nan"))
+        except (TypeError, ValueError):
+            self.status_fitness = float("nan")
 
     def _status_is_fresh(self):
         if not (
