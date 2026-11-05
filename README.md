@@ -1,3 +1,23 @@
+## Live vendor localization -> native SCAN integration (development, read-only)
+
+A new `n01_live_navigation` package connects the already-running Hivecore localization output and filtered Livox cloud to the repository's **native SCAN** inputs. It performs scan-stamp TF lookups and publishes map-frame `/cloud`, `/sensor_pose`, and `/body_pose`; it never publishes `/cmd_vel`, `/cmd_wheel`, or chassis commands. SCAN uses `/move_base_simple/goal` and publishes `/planning/bspline`.
+
+Build and launch only after confirming the PCD is registered in the active vendor map frame:
+
+```bash
+cd /home/demo/lyy/hivecore-navigation
+source /opt/ros/humble/setup.bash
+colcon build --packages-up-to n01_live_navigation scan_planner n01_static_map --event-handlers console_direct+
+source install/setup.bash
+ros2 launch n01_live_navigation live_scan.launch.py \\
+  pcd_path:=/home/demo/lyy/slam_data/maps/cloud_map_20261027_225549.pcd \\
+  pcd_map_frame_asserted:=true ground_z_map_m:=-0.55 body_height_m:=0.90
+```
+
+The PCD frame assertion and ground Z are operator-supplied research assumptions, not automatic registration or floor certification. This launch is planning-only; the Hive2 wheel steering/drive controller is not started or commanded. See [live SCAN integration notes](docs/n01_live_scan_integration.md).
+
+---
+
 ## 新增：FAST-LIO2 可选后端，甲方 SLAM 接口保持不变
 
 新增独立 `n01_fast_lio` ROS 2 Humble 包：使用固定版本的 HKU-MARS FAST-LIO2 ROS2 分支，读取原始 Livox `CustomMsg` + Livox 内置 IMU，所有输出隔离到 `/n01/fast_lio/*`，私有地图帧为 `n01_fast_lio_map`，FAST-LIO TF broadcaster 默认不创建（不会额外注册 `/tf` publisher endpoint）。甲方 `/localization_status`、`/robot_pose`、`/tf`、`/livox/lidar/geo_filtered`、原启动方式均不修改。可在开发阶段与甲方 SLAM 同时订阅传感器做 shadow comparison。
@@ -32,6 +52,25 @@ GitHub 的纯 Python / 源码 CI 回归通过，但真实 Ubuntu ROS 2 Humble **
 **2026-10-30 TF 时间轴重核对**：原 Bag 的动态 base_footprint→base_link=+0.30m 有 866 条，静态 +0.90m 一条；原始 PCD 地面候选约 map Z=-0.60～-0.50m，与动态链点云低簇吻合。**旧地图研究使用 0.30m 历史链，未来实机使用甲方 0.90m 运动 URDF；两者之间必须先完成地图/定位对齐，不能只改一个高度数值。** 已新增 G4.12 只读 TF 分布、全三维坐标差异审计，并支持显式研究回放 0.30m，保留旧回放默认。见 [历史地图 TF 冲突修正](docs/n01_g412_historical_mapping_030_vs_motion_090.md)。此前 G3 约束通过仍属数学和软件流程证据，不代表旧 PCD 几何配准。
 
 # hivecore-navigation
+
+## Live vendor localization -> native SCAN integration (development, read-only)
+
+A new `n01_live_navigation` package connects the already-running Hivecore localization output and filtered Livox cloud to the repository's **native SCAN** inputs. It performs scan-stamp TF lookups and publishes map-frame `/cloud`, `/sensor_pose`, and `/body_pose`; it never publishes `/cmd_vel`, `/cmd_wheel`, or chassis commands. SCAN uses the native RViz goal topic `/move_base_simple/goal` and publishes `/planning/bspline`.
+
+Build and launch (only after confirming that the PCD is registered in the active vendor map frame):
+
+```bash
+cd /home/demo/lyy/hivecore-navigation
+source /opt/ros/humble/setup.bash
+colcon build --packages-up-to n01_live_navigation scan_planner n01_static_map --event-handlers console_direct+
+source install/setup.bash
+ros2 launch n01_live_navigation live_scan.launch.py \\
+  pcd_path:=/home/demo/lyy/slam_data/maps/cloud_map_20261027_225549.pcd \\
+  pcd_map_frame_asserted:=true ground_z_map_m:=-0.55 body_height_m:=0.90
+```
+
+The PCD frame assertion and ground Z are operator-supplied research assumptions, not automatic registration or floor certification. This launch is planning-only; the Hive2 wheel steering/drive controller is not started or commanded. See [live SCAN integration notes](docs/n01_live_scan_integration.md).
+
 
 ROS 2 Humble source-only N-01 navigation research. Apache-2.0.
 
@@ -216,3 +255,10 @@ env -u N01_G4_GROUND_Z_MAP_M -u N01_G4_FLOOR_Z_VERIFIED bash scripts/run_n01_g4_
 ```
 
 输出 `.../runs/n01_g4_research/run_*/bag_start_preflight/g48_preflight.json` 和 G4.3 XY 研究线路/冲突 SVG。**这一步不运行 ROS 节点，不触发 SCAN，也不允许运动。** 若真实 Bag 起点处在 UNKNOWN，按证据阻断，不偷挪起点。详情：[G4.8 原始 Bag 起点和未知地面 Z 说明](docs/n01_g48_real_bag_anchored_preflight.md)。新版尚待用户 Ubuntu 端实际验证。
+
+
+## N-01 live six-module stack (vendor SLAM preserved)
+
+The `feat/live-localization-scan-bridge` branch integrates the vendor's existing localization with native SCAN: scan-time TF FIFO, exact-stamp `/cloud` + `/sensor_pose` pairing inside SCAN, static PCD overlay, dynamic occupancy plus visualization-only unmatched obstacle tracks, native SCAN B-spline planning, a non-actuating Hive2 four-wheel steering necessary-condition screen, runtime readiness and RViz visualization.
+
+Build/launch and limitations: [N-01 live six-module stack](docs/n01_live_navigation_full_stack.md). The launch remains planning-only; the Hive2 controller allocation, physical wheel-contact geometry, pitch-hold feedback, full-body collision envelope and braking distance are not verified. No actuator command publisher is included.

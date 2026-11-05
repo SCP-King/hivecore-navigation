@@ -12,17 +12,16 @@
 #    本节点不替代实时险情感知。
 #
 # PCD 解析:仅支持 header 中 FIELDS=SIZE=4 TYPE=F COUNT=1 的纯 xyz binary。
-# 占用格 = 把点归入以 resolution 为边长的体素列(忽略 z),每列只发一个
-# 随机 z(在该列点云 z 范围内)的代表点。这样既保留 2D 占用语义(N-01 滑窗
-# 栅格 3D 是 2D 膨胀),又把地面/墙面/顶部压缩成稀疏代表点。
+# 占用格 = 把点归入 resolution 立方体体素,每个 3D 体素发布一个中心点。
+# 地面/墙面/顶部保持各自高度层,供 SCAN 静态占用层和可视化使用。
 import math
-import random
 import struct
 
 import numpy as np
 import rclpy
 from rcl_interfaces.msg import SetParametersResult
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from sensor_msgs.msg import PointCloud2, PointField
 from std_msgs.msg import Header
 
@@ -84,17 +83,22 @@ class StaticMapNode(Node):
         # ---- parameters ----
         self.declare_parameter("pcd_path", "")
         self.declare_parameter("resolution", 0.05)      # m/体素
-        self.declare_parameter("publish_rate", 2.0)     # Hz
+        self.declare_parameter("publish_rate", 2.0)     # legacy compatibility; one-shot retained map
         self.declare_parameter("frame_id", "map")
         self.declare_parameter("min_z", -1.5)           # 参与代表的 z 下限(世界系)
         self.declare_parameter("max_z", 3.0)            # 上限
-        self.declare_parameter("seed", 0)               # 随机取样种子(确定性可复现)
+        self.declare_parameter("seed", 0)               # legacy compatibility; 3D voxelization is deterministic
 
         self._pcd_path = ""
         self._apply_params()
         self.add_on_set_parameters_callback(self._on_param_change)
 
-        self.pub = self.create_publisher(PointCloud2, PUBLISH_TOPIC, 10)
+        static_qos = QoSProfile(
+            depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        self.pub = self.create_publisher(PointCloud2, PUBLISH_TOPIC, static_qos)
 
         if not self._pcd_path:
             self.get_logger().warning(
@@ -102,23 +106,28 @@ class StaticMapNode(Node):
                 "仅用于检查静态地图供给链。请配置 pcd_path=<绝对路径>。")
             return
         self.load_and_publish()
-        rng = random.Random(self._seed)
-        self._timer = self.create_timer(1.0 / self._publish_rate,
-                                        lambda: self._publish(rng))
+        # The PCD is immutable. Publish once with TRANSIENT_LOCAL durability;
+        # late-joining SCAN, tracker and RViz subscribers receive the retained map.
+        self._publish()
 
     def _apply_params(self):
         path = self.get_parameter("pcd_path").value
         res = self.get_parameter("resolution").value
-        if res <= 0:
-            raise ValueError("resolution must be > 0")
-        if self.get_parameter("min_z").value > self.get_parameter("max_z").value:
+        publish_rate = float(self.get_parameter("publish_rate").value)
+        min_z = float(self.get_parameter("min_z").value)
+        max_z = float(self.get_parameter("max_z").value)
+        if not math.isfinite(float(res)) or not 0.01 <= float(res) <= 0.5:
+            raise ValueError("resolution must be finite and in [0.01, 0.5]")
+        if not math.isfinite(publish_rate) or not 0.1 <= publish_rate <= 10.0:
+            raise ValueError("publish_rate must be finite and in [0.1, 10]")
+        if not math.isfinite(min_z) or not math.isfinite(max_z) or min_z > max_z:
             raise ValueError("min_z must be <= max_z")
         self._pcd_path = str(path)
         self._resolution = float(res)
-        self._publish_rate = float(self.get_parameter("publish_rate").value)
+        self._publish_rate = publish_rate
         self._frame_id = str(self.get_parameter("frame_id").value)
-        self._min_z = float(self.get_parameter("min_z").value)
-        self._max_z = float(self.get_parameter("max_z").value)
+        self._min_z = min_z
+        self._max_z = max_z
         self._seed = int(self.get_parameter("seed").value)
 
     def _on_param_change(self, params):
@@ -161,9 +170,11 @@ class StaticMapNode(Node):
         ix = np.floor((xs - xs.min()) / self._resolution).astype(np.int64)
         iy = np.floor((ys - ys.min()) / self._resolution).astype(np.int64)
         iz = np.floor((zs - self._min_z) / self._resolution).astype(np.int64)
-        key = (ix * 1048576 + iy) * 2048 + iz  # 37 位内唯一(取余),int64 安全
-        # 遍历分组:对每个体素格任意取一点(用 unique return_index)
-        _, first_idx = np.unique(key, return_index=True)
+        # Structured 3-D integer keys avoid collisions from hand-packed
+        # coordinate multipliers when a large map exceeds an assumed axis range.
+        voxel_indices = np.column_stack((ix, iy, iz))
+        _, first_idx = np.unique(voxel_indices, axis=0, return_index=True)
+        first_idx.sort()
         ix_o = ix[first_idx]; iy_o = iy[first_idx]; iz_o = iz[first_idx]
         # z window explicitly filtered above; do not infer floor from any point.
         cx = xs.min(); cy = ys.min()
@@ -177,11 +188,11 @@ class StaticMapNode(Node):
         self._payload[:, 2] = self._out_z
         dt = (self.get_clock().now() - t0).nanoseconds / 1e9
         self.get_logger().info(
-            f"体素化完成: 独立2D占位列={n}  @res={self._resolution}  "
+            f"体素化完成: 独立3D体素={n}  @res={self._resolution}  "
             f"耗时{dt:.1f}s 发布到 {PUBLISH_TOPIC} (frame={self._frame_id}, "
             f"z窗口[{self._min_z},{self._max_z}])")
 
-    def _publish(self, rng):
+    def _publish(self):
         if self._payload is None:
             return
         msg = PointCloud2()

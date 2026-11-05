@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>n01_live_navigation</name>
+  <version>0.1.0</version>
+  <description>Read-only live Hive2 navigation planning, candidate kinematics and safety acceptance monitors; never publishes actuator commands.</description>
+  <maintainer email="noreply@example.invalid">N-01 contributors</maintainer>
+  <license>Apache-2.0</license>
+  <buildtool_depend>ament_python</buildtool_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>visualization_msgs</exec_depend>
+  <exec_depend>tf2_msgs</exec_depend>
+  <exec_depend>scan_planner_msgs</exec_depend>
+  <exec_depend>n01_scan_dynacbf_bridge</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>rosidl_runtime_py</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>n01_static_map</exec_depend>
+  <exec_depend>scan_planner</exec_depend>
+  <test_depend>python3-pytest</test_depend>
+  <export><build_type>ament_python</build_type></export>
+</package>
