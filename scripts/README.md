@@ -1,33 +1,70 @@
-# G1 一键离线测试与进程清理
+# N-01 workflow commands and script policy
 
-只在与机器人底盘、真实 SLAM、真实控制 SDK 完全隔离的 Ubuntu 22.04 / ROS 2 Humble 电脑执行：
+The stable operator-facing entrypoint is:
 
 ```bash
 cd /home/demo/lyy/hivecore-navigation
-git pull --ff-only origin main
-bash -n scripts/run_g1_offline.sh && bash scripts/run_g1_offline.sh
+bash scripts/n01 help
 ```
 
-脚本执行算法单元测试和构建、启动 SCAN/离线模拟/监测器、生成报告，并在退出时执行**进程清理验收**：
+It dispatches to focused implementation scripts without sourcing vendor SLAM or motion overlays itself. Each implementation keeps its own preflight, ROS environment, process ownership, and safety checks.
 
-1. 给本轮测试启动的进程及其子进程分配唯一环境标识 `N01_G1_RUN_TOKEN`，在 Linux `/proc` 中精确查找。不会执行系统级 `pkill` 或 `killall`，也不会因 ROS 节点名称相同而结束其他项目的进程。
-2. 测试正常完成、失败或收到 Ctrl+C/SIGTERM/SIGHUP 后，按 INT、TERM、KILL 逐级停止仅属于这轮测试的进程。
-3. 验证本轮进程清零，再通过临时 `rclpy` 进程检查 ROS_DOMAIN_ID=88 的 ROS 节点图。检测到任何进程残留或 ROS 节点残留，就把结果标为 `CLEANUP_FAILED`，不虚报测试通过。
-4. 生成 `summary.txt`，包含 `owned_process_cleanup=CLEAN` 和 `post_cleanup_ros_graph=CLEAN`；生成清理前后进程快照、信号记录和 ROS 图记录。
+## Common commands
 
-`CLEAN` 只表示脚本在结束时**观察不到本轮可识别的存活进程及隔离域内节点**，不能承诺断电、SIGKILL 强杀脚本、主动清除环境标识的后台进程等异常情况下的绝对保证；未识别或无法停止的进程须人工核实，脚本不会越权结束其他 ROS 项目。
+```bash
+# Optional FAST-LIO2 source/build/replay
+bash scripts/n01 fast-lio-import
+bash scripts/n01 fast-lio-build
+bash scripts/n01 fast-lio-bag /path/to/rosbag2 [output.pcd]
 
-日志保存在源码库之外：
+# Offline validation (isolated ROS domain 88)
+bash scripts/n01 g1-smoke
+bash scripts/n01 g1-acceptance
+bash scripts/n01 bag-functional
+bash scripts/n01 offline-framework
+bash scripts/n01 g4-research
 
-`/home/demo/lyy/n01_runtime/runs/g1_scan/<timestamp>/`
+# Demo
+bash scripts/n01 demo-replay
+bash scripts/n01 record-demo /path/to/output.mp4 [RVIZ_PID]
+```
 
-脚本结束时会打印：
+## G1 smoke versus acceptance
 
-`UPLOAD THIS LOG ARCHIVE: /home/demo/lyy/n01_runtime/runs/g1_scan/g1_scan_<timestamp>.tar.gz`
+Run only on an Ubuntu 22.04 / ROS 2 Humble development computer physically isolated from the robot chassis, real SLAM, and control SDK.
 
-把该压缩包直接上传到聊天，无需复制终端输出。即使测试失败也会保存诊断证据。
+- `g1-smoke` maps to `run_g1_offline.sh` and is a short smoke test.
+- `g1-acceptance` maps to `run_g1_acceptance.sh` and runs the full multi-scenario acceptance suite.
 
-**安全前提：**不能在测试期间连接真机或启动真实控制链。此 G1 冒烟测试不等于完整三维避障及实机安全验收。
+Both use ROS_DOMAIN_ID=88 and localhost-only isolation. Their cleanup uses the per-run `N01_G1_RUN_TOKEN` process marker rather than system-wide `pkill` or `killall`.
 
+A cleanup result of `CLEAN` means the runner observed no remaining identifiable processes from that run and no remaining nodes in its isolated ROS graph. It is not an absolute guarantee against SIGKILL, power loss, or deliberately detached processes.
 
-完整 G1 离线验收请参考 [G1_ACCEPTANCE.md](G1_ACCEPTANCE.md)，命令是 `bash scripts/run_g1_acceptance.sh`；原 `run_g1_offline.sh` 只做冒烟测试。
+Logs and archives are stored outside the source tree under:
+
+`/home/demo/lyy/n01_runtime/runs/`
+
+The runner prints the exact archive path to upload. Upload that archive for diagnosis; do not paste only the final summary.
+
+## Script inventory
+
+Root-level scripts are distinct workflows, not aliases. Use the command router for stable names; keep direct script paths for compatibility with existing notes and shortcuts.
+
+| Command | Implementation | Purpose |
+|---|---|---|
+| `fast-lio-import` | `import_n01_fast_lio2.sh` | Import pinned upstream source |
+| `fast-lio-build` | `build_n01_fast_lio2.sh` | Build optional FAST-LIO2 backend |
+| `fast-lio-bag` | `run_n01_fast_lio2_bag.sh` | Isolated FAST-LIO2 Bag mapping |
+| `g1-smoke` | `run_g1_offline.sh` | Short offline smoke |
+| `g1-acceptance` | `run_g1_acceptance.sh` | Full offline acceptance |
+| `bag-functional` | `run_n01_bag_functional.sh` | Historical Bag functional replay |
+| `offline-framework` | `run_n01_offline_framework.sh` | Isolated integration pipeline |
+| `g4-research` | `run_n01_g4_full_chain.sh` | G4 historical-map research |
+| `demo-replay` | `run_n01_demo_replay.sh` | Read-only RViz demo/export |
+| `record-demo` | `record_n01_demo.sh` | RViz-window-only video capture |
+
+Package-local research scripts remain under their owning package. See [repository structure and script policy](../docs/n01_repository_structure_and_script_policy.md) for the package boundary, naming rules, and safe deletion criteria.
+
+## Safety
+
+Offline tests do not authorize real robot movement. Do not run the offline replay or simulated control workflows on a host connected to the real robot network unless the specific procedure explicitly authorizes it. No script in this directory is a substitute for physical isolation, an independent emergency stop, or formal motion acceptance.
