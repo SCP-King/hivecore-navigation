@@ -27,20 +27,23 @@ from n01_live_navigation.core import (
 
 
 class LiveScanCoreTests(unittest.TestCase):
-    def test_status_requires_real_tracking_and_published_tf(self):
+    def test_status_requires_map_tracking_and_successful_relocalization(self):
         status = {
-            "map_loaded": "true",
-            "role": "localization",
-            "mode": "tracking",
-            "pose_valid": "true",
-            "tf_valid": "true",
-            "quality_valid": "true",
-            "tracking_valid": "true",
-            "imu_sync_ok": "false",
+            "map_loaded": "true", "session": "tracking",
+            "reloc_ok": "true", "reloc_fitness": "0.23328",
         }
         self.assertEqual(localization_is_tracking(status), (True, "tracking_ready"))
-        status["mode"] = "relocalization"
-        self.assertFalse(localization_is_tracking(status)[0])
+        status["session"] = "relocalization"
+        self.assertEqual(localization_is_tracking(status), (False, "localization_not_tracking"))
+        status["session"] = "tracking"
+        status["reloc_ok"] = "false"
+        self.assertEqual(localization_is_tracking(status), (False, "localization_relocalization_not_ok"))
+
+    def test_status_rejects_invalid_fitness(self):
+        status = {"map_loaded": "true", "session": "tracking",
+                  "reloc_ok": "true", "reloc_fitness": "nan"}
+        self.assertEqual(localization_is_tracking(status),
+                         (False, "localization_reloc_fitness_invalid"))
 
     def test_status_contract_mismatch_fails_closed(self):
         self.assertEqual(

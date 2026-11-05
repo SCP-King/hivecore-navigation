@@ -5,33 +5,23 @@ import numpy as np
 
 
 def localization_is_tracking(status):
-    """Validate the N-01 normalized localization status contract.
-
-    The navigation core consumes a plain mapping produced by a backend adapter;
-    it must not import or inspect vendor-specific ROS message classes.
-    """
-    required = (
-        "map_loaded", "role", "mode", "pose_valid", "tf_valid",
-        "quality_valid", "tracking_valid",
-    )
-    if not isinstance(status, dict) or any(name not in status for name in required):
+    """Validate only fields actually represented by the external LocStatus."""
+    required = ("map_loaded", "session", "reloc_ok", "reloc_fitness")
+    if not isinstance(status, dict) or any(key not in status for key in required):
         return False, "localization_status_contract_mismatch"
     if str(status["map_loaded"]).lower() != "true":
         return False, "localization_map_not_loaded"
-    if str(status["role"]).lower() != "localization":
-        return False, "localization_outer_role_not_localization"
-    if str(status["mode"]).lower() != "tracking":
+    if str(status["session"]).lower() != "tracking":
         return False, "localization_not_tracking"
-    if str(status["pose_valid"]).lower() != "true":
-        return False, "localization_pose_not_published"
-    if str(status["tf_valid"]).lower() != "true":
-        return False, "localization_tf_not_published"
-    if str(status["quality_valid"]).lower() != "true":
-        return False, "localization_fitness_not_accepted"
-    if str(status["tracking_valid"]).lower() != "true":
-        return False, "localization_tracking_compose_not_ok"
+    if str(status["reloc_ok"]).lower() != "true":
+        return False, "localization_relocalization_not_ok"
+    try:
+        fitness = float(status["reloc_fitness"])
+    except (TypeError, ValueError, OverflowError):
+        return False, "localization_reloc_fitness_invalid"
+    if not math.isfinite(fitness) or fitness < 0.0:
+        return False, "localization_reloc_fitness_invalid"
     return True, "tracking_ready"
-
 
 
 def select_pose_anchor(samples, stamp_ns, max_delta_s):

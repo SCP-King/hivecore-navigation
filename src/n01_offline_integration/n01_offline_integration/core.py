@@ -20,20 +20,11 @@ def lookup_path(obj, dotted):
 
 
 class ReadinessGate:
-    """Fail closed for missing, stale, malformed or non-tracking status."""
-
-    def __init__(self, timeout_s=1.0, outer_path=None, inner_path=None,
-                 tf_flag_path="registration_output_tf_published",
-                 outer_value="Localization", inner_value="tracking",
-                 fixture=False):
+    """Fail closed on normalized N-01 localization status and receive freshness."""
+    def __init__(self, timeout_s=1.0, fixture=False):
         if not 0.1 <= timeout_s <= 30:
             raise ValueError("timeout_s out of range")
         self.timeout_s = float(timeout_s)
-        self.outer_path = outer_path or ""
-        self.inner_path = inner_path or ""
-        self.tf_flag_path = tf_flag_path
-        self.outer_value = outer_value
-        self.inner_value = inner_value
         self.fixture = fixture
         self.last_time = None
         self.last_ok = False
@@ -44,17 +35,29 @@ class ReadinessGate:
         self.last_time = now
         try:
             if self.fixture:
-                # Test-only std_msgs/Bool; never accepted for real SLAM status.
                 self.last_ok = type(msg.data) is bool and msg.data is True
                 self.reason = "offline_fixture_ready" if self.last_ok else "fixture_not_ready"
-            else:
-                # Explicit paths prevent guessing undocumented .msg layouts.
-                outer = lookup_path(msg, self.outer_path)
-                inner = lookup_path(msg, self.inner_path)
-                tf = lookup_path(msg, self.tf_flag_path)
-                self.last_ok = (outer == self.outer_value and inner == self.inner_value
-                                and type(tf) is bool and tf is True)
-                self.reason = "localization_tracking" if self.last_ok else "localization_not_tracking"
+                return self.last_ok
+            stamp = msg.header.stamp
+            if int(stamp.sec) * 1000000000 + int(stamp.nanosec) <= 0:
+                raise ValueError("invalid_normalized_status_stamp")
+            normalized = {}
+            for item in msg.status:
+                if item.name == "localization":
+                    normalized = {entry.key: entry.value for entry in item.values}
+                    break
+            required = ("map_loaded", "session", "reloc_ok", "reloc_fitness")
+            if any(key not in normalized for key in required):
+                raise ValueError("normalized_status_contract_mismatch")
+            try:
+                fitness = float(normalized["reloc_fitness"])
+            except (TypeError, ValueError, OverflowError):
+                raise ValueError("reloc_fitness_invalid")
+            self.last_ok = (normalized["map_loaded"].lower() == "true"
+                and normalized["session"].lower() == "tracking"
+                and normalized["reloc_ok"].lower() == "true"
+                and math.isfinite(fitness) and fitness >= 0.0)
+            self.reason = "localization_tracking" if self.last_ok else "localization_not_tracking"
         except (AttributeError, ValueError, TypeError) as exc:
             self.last_ok = False
             self.reason = "status_contract_mismatch:" + str(exc)

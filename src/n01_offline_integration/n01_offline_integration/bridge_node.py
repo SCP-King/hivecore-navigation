@@ -20,9 +20,9 @@ from rclpy.time import Time
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import PointCloud2
 from std_msgs.msg import Bool, String
+from diagnostic_msgs.msg import DiagnosticArray
 from tf2_msgs.msg import TFMessage
 from tf2_ros import Buffer, TransformListener, TransformException
-from rosidl_runtime_py.utilities import get_message
 
 from .core import ReadinessGate, xyz_transform_bytes
 
@@ -59,18 +59,12 @@ class OfflineBridge(Node):
         self.input_frame = str(p("input_frame", "lidar_link"))
         self.target_frame = str(p("target_frame", "map"))
         self.body_frame = str(p("body_frame", "base_link"))
-        self.status_topic = str(p("status_topic", "/localization_status"))
-        self.status_type = str(p("status_type", ""))
+        self.status_topic = str(p("status_topic", "/n01/localization/status"))
         self.slam_rsp_disabled = bool(p("slam_rsp_disabled_confirmed", False))
         self.max_tf_wait_s = float(p("tf_timeout_s", 0.05))
         self.max_cloud_points = int(p("max_cloud_points", 300000))
         self.gate = ReadinessGate(
             timeout_s=float(p("status_timeout_s", 1.0)),
-            outer_path=str(p("outer_path", "")),
-            inner_path=str(p("inner_path", "")),
-            tf_flag_path=str(p("tf_flag_path", "registration_output_tf_published")),
-            outer_value=str(p("outer_value", "Localization")),
-            inner_value=str(p("inner_value", "tracking")),
             fixture=self.fixture)
         if not (0.001 <= self.max_tf_wait_s <= .3 and
                 100 <= self.max_cloud_points <= 1000000):
@@ -99,19 +93,12 @@ class OfflineBridge(Node):
             self.status_sub = self.create_subscription(
                 Bool, "/n01/offline/test/localization_ready", self.observe_status,
                 qos_profile_sensor_data)
-        elif self.status_type:
-            self.create_status_sub(self.status_type)
+        else:
+            self.status_sub = self.create_subscription(
+                DiagnosticArray, self.status_topic, self.observe_status,
+                qos_profile_sensor_data)
         self.create_timer(1.0, self.tick)
         self.get_logger().warning("OFFLINE BRIDGE only, no /cmd_vel or chassis interface")
-
-    def create_status_sub(self, name):
-        try:
-            cls = get_message(name)
-            self.status_sub = self.create_subscription(
-                cls, self.status_topic, self.observe_status, qos_profile_sensor_data)
-            self.status_type = name
-        except Exception as exc:
-            self.get_logger().error("Unknown /localization_status type: %s" % exc)
 
     def observe_status(self, msg):
         with self.lock:
@@ -202,14 +189,6 @@ class OfflineBridge(Node):
             self.stats["output_clouds"] += 1
 
     def tick(self):
-        if not self.fixture and self.status_sub is None:
-            try:
-                for topic, types in self.get_topic_names_and_types():
-                    if topic == self.status_topic and len(types) == 1:
-                        self.create_status_sub(types[0])
-                        break
-            except Exception:
-                pass
         try:
             nodes = self.get_publishers_info_by_topic("/cmd_vel")
             self.cmd_seen = self.cmd_seen or bool(nodes)
@@ -224,7 +203,7 @@ class OfflineBridge(Node):
                                         else "READY_FOR_OFFLINE_DATA" if passable else "NOT_READY"),
                            "reason": reason, "tf_conflict":self.tf_conflict,
                            "motion_tf_seen":self.motion_tf_seen, "cmd_vel_seen":self.cmd_seen,
-                           "status_type":self.status_type, "cloud_in":self.cloud_topic,
+                           "cloud_in":self.cloud_topic,
                            "cloud_out_frame":self.target_frame})
         out=String()
         out.data=json.dumps(result, ensure_ascii=False, sort_keys=True)

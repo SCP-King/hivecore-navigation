@@ -3,7 +3,7 @@ n01_offline_sensor_bridge:
     # Online/read-only integration target: Hive2 motion stack +0.90m.
     # Do not apply this authority gate to the original Bag map's SLAM +0.30m.
     # Historical mapping replay uses n01_historical_bag with an explicit profile.
-    # Real SLAM status wire fields verified from installed LocalizationStatus.msg.
+    # Normalized N-01 status contract; Lite wire fields are handled only by the adapter.
     # Still FAIL-CLOSED unless independent live TF publication evidence is checked.
     # This config is NOT a live robot authorization.
     fixture_mode: false
@@ -11,13 +11,7 @@ n01_offline_sensor_bridge:
     input_frame: lidar_link
     target_frame: map
     body_frame: base_link
-    status_topic: /localization_status
-    status_type: hivecore_slam3d/msg/LocalizationStatus
-    outer_path: control_signal_outer_role
-    inner_path: control_signal_session_mode
-    tf_flag_path: registration_output_tf_published
-    outer_value: localization
-    inner_value: tracking
+    status_topic: /n01/localization/status
     status_timeout_s: 1.0
     tf_timeout_s: 0.05
     max_cloud_points: 300000

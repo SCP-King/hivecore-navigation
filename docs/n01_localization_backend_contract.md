@@ -1,101 +1,67 @@
 # N-01 Localization Backend Contract
 
-## Architecture rule: navigation is backend-independent
+## Architecture rule
+N-01 navigation core MUST NOT depend on a SLAM vendor, package, message definition, launch file, process, GUI, or private configuration. Only the localization adapter may know an external localization wire protocol.
 
-N-01 navigation core MUST NOT depend on a SLAM vendor, package, message definition, launch file, process, GUI, or private configuration. The only module permitted to know an external localization wire protocol is `n01_localization_adapter`.
+The customer runs HiveCore SLAM3D Lite as an independent ROS 2 process. N-01 does not start, stop, link against, or vendor that process.
 
-The current deployment profile is the customer's headless HiveCore SLAM3D Lite. It is an external ROS 2 process managed by the customer's CLI. N-01 neither starts nor stops it, does not link against its libraries, and does not include its source tree.
+## Verified Lite wire interface (target machine, 2026-11-05)
+`/loc_status` type: `hivecore_slam3d_lite_localization/msg/LocStatus`.
+
+Fields confirmed by `ros2 interface show` and the supplied sample:
+- `header` (`std_msgs/Header`), with source timestamp and frame ID
+- `session` string: `idle`, `relocalization`, or `tracking`
+- `map_loaded` bool
+- `reloc_ok` bool
+- `reloc_fitness` float64
+
+The Lite interface description states `reloc_ok` means the solver converged and fitness passed the configured `reloc_fitness_score_threshold`; this result is latched into Tracking until another Relocalization attempt or deactivation. N-01 does not invent another fitness threshold. It requires `reloc_ok=true` and checks `reloc_fitness` is finite and non-negative only as a data-integrity check.
+
+`/robot_pose` type: `nav_msgs/msg/Odometry`. Observed frame IDs: `map` -> `base_footprint`. Publisher: `localization_lite_node`. The supplied frequency sample varied around 8.7-9 Hz and showed a maximum inter-message interval up to 0.440 s in that run. This is one observation, not a guaranteed rate or latency bound.
 
 ## Data flow
-
 ```text
-External SLAM3D Lite (managed out-of-process)
-  /loc_status (message type discovered at runtime)
-  /robot_pose (nav_msgs/msg/Odometry)
-             |
-             v
-N-01 Localization Adapter (only backend-specific boundary)
-  - discovers /loc_status ROS type from ROS graph
-  - maps explicitly configured field paths (no guessed fields)
-  - validates status stamp and pose frame/stamp
-  - republishes standard N-01 interfaces
-             |
-             +--> /n01/localization/status
-             |      diagnostic_msgs/msg/DiagnosticArray
-             |
-             +--> /n01/localization/pose
-                    nav_msgs/msg/Odometry
+External SLAM3D Lite (independently managed)
+  /loc_status : LocStatus
+  /robot_pose : nav_msgs/Odometry
+          |
+          v
+N-01 Localization Adapter (only vendor-specific boundary)
+  - discovers status ROS type at runtime
+  - maps verified LocStatus fields explicitly
+  - checks nonzero source stamp and configured pose frames
+  - preserves original Odometry payload and timestamp
+          |
+          +--> /n01/localization/status : DiagnosticArray
+          +--> /n01/localization/pose   : nav_msgs/Odometry
                          |
                          v
-N-01 Live Scan Bridge -> native SCAN -> navigation diagnostics
+N-01 Live Scan Bridge / Offline Bridge / Navigation Core
 ```
 
-The navigation bridge subscribes only to `/n01/localization/status` and `/n01/localization/pose`; it must never subscribe directly to `/loc_status` or the external `/robot_pose`. Backend-specific topic names are confined to the adapter profile.
+Navigation bridges consume only normalized N-01 topics. No navigation algorithm imports Lite-generated messages.
 
-## Normalized status contract
+## Normalized status keys and readiness
+The adapter emits a DiagnosticStatus named `localization` with:
+- `session`: lowercase source session string
+- `map_loaded`: strict boolean string
+- `reloc_ok`: strict boolean string
+- `reloc_fitness`: finite numeric string
+- `backend_status_type`: discovered source type
+- `status_mapping_valid`, `status_mapping_errors`
+- `source_stamp_valid`, `readiness_semantics`
 
-The adapter emits one DiagnosticStatus named `localization`, with these stable key/value entries:
+Readiness is true only when source stamp is nonzero, mapping succeeds, `map_loaded=true`, `session=tracking`, and `reloc_ok=true`. Consumers also enforce receive-freshness timeouts.
 
-| Key | Type/meaning |
-|---|---|
-| `map_loaded` | strict boolean string |
-| `role` | normalized role string; expected `localization` |
-| `mode` | normalized tracking-state string; expected `tracking` |
-| `pose_valid` | strict boolean string |
-| `tf_valid` | strict boolean string |
-| `quality_valid` | strict boolean string |
-| `tracking_valid` | strict boolean string |
-| `imu_sync_ok` | independent diagnostic; never forced true |
-| `fitness_mse` | finite numeric string or `nan` |
+LocStatus does NOT expose independent `tf_valid`, `imu_sync_ok`, `pose_valid`, or general tracking-quality fields. N-01 must not synthesize these as true. Pose frame and stamp checks are performed on the actual Odometry stream. TF availability, sensor synchronization, and other health checks remain separate N-01 runtime checks.
 
-The DiagnosticArray header stamp is copied from the external status source stamp. Missing/zero source stamp forces NOT READY. Missing field mapping, missing fields, unknown boolean encodings, and unrecognized role/mode values fail closed. No status is inferred from topic existence alone.
+The supplied sample reported `session=relocalization`, `map_loaded=true`, `reloc_ok=false`, `reloc_fitness=0.2332805536`; this is correctly NOT READY.
 
 ## Adapter profile
+`src/n01_live_navigation/config/slam3d_lite_adapter.yaml` maps only verified fields: `session`, `map_loaded`, `reloc_ok`, and `reloc_fitness`. External topics are confined to this profile. Internal topics remain `/n01/localization/status` and `/n01/localization/pose`.
 
-Profile: `src/n01_live_navigation/config/slam3d_lite_adapter.yaml`.
-
-- External status topic: `/loc_status`.
-- External pose topic: `/robot_pose`.
-- Internal status topic: `/n01/localization/status`.
-- Internal pose topic: `/n01/localization/pose`.
-- The external status ROS type is discovered at runtime; no HiveCore generated-message dependency is imported or declared by N-01.
-- `status_field_paths_json` intentionally defaults to an empty mapping. It MUST be populated only after the installed Lite interface definition and actual status samples have been inspected. Until then the adapter publishes NOT READY.
-- The current pose frame expectations (`map`, `base_footprint`) are an integration profile, not assumptions embedded in navigation algorithms; verify against the actual Lite output before deployment.
-
-## Pose and scan time contract
-
-The adapter forwards the original Odometry message without changing its timestamp, pose, covariance, or frame identifiers, after checking a nonzero stamp and configured parent/child frames. The bridge retains bounded timestamped pose interpolation and exact scan-stamp association. It must not substitute latest pose/TF, rewrite timestamps, or extrapolate without an explicit bounded odometry model.
-
-## Replacing the localization backend
-
-To add or replace a backend:
-
-1. Add a profile describing that backend's external status and pose topics.
-2. Implement or configure the adapter mapping for the real message schema.
-3. Verify status semantics, source timestamps, QoS, pose frame IDs, and pose freshness.
-4. Run the same backend-neutral adapter contract and live interface conformance tests.
-5. Change only the adapter profile/adapter implementation and deployment wiring.
-
-Do not modify `core.py`, `live_scan_bridge.py`, SCAN, map fusion, dynamic-obstacle tracking, or planning algorithms to accommodate a backend's private message schema.
-
-## Verification still required on target machine
-
-The Lite message type and its semantic fields have not yet been confirmed in this repository context. Run after sourcing the customer's Lite environment:
-
-```bash
-ros2 topic list -t | grep -E '^/(loc_status|robot_pose|livox/lidar/geo_filtered|odom)'
-ros2 topic type /loc_status
-ros2 interface show "$(ros2 topic type /loc_status)"
-ros2 topic info /loc_status --verbose
-ros2 topic echo /loc_status --once
-ros2 topic type /robot_pose
-ros2 topic info /robot_pose --verbose
-ros2 topic echo /robot_pose --once
-ros2 topic hz /robot_pose
-```
-
-Do not guess the field paths. Do not mark the adapter ready until the above evidence is reviewed and the profile is populated with verified paths/values.
+## Backend replacement
+A new backend requires only a new adapter/profile that emits the same normalized DiagnosticArray and Odometry contracts. Do not modify SCAN, map fusion, dynamic-obstacle tracking, trajectory monitoring, or navigation core to consume vendor-specific messages.
 
 ## Safety
-
-The adapter only publishes diagnostics and standard Odometry. No goal, velocity, wheel, chassis, or actuator commands are published. `navigation_ready` is not `execution_authorized`; current deployment remains planning-only.
+This integration only forwards localization diagnostics and Odometry. No goal, velocity, wheel, chassis, or actuator command is emitted. Navigation readiness is not execution authorization; current deployment remains planning-only.

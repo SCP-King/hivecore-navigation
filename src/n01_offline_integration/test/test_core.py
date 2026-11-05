@@ -16,21 +16,25 @@ class CoreSafetyTests(unittest.TestCase):
         gate = ReadinessGate()
         self.assertFalse(gate.check(now=10)[0])
 
-    def test_explicit_nested_status_contract(self):
-        gate = ReadinessGate(outer_path="state.outer", inner_path="state.inner",
-                             tf_flag_path="registration_output_tf_published")
-        msg = SimpleNamespace(state=SimpleNamespace(outer="Localization", inner="tracking"),
-                              registration_output_tf_published=True)
+    def test_normalized_loc_status_contract(self):
+        gate = ReadinessGate()
+        stamp = SimpleNamespace(sec=12, nanosec=1)
+        values = {"map_loaded": "true", "session": "tracking",
+                  "reloc_ok": "true", "reloc_fitness": "0.23"}
+        status = SimpleNamespace(name="localization",
+            values=[SimpleNamespace(key=k, value=v) for k, v in values.items()])
+        msg = SimpleNamespace(header=SimpleNamespace(stamp=stamp), status=[status])
         self.assertTrue(gate.observe(msg, received_monotonic=4))
         self.assertTrue(gate.check(now=4.1)[0])
         self.assertFalse(gate.check(now=5.2)[0])
-        msg.registration_output_tf_published = False
+        values["reloc_ok"] = "false"
+        status.values = [SimpleNamespace(key=k, value=v) for k, v in values.items()]
         self.assertFalse(gate.observe(msg, received_monotonic=6))
-        self.assertFalse(gate.check(now=6.1)[0])
 
-    def test_unverified_fields_denied(self):
-        gate = ReadinessGate(outer_path="wrong", inner_path="inner")
-        msg = SimpleNamespace(registration_output_tf_published=True)
+    def test_missing_normalized_loc_status_fields_denied(self):
+        gate = ReadinessGate()
+        msg = SimpleNamespace(header=SimpleNamespace(stamp=SimpleNamespace(sec=1, nanosec=0)),
+                              status=[])
         self.assertFalse(gate.observe(msg, received_monotonic=1))
         self.assertIn("contract_mismatch", gate.check(now=1)[1])
 

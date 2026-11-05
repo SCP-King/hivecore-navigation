@@ -27,11 +27,12 @@ class DualSlamBackendTest(unittest.TestCase):
         self.assertNotIn('create_publisher(Twist',src)
         self.assertNotIn('/cmd_vel',src)
 
-    def test_vendor_bridge_contract_untouched_and_default(self):
+    def test_offline_bridge_consumes_normalized_backend_contract(self):
         bridge=(ROOT/"src/n01_offline_integration/config/offline_bridge.yaml").read_text()
-        self.assertIn('status_topic: /localization_status',bridge)
-        self.assertIn('outer_value: localization',bridge)
-        self.assertIn('inner_value: tracking',bridge)
+        self.assertIn('status_topic: /n01/localization/status',bridge)
+        self.assertNotIn('hivecore_slam3d/msg/LocalizationStatus',bridge)
+        self.assertNotIn('outer_path:',bridge)
+        self.assertIn('slam_rsp_disabled_confirmed: false',bridge)
         self.assertIn('slam_rsp_disabled_confirmed: false',bridge)
         pkg=(ROOT/"src/n01_fast_lio/package.xml").read_text()
         self.assertIn('<exec_depend>diagnostic_msgs</exec_depend>',pkg)

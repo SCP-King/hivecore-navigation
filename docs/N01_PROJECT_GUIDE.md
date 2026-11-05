@@ -10,7 +10,7 @@
 甲方 HiveCore SLAM / 其他定位后端
           │ 标准化 Adapter
           ▼
-/n01/localization/status + /robot_pose
+/n01/localization/status + /n01/localization/pose
           │
           ▼
 n01_live_navigation

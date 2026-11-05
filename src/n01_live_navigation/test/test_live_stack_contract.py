@@ -126,13 +126,16 @@ class LocalizationBackendDecouplingTests(unittest.TestCase):
         self.assertNotIn('"/robot_pose"', bridge)
         self.assertNotIn("hivecore_slam3d", bridge)
 
-    def test_adapter_discovers_external_type_and_fails_closed_without_mapping(self):
+    def test_adapter_discovers_external_type_and_maps_verified_lite_fields(self):
         adapter = (ROOT / "src/n01_live_navigation/n01_live_navigation/localization_adapter.py").read_text()
         self.assertIn('"/loc_status"', adapter)
         self.assertIn("get_topic_names_and_types", adapter)
         self.assertIn("get_message(type_name)", adapter)
-        self.assertIn('"status_field_paths_json": "{}"', adapter)
-        self.assertIn("field_path_not_configured", adapter)
+        self.assertIn('"reloc_ok":"reloc_ok"', adapter)
+        self.assertIn('"session":"session"', adapter)
+        self.assertIn('values["reloc_ok"] == "true"', adapter)
+        self.assertIn("status_mapping_valid", adapter)
+        self.assertIn("readiness_semantics", adapter)
         self.assertNotIn("hivecore_slam3d", adapter)
         self.assertNotIn("from hivecore", adapter)
 
@@ -142,4 +145,5 @@ class LocalizationBackendDecouplingTests(unittest.TestCase):
         self.assertIn("pose_input_topic: /robot_pose", profile)
         self.assertIn("status_output_topic: /n01/localization/status", profile)
         self.assertIn("pose_output_topic: /n01/localization/pose", profile)
-        self.assertIn("status_field_paths_json: '{}'", profile)
+        self.assertIn('"reloc_fitness":"reloc_fitness"', profile)
+        self.assertIn('"session":"tracking"', profile)

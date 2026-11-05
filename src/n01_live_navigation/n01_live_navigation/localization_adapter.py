@@ -95,8 +95,8 @@ class N01LocalizationAdapter(Node):
             % (self.status_input_topic, self.status_output_topic,
                self.pose_input_topic, self.pose_output_topic))
         self.get_logger().warning(
-            "Unconfigured status field paths fail closed; configure from the "
-            "installed Lite interface definition and observed status semantics.")
+            "Verified LocStatus field mapping loaded; unknown fields fail closed. "
+            "No absent TF, IMU or general quality fields are inferred.")
 
     def discover_status_type(self):
         matches = [types for name, types in self.get_topic_names_and_types()
