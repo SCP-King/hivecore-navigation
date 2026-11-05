@@ -18,6 +18,7 @@
 #include <sensor_msgs/image_encodings.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <std_msgs/msg/bool.hpp>
+#include <std_msgs/msg/string.hpp>
 #include <tf2_ros/transform_broadcaster.h>
 #include <visualization_msgs/msg/marker.hpp>
 
@@ -31,6 +32,7 @@
 #include <message_filters/time_synchronizer.h>
 
 #include <plan_env/raycast.h>
+#include <plan_env/static_inflation.hpp>
 
 #define logit(x) (log((x) / (1 - (x))))
 
@@ -215,6 +217,7 @@ private:
   // Optional static PCD map layer; dynamic raycasting cannot clear static obstacles.
   void staticCloudCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr& cloud);
   void rebuildStaticOverlay();
+  void publishStaticOverlayStatus(bool ready, const std::string& reason);
 
   // update occupancy by raycasting
   void updateOccupancyCallback();
@@ -270,13 +273,25 @@ private:
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr sliding_map_frame_sub_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr static_cloud_sub_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr static_ready_pub_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr static_status_pub_;
   sensor_msgs::msg::PointCloud2::ConstSharedPtr static_source_cloud_;
+  pcl::PointCloud<pcl::PointXYZ> static_source_decoded_;
+  Eigen::Vector3d static_source_min_{Eigen::Vector3d::Zero()};
+  Eigen::Vector3d static_source_max_{Eigen::Vector3d::Zero()};
   std::vector<char> static_occupancy_buffer_;
   std::vector<char> static_inflate_buffer_;
+  std::vector<plan_env_detail::StaticInflationXYOffset> static_inflate_xy_offsets_;
   bool static_cloud_enabled_{false};
+  bool static_source_valid_{false};
+  bool static_window_intersects_source_bounds_{false};
   int static_cloud_max_points_{1000000};
+  int static_inflate_z_up_steps_{0};
+  int static_inflate_z_down_steps_{0};
   std::string static_cloud_topic_;
+  size_t static_source_points_{0};
+  size_t static_window_points_{0};
   size_t static_occupied_voxels_{0};
+  double static_overlay_rebuild_ms_{0.0};
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr map_pub_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr map_inf_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr sliding_map_bbox_pub_;
