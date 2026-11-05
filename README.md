@@ -1,3 +1,15 @@
+## 统一命令入口与仓库边界
+
+日常操作统一从 `bash scripts/n01 <command>` 进入；查看命令及用途：
+
+```bash
+bash scripts/n01 help
+```
+
+该入口只负责路由到具体工作流，不会自动加载甲方 SLAM/运动环境。FAST-LIO2 是可选的隔离后端，默认 `vendor` 模式保持甲方 SLAM 接口不变；FAST-LIO 私有地图尚不能直接视为已对齐的导航地图。详见 [N-01 仓库结构、解耦边界与脚本治理](docs/n01_repository_structure_and_script_policy.md) 和 [脚本命令清单](scripts/README.md)。
+
+---
+
 ## 新增：FAST-LIO2 可选后端，甲方 SLAM 接口保持不变
 
 新增独立 `n01_fast_lio` ROS 2 Humble 包：使用固定版本的 HKU-MARS FAST-LIO2 ROS2 分支，读取原始 Livox `CustomMsg` + Livox 内置 IMU，所有输出隔离到 `/n01/fast_lio/*`，私有地图帧为 `n01_fast_lio_map`，FAST-LIO TF broadcaster 默认不创建（不会额外注册 `/tf` publisher endpoint）。甲方 `/localization_status`、`/robot_pose`、`/tf`、`/livox/lidar/geo_filtered`、原启动方式均不修改。可在开发阶段与甲方 SLAM 同时订阅传感器做 shadow comparison。
