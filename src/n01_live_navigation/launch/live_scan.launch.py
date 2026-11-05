@@ -10,11 +10,14 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.conditions import IfCondition
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 
 
 def _nodes(context):
+    backend = LaunchConfiguration("localization_backend").perform(context).strip().lower()
+    if backend not in ("hivecore", "external"):
+        raise RuntimeError("localization_backend must be 'hivecore' or 'external'")
     pcd = LaunchConfiguration("pcd_path").perform(context)
     asserted = LaunchConfiguration("pcd_map_frame_asserted").perform(context).lower()
     if asserted != "true":
@@ -50,6 +53,9 @@ def _nodes(context):
                 "frame_id": "map", "min_z": -1.75, "max_z": 3.35, "seed": 0,
             }],
             output="screen",
+            condition=IfCondition(PythonExpression([
+                "'", LaunchConfiguration("localization_backend"), "' == 'hivecore'"
+            ])),
         ),
         Node(
             package="n01_live_navigation", executable="n01_live_scan_bridge",
@@ -203,6 +209,7 @@ def _nodes(context):
 def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument("pcd_path"),
+        DeclareLaunchArgument("localization_backend", default_value="hivecore"),
         DeclareLaunchArgument("pcd_map_frame_asserted", default_value="false"),
         DeclareLaunchArgument("ground_z_map_m", default_value="-0.55"),
         DeclareLaunchArgument("body_height_m", default_value="0.90"),
