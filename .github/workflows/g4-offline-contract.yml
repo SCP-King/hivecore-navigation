@@ -15,6 +15,9 @@ on:
       - 'scripts/build_n01_fast_lio2.sh'
       - 'scripts/n01_fast_lio_bag_preflight.py'
       - 'scripts/run_n01_fast_lio2_bag.sh'
+      - 'scripts/n01'
+      - 'scripts/README.md'
+      - 'docs/n01_repository_structure_and_script_policy.md'
       - 'src/n01_fast_lio/**'
       - 'docs/n01_fast_lio2_integration.md'
       - 'src/n01_offline_integration/test/test_fast_lio2_integration_contract.py'
@@ -30,8 +33,11 @@ jobs:
       - uses: actions/checkout@v4
       - name: Static Bash syntax (never launch ROS or control)
         run: |
-          bash -n scripts/run_n01_g4_full_chain.sh
-          bash -n scripts/run_n01_bag_functional.sh
+          bash -n scripts/n01
+          while IFS= read -r -d '' script; do
+            echo "Checking $script"
+            bash -n "$script"
+          done < <(find scripts src -type f -name '*.sh' -print0)
       - name: Hive2 29-frame four-wheel steer and fixed-pitch source contract
         run: python3 -m unittest discover -s src/n01_offline_integration/test -p 'test_wheel_only_tf_contract.py' -v
       - name: Hive2 authoritative wheel motion YAML audit and G3 mismatch contracts
