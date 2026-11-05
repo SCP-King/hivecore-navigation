@@ -48,8 +48,8 @@ class N01LocalizationAdapter(Node):
             "status_output_topic": "/n01/localization/status",
             "status_header_path": "header",
             "status_stamp_path": "header.stamp",
-            "status_field_paths_json": "{}",
-            "status_expected_values_json": '{"role":"localization","mode":"tracking"}',
+            "status_field_paths_json": '{"session":"session","map_loaded":"map_loaded","reloc_ok":"reloc_ok","reloc_fitness":"reloc_fitness"}',
+            "status_expected_values_json": '{"session":"tracking"}',
             "status_discovery_period_s": 1.0,
             "pose_input_topic": "/robot_pose",
             "pose_output_topic": "/n01/localization/pose",
@@ -129,37 +129,26 @@ class N01LocalizationAdapter(Node):
         self.status_counts["received"] += 1
         values = {}
         errors = []
-        boolean_keys = ("map_loaded", "pose_valid", "tf_valid",
-                        "quality_valid", "tracking_valid", "imu_sync_ok")
-        for key in ("map_loaded", "role", "mode", "pose_valid",
-                    "tf_valid", "quality_valid", "tracking_valid", "imu_sync_ok"):
+        for key in ("session", "map_loaded", "reloc_ok", "reloc_fitness"):
             try:
                 raw = resolve_path(message, self.field_paths.get(key, ""))
-                if key in boolean_keys:
+                if key in ("map_loaded", "reloc_ok"):
                     values[key] = "true" if strict_bool(raw) else "false"
-                else:
+                elif key == "session":
                     values[key] = str(raw).strip().lower()
+                else:
+                    fitness = float(raw)
+                    if not math.isfinite(fitness):
+                        raise ValueError("fitness_not_finite")
+                    values[key] = repr(fitness)
             except (ValueError, TypeError, AttributeError) as exc:
                 values[key] = ""
                 errors.append("%s:%s" % (key, exc))
-        try:
-            fitness = float(resolve_path(
-                message, self.field_paths.get("fitness_mse", "")))
-            values["fitness_mse"] = repr(fitness) if math.isfinite(fitness) else "nan"
-        except (ValueError, TypeError, AttributeError):
-            values["fitness_mse"] = "nan"
-
-        expected_role = str(self.expected_values.get("role", "localization")).lower()
-        expected_mode = str(self.expected_values.get("mode", "tracking")).lower()
-        ready = (
-            values["map_loaded"] == "true"
-            and values["role"] == expected_role
-            and values["mode"] == expected_mode
-            and values["pose_valid"] == "true"
-            and values["tf_valid"] == "true"
-            and values["quality_valid"] == "true"
-            and values["tracking_valid"] == "true"
-        )
+        expected_session = str(self.expected_values.get("session", "tracking")).lower()
+        ready = (values["map_loaded"] == "true"
+                 and values["session"] == expected_session
+                 and values["reloc_ok"] == "true"
+                 and not errors)
         try:
             stamp = resolve_path(message, self.status_stamp_path)
             source_stamp_ns = self.stamp_ns(stamp)
@@ -172,11 +161,11 @@ class N01LocalizationAdapter(Node):
             frame_id = ""
             ready = False
             errors.append("stamp:%s" % exc)
-
         values["backend_status_type"] = self.status_type
-        values["mapping_configured"] = str(bool(self.field_paths)).lower()
-        values["mapping_errors"] = ";".join(errors) if errors else "none"
+        values["status_mapping_valid"] = str(not errors).lower()
+        values["status_mapping_errors"] = ";".join(errors) if errors else "none"
         values["source_stamp_valid"] = str(source_stamp_ns > 0).lower()
+        values["readiness_semantics"] = "map_loaded_and_tracking_and_reloc_ok"
         output = DiagnosticArray()
         output.header.stamp.sec = source_stamp_ns // 1000000000
         output.header.stamp.nanosec = source_stamp_ns % 1000000000
