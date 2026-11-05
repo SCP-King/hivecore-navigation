@@ -1,280 +1,36 @@
-## Live vendor localization -> native SCAN integration (development, read-only)
-
-A new `n01_live_navigation` package connects the already-running Hivecore localization output and filtered Livox cloud to the repository's **native SCAN** inputs. It performs scan-stamp TF lookups and publishes map-frame `/cloud`, `/sensor_pose`, and `/body_pose`; it never publishes `/cmd_vel`, `/cmd_wheel`, or chassis commands. SCAN uses `/move_base_simple/goal` and publishes `/planning/bspline`.
-
-Build and launch only after confirming the PCD is registered in the active vendor map frame:
-
-```bash
-cd /home/demo/lyy/hivecore-navigation
-source /opt/ros/humble/setup.bash
-colcon build --packages-up-to n01_live_navigation scan_planner n01_static_map --event-handlers console_direct+
-source install/setup.bash
-ros2 launch n01_live_navigation live_scan.launch.py \\
-  pcd_path:=/home/demo/lyy/slam_data/maps/cloud_map_20261027_225549.pcd \\
-  pcd_map_frame_asserted:=true ground_z_map_m:=-0.55 body_height_m:=0.90
-```
-
-The PCD frame assertion and ground Z are operator-supplied research assumptions, not automatic registration or floor certification. This launch is planning-only; the Hive2 wheel steering/drive controller is not started or commanded. See [live SCAN integration notes](docs/n01_live_scan_integration.md).
-
----
-
-## 新增：FAST-LIO2 可选后端，甲方 SLAM 接口保持不变
-
-新增独立 `n01_fast_lio` ROS 2 Humble 包：使用固定版本的 HKU-MARS FAST-LIO2 ROS2 分支，读取原始 Livox `CustomMsg` + Livox 内置 IMU，所有输出隔离到 `/n01/fast_lio/*`，私有地图帧为 `n01_fast_lio_map`，FAST-LIO TF broadcaster 默认不创建（不会额外注册 `/tf` publisher endpoint）。甲方 `/localization_status`、`/robot_pose`、`/tf`、`/livox/lidar/geo_filtered`、原启动方式均不修改。可在开发阶段与甲方 SLAM 同时订阅传感器做 shadow comparison。
-
-- 上游与版本：[`hku-mars/FAST_LIO` ROS2 branch](https://github.com/hku-mars/FAST_LIO/tree/ROS2)，commit `cc3c9e8b1469b33b8072764d6db2348ed6dc597f)，ikd-Tree 子模块固定提交见 [集成说明](docs/n01_fast_lio2_integration.md)。
-- 导入/构建：`bash scripts/build_n01_fast_lio2.sh`；若 Livox ROS Driver2 位于已有 overlay，设置 `LIVOX_SETUP=/path/to/install/setup.bash`。
-- 运行前先用 `python3 scripts/n01_fast_lio_bag_preflight.py --bag /home/demo/lyy/slam_data/bags/bag_20261027_225100` 检查原始 Livox CustomMsg 与 IMU 类型。 一键隔离回放并保存 PCD：`bash scripts/run_n01_fast_lio2_bag.sh /home/demo/lyy/slam_data/bags/bag_20261027_225100`。
-- 启动：`ros2 launch n01_fast_lio fast_lio_mapping.launch.py`。地图保存服务：`/n01/fast_lio/map_save`。
-
-**边界**：当前接入 FAST-LIO2 mapping/LIO odometry，不等于已有地图定位、重定位或回环闭合；其私有 map 不会自动与甲方旧 PCD/map 对齐，也没有接入 G4/SCAN 作为在线定位源。上游 LICENSE 为 GPL-2.0（其 package.xml 标注 BSD 与 LICENSE 冲突），商业分发前需解决许可问题。详见 [N-01 FAST-LIO2 集成设计与操作](docs/n01_fast_lio2_integration.md)。
-
-## G4.15：静态 PCD 现在真正进入 SCAN 原生碰撞栅格（2026-10-30）
-
-按“少测试、多开发核心功能”的需求，已在原生 SCAN C++ `GridMap` 增加**可选**的历史 PCD 静态占用层，接入 `/grid_map/static_occupancy`，与实时激光更新分离，滚动地图窗口后可恢复；原生碰撞查询与膨胀层同步考虑静态障碍。仅隔离历史 G4 研究模式自动启动 `n01_static_map`，SCAN 的 `/grid_map/static_overlay_ready` 为真后 G4 才发布 `/initial_path`，G4 观察器也追踪此时序。**这是一项实际规划器功能开发**，不是仅改参数或只发布未消费的话题。
-
-GitHub 的纯 Python / 源码 CI 回归通过，但真实 Ubuntu ROS 2 Humble **C++ 编译与新的完整 Bag+PCD 联调尚未进行**；现阶段不能声称实机静态障碍避障、3D 地面或车轮执行已经成功。后续优先开发 G4 利用完整 PCD 进行障碍绕行（此前 29 路点中 9 点触及 PCD 表面冲突），避免只要求重复 Bag。说明：[G4.15 原生 SCAN 静态 PCD 地图融合](docs/n01_g415_native_scan_static_pcd_integration.md)。
-
-## 2026-10-30 19:41：历史 Bag 全导航话题链已通，实机在线 SLAM 尚未观察到 tracking
-
-**新验收阶段分离**：用户历史 Bag `n01_bag_functional_20261030_194103_1618696.tar.gz` 已通过 G4 +0.30m 原地图、研究 Z=-0.55m 与原生 SCAN mode3 `ground_height=-0.55/body_height=.85` 的端到端**话题顺序**检查。G4 发布 29 点、8.036m 研究路线后，产生 1 条新 SCAN B 样条、1 条 bridge Path，下游 G2/G3 消息有证据，108 次 G3 求解中 104 条被配置限幅接受，0 底盘运动发布者，CLEAN；**但全静态 PCD 尚未融入 SCAN，G3 几何上跟随新 G4 路线未验证，29 个路点中 9 个 PCD 表面冲突，不能视作可行驶路线**。
-
-用户随后真实在线只读 JSON 仅观察到 Hive2 +0.90m `/tf_static`，未收到 `map→base_footprint`、`/localization_status` 或过滤 Livox；另有 2 个 `/cmd_vel` 发布端。**在线 SLAM localization/tracking 尚未证明，禁止注入导航指令。** 仓库已在 live 只读检查增加所有独立阻断原因报告；另修复了 G4 研究 `manifest.json` 末尾字面 `\\n` 使其不再出现 JSON `Extra data`。已通过 CI 单元测试；报告见 [19:41 历史 Bag 与在线定位双证据审计](docs/n01_g413_194103_bag_and_live_localization_acceptance.md)。近期工作先由甲方静止启动 SLAM localization / geo_filtered、核对唯一 0.90 TF 及旧 PCD 配准；不再要求重跑相同历史 Bag。
-
-## G4.13 — 原始地图 +0.30m / 局部候选 -0.55m，开始定位导航联调（2026-10-30）
-
-**当前仓库已新增隔离的历史地图实测坐标约定 smoke**（不改变旧 0.90m 回放的默认行为）：启用 `N01_G4_MAPPING_SMOKE=1`，G4/SCAN 研究路径使用局部 map Z=-0.55m、SCAN `grid_map.ground_height=-0.55m` 与 `grid_map.body_height=0.85m`，历史 Bag 的 body/lidar 按 SLAM 动态 +0.30m 重建，原生 SCAN mode3 将路径 Z 加体高得到约 map Z=+0.30m。**这是一项不验证接地/碰撞/行驶的离线计算链实验，必须用物理隔离开发机；不能标记 `N01_G4_FLOOR_Z_VERIFIED=1`。** G4 全局路由进入 SCAN/G2/G3 的真实 ROS 数据流仍需这次新实验的日志，不可声称已经通过。
-
-`n01_static_map` 的历史 PCD Z 窗口扩大到 [-1.75,+3.35]m 并实际执行 Z 过滤，且日志计入排除样本；**但原生 SCAN 尚未订阅静态层 `/grid_map/static_occupancy`，所以静态 PCD 融合还未完成**。在线静止定位新增 `scripts/n01_live_localization_readonly_audit.py`，仅订阅 TF、`LocalizationStatus` 和点云并存储发布端元数据，不发布控制指令；此工具不会自动更改双 RSP 或将 `slam_rsp_disabled_confirmed` 改为 true。
-
-所有操作命令、安全边界、输出文件和验收标准见 [G4.13 历史地图与静止定位联调步骤](docs/n01_g413_mapping_localization_navigation_runbook.md)。现有配置仅为研发目标，**尚未实机移动测试**。
-
-**2026-10-30 TF 时间轴重核对**：原 Bag 的动态 base_footprint→base_link=+0.30m 有 866 条，静态 +0.90m 一条；原始 PCD 地面候选约 map Z=-0.60～-0.50m，与动态链点云低簇吻合。**旧地图研究使用 0.30m 历史链，未来实机使用甲方 0.90m 运动 URDF；两者之间必须先完成地图/定位对齐，不能只改一个高度数值。** 已新增 G4.12 只读 TF 分布、全三维坐标差异审计，并支持显式研究回放 0.30m，保留旧回放默认。见 [历史地图 TF 冲突修正](docs/n01_g412_historical_mapping_030_vs_motion_090.md)。此前 G3 约束通过仍属数学和软件流程证据，不代表旧 PCD 几何配准。
-
 # hivecore-navigation
 
-## Live vendor localization -> native SCAN integration (development, read-only)
+N-01 药厂 DOG 导航避障工程。核心架构原则：**导航算法与定位/SLAM 后端解耦**。
 
-A new `n01_live_navigation` package connects the already-running Hivecore localization output and filtered Livox cloud to the repository's **native SCAN** inputs. It performs scan-stamp TF lookups and publishes map-frame `/cloud`, `/sensor_pose`, and `/body_pose`; it never publishes `/cmd_vel`, `/cmd_wheel`, or chassis commands. SCAN uses the native RViz goal topic `/move_base_simple/goal` and publishes `/planning/bspline`.
+当前部署连接甲方无 GUI 的 HiveCore SLAM3D Lite。Lite 由甲方 CLI 独立管理；本仓库不包含、不构建、不启动旧全量 SLAM3D，也不依赖其内部消息包或 GUI。
 
-Build and launch (only after confirming that the PCD is registered in the active vendor map frame):
+所有外部定位输入必须先经过 N-01 Localization Adapter：
 
-```bash
-cd /home/demo/lyy/hivecore-navigation
-source /opt/ros/humble/setup.bash
-colcon build --packages-up-to n01_live_navigation scan_planner n01_static_map --event-handlers console_direct+
-source install/setup.bash
-ros2 launch n01_live_navigation live_scan.launch.py \\
-  pcd_path:=/home/demo/lyy/slam_data/maps/cloud_map_20261027_225549.pcd \\
-  pcd_map_frame_asserted:=true ground_z_map_m:=-0.55 body_height_m:=0.90
-```
+- 外部输入：`/loc_status`、`/robot_pose`。
+- 内部规范接口：`/n01/localization/status`（DiagnosticArray）、`/n01/localization/pose`（Odometry）。
+- 导航桥接、地图融合、动态障碍物和 SCAN 只依赖内部规范接口与标准 ROS 消息，不得直接引用 SLAM 私有消息或字段。
+- Lite 状态字段映射必须以目标机真实接口定义为准；未配置或未验证时 fail-closed。
 
-The PCD frame assertion and ground Z are operator-supplied research assumptions, not automatic registration or floor certification. This launch is planning-only; the Hive2 wheel steering/drive controller is not started or commanded. See [live SCAN integration notes](docs/n01_live_scan_integration.md).
-
-
-ROS 2 Humble source-only N-01 navigation research. Apache-2.0.
-
-## Components
-
-- `src/scan_planner/`: SCAN-Planner **real ROS 2** 3D map, DynAStar, B-spline optimization, FSM and `scan_planner_msgs`. Imported from `wuyi2121/SCAN-Planner`, `ros2-community` commit `d0b921c9b05a6d291d144d60882b2e0e88d2c0e0`. See `src/scan_planner/UPSTREAM_SOURCE.txt` and `NOTICE`. Only `scan_planner_node` is built; original control and simulator executables are **not included**.
-- `src/n01_scan_dynacbf_bridge/`: test-only SCAN B-spline to `nav_msgs/Path` reference adapter and default-disarmed output validator, **not** real dynamic-avoidance MPC.
-- Other `src/n01_*` packages: legacy N-01 baseline; do not count the legacy 2D A* as SCAN.
-
-**Current status:** G2.2 real-Bag functional smoke has passed, G2.3 strict path geometry needs more runtime evidence, and G3 now adds an **unverified offline finite-control MPC-CBF approximation**. There is **no real robot motion authorization**. Kalman/full Hive2 MPC-CBF control is not implemented or safety-certified.
-
-## G1 build
+## 快速入口
 
 ```bash
-cd /home/demo/lyy/hivecore-navigation
-source /opt/ros/humble/setup.bash
-python3 -m unittest discover -s src/n01_scan_dynacbf_bridge/test -v
-colcon build --packages-up-to scan_planner n01_scan_dynacbf_bridge --event-handlers console_direct+
-source install/setup.bash
+bash scripts/n01 help
+git status --short --branch
 ```
 
-## G1 isolated smoke test
+## 文档
 
-Set these in **each** terminal, without loading any real robot or SLAM overlays:
+- [项目总览](docs/N01_PROJECT_GUIDE.md)
+- [定位后端解耦接口契约](docs/n01_localization_backend_contract.md)
+- [实时导航全栈](docs/n01_live_navigation_full_stack.md)
+- [实时 SCAN 集成](docs/n01_live_scan_integration.md)
+- [四阶段导航交付](docs/n01_four_stage_navigation_delivery.md)
+- [脚本与分支治理](docs/n01_repository_structure_and_script_policy.md)
 
-```bash
-export ROS_DOMAIN_ID=88 ROS_LOCALHOST_ONLY=1
-export ROS_HOME=/home/demo/lyy/n01_runtime/ros_home/g1_scan
-export ROS_LOG_DIR="$ROS_HOME/log"
-mkdir -p "$ROS_LOG_DIR"
-source /opt/ros/humble/setup.bash
-source /home/demo/lyy/hivecore-navigation/install/setup.bash
-```
+## 安全边界
 
-- Terminal A: `ros2 launch scan_planner n01_isolated.launch.py` (real SCAN algorithms, no controller)
-- Terminal B: `ros2 run n01_scan_dynacbf_bridge scan_g1_feed` (deterministic offline pointcloud/poses/goal; no TF or cmd_vel)
-- Terminal C: `ros2 run n01_scan_dynacbf_bridge scan_g1_monitor` (diagnostic observer, max 90 seconds or 8 seconds after first valid spline; saves `$ROS_HOME/g1_smoke_report.json`)
-- Verify: `ros2 topic info /cmd_vel -v`; no real command publisher allowed. When all tests are stopped, report results.
+当前只输出规划候选、诊断与可视化，不发布底盘速度、轮速或执行器命令。RViz（如启用）仅为 N-01 可视化，不是 SLAM GUI 或 Lite 的运行依赖。
 
-**Never run `bridge_smoke_feed` alongside `scan_g1_feed` or real SCAN**, because the former publishes synthetic `/planning/bspline`. This G1 smoke test checks live message observations only; trajectory collision, actual MPC, robot-model compatibility, 500 ms requirement and long-duration tests remain NOT TESTED.
+## 分支
 
-Keep PCD, Bag, manuals, offline test outputs and reports outside this source-only repository.
-
-## G1 diagnostic note
-
-If the planner prints `final_plan_success=1` but the observer reports `bspline_messages=0`, do **not** mark G1 as PASS. The diagnostic monitor records publisher discovery, topic types/QoS, received `/cloud`, `/body_pose`, `/move_base_simple/goal`, and presence of real `/cmd_vel` publishers to distinguish missing input, DDS endpoint mismatch and observation-window timing. The test feed repeats the same stationary offline goal at 4, 17, 32 and 52 seconds. A stationary synthetic robot is not evidence of physical motion or obstacle-free trajectory execution.
-
-## Hive2 / SLAM / SCAN 参数基线（2026-10-29）
-
-- [Hive2 参数审计与未决冲突（中文）](docs/hive2_parameter_inventory_20261029.md)
-- [机器可读 Hive2 参数清单（JSON）](config/reference/hive2_parameter_inventory_20261029.json)
-
-参数清单记录 Hive2 运动栈与 SLAM 的已报告尺寸、Livox MID-360 外参、点云/TF 接口、速度需求，以及**用户已选定的 Hive2 当前高度 0.90 m**、最新 SLAM release 中**仍默认开启**的 0.30 m mount RSP（须显式关闭）、仍需核验的 TF 唯一发布者和药厂安全距离。**只读参考，不是 ROS 可执行配置**。本仓库的 G1 `planner.yaml` 仍然使用独立的合成测试几何值；不能将其当作 Hive2 真机参数。当前高度基准虽确定，但最新 SLAM 的双发布风险仍存在，运行态未验证，故不自动修改启动配置。
-
-**P0 接口与只读预检规格：** [Hive2 SLAM / SCAN P0 Readiness Preflight](docs/hive2_slam_p0_readiness_preflight.md)，涵盖显式禁用 SLAM mount RSP、`/localization_status` tracking/配准判据和 `lidar_link→map` 点云采集时刻转换。**尚未执行、不作为真机运行许可。**
-
-## Hive2 固定 pitch 姿态、四轮独立驱动/转向与 29-frame 源码核对契约（2026-10-30）
-
-**当前开发范围：四条腿的 pitch1/pitch2 保持固定工作姿态，四轮独立驱动、踝部 ankle_yaw 转向（已从甲方 Xacro 核对）。** 不开发足式步态、抬腿跨障或腿式路径控制；固定姿态的四条腿、轮胎、外壳**依然计入机器人碰撞外廓**，不能当作单个点质量。轮速/转向控制分配由尚未收集的 hive2_driver/config/robot_motion.yaml 管理，真实固定关节角与保持反馈仍未验证，因此 G3 数值模型不得当作 Hive2 实机运动控制模型。
-
-- [29 个 link、四个 wheel_link、转向 ankle_yaw、Livox/LPMS IMU 与开发边界（中文）](docs/hive2_wheel_only_tf_frame_contract_20261030.md)
-- [机器可读只读 JSON](config/reference/hive2_wheel_only_tf_contract_20261030.json)
-
-**用户所报告的录制 Bag** 使用 `map → base_footprint → base_link → lidar_link` 直接链（无 `odom` 帧），过滤云 `/livox/lidar/geo_filtered` 的帧为 `lidar_link`；在原始采集时刻变换到 `map`。本仓库 `n01_sensor.yaml` 的目标帧现改为 `map`，sensor-only 仍允许 `lidar_link`。历史 0.30/0.90m 竞争 TF、实际地面 Z、整机净空仍须验证。**这只是接口基线，不会启用实机控制或放宽安全门控。**
-
-**Hive2 `robot_motion.yaml` 双副本审计完成（2026-10-30）：** 用户上传安装版与配置版两份文件，内容逐字节一致（SHA-256 `3f19abe0a65e02b3…434584f0`）。四轮独立驱动与 ankle_yaw 转向、轮径 0.095m、底盘线速度上限配置 2.0m/s、最大线加速度配置 1.0m/s²、常规线加速度 0.6m/s²、命令超时 0.2s、底盘 odom TF 配置关闭，均已有实际 YAML 依据。**G3 当前默认加速度 3.2m/s² 高于底盘最大配置 1.0m/s²**，且使用未验证的全向点质点模型，绝不可视为 Hive2 可执行路径；四轮转向控制律仍须核对 `motion_controller/ChassisController`。参见 [robot_motion 源码与 G3 差异报告](docs/hive2_robot_motion_yaml_audit_20261030.md) 和 [只读 JSON](config/reference/hive2_robot_motion_audit_20261030.json)。未修改任何甲方运动配置、未启动硬件。
-
-**原始源码复核新增结论（2026-10-30）**：用户上传的 19 个运动/SLAM 配置文件已经核对。旧版本“25 个 frame”少了 4 个物理 wheel_link，真正 `*_foot_link` 从 `*_thigh_link` 直接固定连接，仅供 KDL IK。 `LocalizationStatus.msg` 的 outer 字段实际为 `control_signal_outer_role: localization`（小写），inner 为 `control_signal_session_mode: tracking`；隔离 bridge 配置已采用准确字段，仍不会在 TF 未核实时放行。SLAM 默认 `launch_robot_state_publisher=true` 与 Hive2 +0.90m 会冲突，须由集成启动层显式禁用；运动脚本的 `HIVE2_SLAM_MAPPING=1` **不是**这个 SLAM RSP 开关。详见 [接口复核文档](docs/hive2_wheel_only_tf_frame_contract_20261030.md)。
-
-## N-01 离线整体框架（最新）
-
-**一键验证：** `bash scripts/run_n01_offline_framework.sh`，自动启动隔离 TF/点云 fixture、严格输入桥接、真实 SCAN、B 样条参考路径与禁用的动态避障接口，并清理打包。可选 `N01_BAG_PATH=/path/to/bag` 对已录制 Bag 做只读清单；本轮**不会自动回放可能含运动命令的 Bag**。
-
-详细边界、流程、验收状态与下一阶段步骤：[N-01 离线集成框架](docs/n01_offline_framework.md)。
-
-**2026-10-29 第三轮离线合成框架验收：PASS**（提交 `0af1e75`，10/10 单测、375 条 map 点云、4/4 条有效 SCAN B 样条、4 条参考路径、零实机指令、清理 CLEAN）。这**不包括真实 Bag 回放、完整 G1 碰撞验收或 DynaCBF/MPC-CBF 求解器**；第三轮的原始测试日志由用户单独保存。
-
-## Real recorded Bag functional replay (offline only)
-
-**Next stage:** read-only whitelist of recorded Livox cloud + TF, reconstruct `lidar_link→map` using recorded map poses and selected Hive2 mounts, then run actual SCAN + reference-Path pipeline. Historical `0.30/0.90 m` conflicting TF edges are not broadcast. No actuator or raw bag playback, no false Localization Tracking claim.
-
-Run `bash scripts/run_n01_bag_functional.sh` after pulling main. See [真实 Bag 功能回放说明](docs/n01_real_bag_functional.md) for one-command test and precise limitations. Synthetic fixture smoke baseline remains unchanged.
-
-**2026-10-29 实际 Bag 开环功能冒烟：PASS**（提交 `91eb96c`，读取过滤点云 180 条、map 转换 99 条、有效 SCAN B 样条 2/2、Path 1 条，零 /cmd_vel，清理 CLEAN）。其余 **81 条因扫描时刻 map TF 不可用被拒绝**；历史 0.30/0.90 m 冲突仍记录为风险。本结果不代表完整碰撞验收或真机定位/动态 MPC-CBF 已实现。
-
-## G2 离线动态障碍功能阶段（首次功能冒烟已通过）
-
-从真实 Bag 重建后的 map 点云输入新增动态聚类、跨帧关联与匀速短时预测，输出 `/n01/offline/dynamic_tracks`，供禁用控制的动态接口读取。**Kalman/MPC-CBF 求解器和真机控制仍未实现；不能视为真实动态障碍安全验收。** 见 [功能说明](docs/n01_dynamic_tracking_stage.md)。
-
-**G2 首轮实测（2026-10-29 20:36，提交 `3b45c13`）：** 29/29 集成单测通过；真实 Bag 点云 99 帧进入动态模块并处理；100 条动态诊断消息，87/99 帧输出未经验证的运动候选（最大 7 个/帧）；SCAN 有效 B 样条 2/2，Path 1 条，/cmd_vel 0，清理 CLEAN。**高候选发生率及最大约 5.94m 的聚类意味着潜在静态结构误报风险**，不能作为真实动态障碍检测精度或 MPC-CBF 安全通过的证据。
-
-## G2.2 离线静态背景过滤和轨迹风险预览（待验收）
-
-在已运行的真实 Bag→SCAN→动态候选链上增加多帧静态栅格过滤、过大聚类排除、运动方向一致性，以及**只读路径近距离风险预览** `/n01/offline/path_risk`。该模块不求解 MPC-CBF，不对真机发任何控制命令，不将“无风险候选”视为安全。沿用 `bash scripts/run_n01_bag_functional.sh` 验证，见 [G2.2 开发与验收范围](docs/n01_g22_functional.md)。
-
-**G2.2 修复版实测（2026-10-29 21:05，提交 `ef851fe`）：** 用户 ROS 2 Humble 一键真实 Bag 测试 PASS（44/44 新集成包单测，99 条 map 点云，运动候选帧 16/99，SCAN 有效 B 样条 2/2，路径风险诊断 95 条，其中 1 次可评估，零 /cmd_vel，清理 CLEAN）。对照旧版 87/99 只能说明过滤输出变化，不证明真实误报率；新阶段优先改善路径/目标时序和有标注动态障碍验证。参见 [G2.2 验收记录](docs/n01_g22_functional.md)。
-
-## G2.3 历史路径与动态障碍时间轴融合（待本机验收）
-
-新增 `ReplayPathSynchronizer`：按历史 Bag 扫描时间戳严格配对 `/body_pose` 和动态目标报告，投影当前记录的机器人位置到**仅作诊断的保留 SCAN Path**；用明确假设的行进速度与目标匀速预测计算相对 ETA、可能重叠位置及跨帧最差风险记录。Path 当前时钟 header **不**等同历史 Bag 时戳。只读输出 `/n01/offline/path_risk`，不创建任何底盘控制话题；仍未实现真 MPC-CBF 求解器。按 `bash scripts/run_n01_bag_functional.sh` 一次性验收。见 [G2.3 开发说明](docs/n01_g23_path_timeline.md)。
-
-**G2.3 21:54 验收复盘：** 原版 `bd60a5a` 时间戳精确配对 99 帧，但 SCAN Path 出现前 95 帧，余下 4 帧均超出 1.5m 走廊，实际可计算动态风险帧数 0。原 runner 的 PASS 含“路径存在但投影不可用也被计为复用”的验收假阳性。新修复对路径超界严格拒绝，另外加最多 160 帧的显式 POST-HOC 历史 Path 几何对照，且与同时序 LIVE 风险严格分账；未在用户 Ubuntu 复测。见 [G2.3 复盘与修复](docs/n01_g23_path_timeline.md)。
-
-## G3 已有真实 Bag 全链数据流与有限时域约束优化（2026-10-29 离线功能 PASS）
-
-不急于做 RViz。现把历史药厂过滤点云（已知 928 帧）尽可能全部送入 map/SCAN/动态跟踪/预测/简化 MPC-CBF 求解器；输出离线约束报告和 `/n01/offline/g3_candidate_path`，**绝不输出底盘运动命令**。一键脚本另生成有真值合成运动障碍的求解正向证据，严格区分它与没有真值的药厂 Bag。见 [G3 数据全流程说明](docs/n01_g3_full_data_pipeline.md)。
-
-**G3 用户真 Bag 实测（2026-10-29 22:52，代码 `1a8a36f`）：** 整份 928 条点云已读取，571 条成功进入 map，569 帧按历史时间戳进入 G3 精确配对；61 帧实际执行数值 MPC-CBF 近似求解并生成候选 Path（51 名义 + 10 含未经认证运动候选约束），SCAN 4/4 有效 B 样条，82/82 集成测试 PASS、零 `/cmd_vel`、清理 CLEAN。**这不是 Hive2 真实动态避障认证**；另有 357 条历史 TF 缺失及 P0 未决。完整审计见 [G3 实测记录](docs/n01_g3_full_data_pipeline.md)。
-
-## 真实 Bag 全链 RViz 演示与 MP4 / GIF（待图形桌面验收）
-
-新增 `bash scripts/run_n01_demo_replay.sh`，将现有 G1/G2/G3 离线结果显示为 RViz 历史点云、SCAN 参考、动态目标、名义/优化轨迹，并录制**RViz 单个窗口**的 MP4、GIF 与 PNG。保持零底盘指令；晚到 Path 的事后计算被显著标记 POST-HOC。详见 [演示使用说明](docs/n01_g123_demo_recording.md)。
-
-
-## G3.3 — 基于已审计 Hive2 四轮运动参数的候选轨迹筛查（2026-10-30）
-
-用户上传的两份 `robot_motion.yaml` 均已读取且 SHA-256 一致，确认底盘线速度配置上限 2m/s、最大线加速度 1.0m/s²（常规 0.6m/s²）、四轮驱动和四个 ankle_yaw 转向关节。现有 G3 求解器采用全向点质点、研究最大加速度 **3.2m/s²**，不能据此认为 Hive2 能执行。
-
-已新增 `g3_hive2_wheel_screen.py`，集成到 `g3_pipeline_core.py` 并在 `g3_frame_evidence.jsonl` 逐帧重算持久化，按 Hive2、SCAN 和 N-01 项目速度要求分别记录候选 XY 的离散平移速度/加速度是否超过配置值；报告聚合超限计数。即使未超限，**四轮转向角度/角速度、实际起始速度、轮速、地面、碰撞与制动均未验证**，`robot_model_execution_feasible=false`、`physical_safety_authorization=NEVER`；未接入任何底盘控制。GitHub 纯 Python CI 已覆盖新筛查及原 G3 单测，**Ubuntu ROS 真实历史 Bag 的该版本仍待单次复验**。
-
-使用说明、技术边界和后续优先顺序：[G3.3 Hive2 约束与 G4 集成路线](docs/n01_g33_hive2_wheel_motion_screen.md)。
-
-## G3.4 — Hive2/SCAN 配置限幅内生成 G3 候选（2026-10-30）
-
-G3.3 发现旧的真实 Bag G3 候选经配置筛查可能显著超出底盘/SCAN 的加速度参数，因此 **G3.4 已修改候选生成器，而不只是后验告警**。`g3_mpc_cbf_core.solve_discrete_mpc_cbf` 新增保留速度、减速和各向半/全加速度增量的 `acceleration_increment` 控制格；真实历史 Bag 的 `G3HistoricalCoordinator` 现在显式使用 `max_speed=.75m/s`、`max_accel=.5m/s²`（SCAN 限值比 Hive2 底盘最大 1.0m/s² 更保守），并对输出 XY 进行独立 G3.3 限幅复检，任何超限候选在发布研究 Path 前被清空。旧 `legacy_fixed_speed` 保留为独立对照，不再作为默认真实历史 Bag 协调器输入。新增 G3.4 合成正向进展、CBF、超限注入拒绝及历史精确时间戳回归；GitHub CI PASS，**尚需一次用户 Ubuntu ROS 2 历史 Bag 运行验证，不代表四轮转向模型已完成**。资料见 [G3.4 配置限幅求解与验收说明](docs/n01_g34_hive2_bounded_candidate_generation.md)。物理控制始终禁用。
-
-## G3.1 逐帧证据审计（已开发，待 Ubuntu ROS 2 回放验收）
-
-真实 Bag 功能脚本与 RViz 演示脚本现在会从 G3 节点独立记录每次 **实际数值求解** 的 `g3_frame_evidence.jsonl`，包含原始历史扫描时间、POST-HOC/回放顺序参考标记、名义与候选 XY、最小 h 代理值、离散 CBF 检查/拒绝次数、研究性质的状态标识。心跳不会作为求解帧。退出时独立核验 journal 并生成 `g3_evidence_summary.json`，若文件缺失、不完整或少于 observer 观察的求解次数则本轮不标记 PASS。此证据仍不是动态障碍真值或 Hive2 碰撞安全验收。
-
-这属于对已通过 G3 功能链的**可审计性增强**，没有增加底盘指令、真实 TF 广播和控制权限。纯 Python 新增 5 项单测已在开发环境通过；尚未在用户 Ubuntu 图形桌面重跑，旧 MP4 不能代替本轮运行时证据。运行说明参见 [G1-G3 演示与 G3.1 逐帧审计](docs/n01_g123_demo_recording.md)。
-
-## G3.2 静态 PCD 背景（仅展示，待 Ubuntu 验收）
-
-此前 RViz `/cloud` 是真实 Bag 的逐帧点云，并不是完整的已保存 PCD 整图；`/nav/test/global_path` 也只是 SCAN 的局部参考（旧 Bag 的测试目标约前方 1.5m），G3 数值候选时域约 1.5s，不等于厂区全局 A→B 导航。
-
-新增可选只读 `n01_static_pcd` 与 RViz 静态底图 `/n01/offline/static_pcd_map`。必须先确认用户 PCD 和历史 Bag `map` 是同一坐标系，然后在运行演示脚本前设置 `N01_STATIC_PCD_PATH=/真实路径/地图.pcd` 和 `N01_PCD_MAP_FRAME_ASSERTED=1`。当前支持未压缩 ASCII/BINARY PCD；不支持 `binary_compressed`。不设置路径时仍显示逐帧点云，并明确告知未加载整图。灰色整图仅用于显示，不进入规划器、不发送底盘控制，不能作为地图配准证明或导航安全授权。详细步骤见 [G1-G3 演示文档](docs/n01_g123_demo_recording.md)。
-
-
-## G4.0 PCD 栅格与目标点路线预览（已开发、待真实 PCD 验收）
-
-新增 `scripts/n01_pcd_goal_preview.py` 和纯 Python 模块 `pcd_goal_grid.py`，将可读的整图 PCD 转为带未知/自由/占据区分的 2D PGM/YAML 栅格并保存 SVG。必须先确认地面高度 `--floor-z`，未提供时只显示 PCD 高程直方统计；可在提供 `--start X Y --goal X Y` 后生成**独立 A* 全图参考折线预览**。默认将未知区域视为不可通行，若显式允许穿越未知区域，结果只供研究可视化。
-
-**本阶段全图 A* 不是 SCAN 输出。** 原生 SCAN 支持 `fsm.navi_mode=3` 接收 `initial_path`，但尚未将这份整图参考路径与静态占据地图接入其局部 B 样条优化，也未真实 PCD/起终点验证。项目此前在真实 Bag 上通过的 SCAN 是局部轨迹规划而非全厂 A→B 导航。开发/验收要求见 [G4 说明](docs/n01_g4_pcd_goal_planning.md)。严格保持离线、无底盘输出。
-
-另外已修复 G3.1 `Path` 名称冲突（ROS Path 覆盖 pathlib.Path）造成的启动崩溃；须在用户 ROS 2 Humble 环境复测。
-
-### G4.4–G4.6：真实 PCD+Bag 的 SCAN 参考路径接口（开发完成，待集中验收）
-
-- `scripts/n01_prepare_g4_research.py` 将现有 G4.2 Bag 射线栅格、G4.0 PCD 切片和原始 PCD 一次性处理为冲突地图、**未验证**的 3D 高度/障碍审计、A* 参考线 JSON、汇总报告。
-- `n01_offline_integration.g4_reference_node` 仅在明确声明的历史 Bag、ROS_DOMAIN_ID=88 本机隔离和 G4 研究开关下运行；起点 XY 和 Z 与历史位姿相符才向 `/initial_path` 发布一次。发现 `/cmd_vel` 发布者则阻断。
-- `g4_offline_scan_reference.launch.py` 显式启动 SCAN 的 `fsm.navi_mode=3`，现有普通 Bag 测试仍默认 mode=1。**这不是 PCD 全图障碍已融合或可实机执行的证明。**
-
-使用方法、一次性验收命令、严格限制见 [G4.4–G4.6 说明](docs/n01_g44_g46_scan_reference.md)。G4.6 尚未取得用户 ROS 2 Humble 的实际 SCAN `/planning/bspline` 结果。
-
-
-## G4.7 — 端到端历史 Bag 路线链路独立观测（2026-10-30）
-
-新增 [G4.7 运行指南](docs/n01_g47_offline_full_chain.md)：`scripts/run_n01_g4_full_chain.sh` 先在已有 PCD/Bag 研究栅格上生成冲突图、3D 表面审计和 SCAN 路径 JSON，再复用原来的安全隔离 Bag 功能 runner，以 SCAN `fsm.navi_mode=3` 订阅严格匹配的 `/initial_path`。独立 `n01_g4_chain_observer` 只统计**该路径到达之后**的原生 B 样条、桥接 Path、G2 及 G3 消息，并将缺口明确记为 `G4_CHAIN_INCOMPLETE`。原 G3 默认入口仍保持 mode1 不变。自动归档 G4 研究文件与运行报告。
-
-**状态：已开发并提交，尚未在用户 Ubuntu/ROS2 环境实际跑完 G4.7；不是离线整链已验收。** 即使链路话题观测通过，也不表示 G3 候选真正跟随了新 A→B 路线，不等于静态整 PCD 已送入 SCAN，也不表示地面/碰撞净空、动态障碍真值或真机运动已验证。实验地面高度 `N01_G4_GROUND_Z_MAP_M` 必须由操作员显式提供；从未授权向实体机器人发运动指令。
-
-
-## G3.4 16:51 真实 Bag 通过 & G4.10 局部多层高度证据检查（2026-10-30）
-
-用户上传并复核 `n01_bag_functional_20261030_165128_1541406.tar.gz`：真实历史 Bag 928 帧全读取（571 转换/357 缺采集时刻 TF 拒绝），SCAN 4 条有效 B 样条，G3.4 104 次求解/104 条平移筛查（Hive2/SCAN **按四位小数浮点容差**超限 0）、103 次 POST-HOC、1 次回放顺序；零运动发布者、退出进程与 ROS 图均 CLEAN。**16 条带 CBF 移动假设轨迹全部是 POST-HOC，64,288 次 CBF 检查无任何候选淘汰，不能宣称动态避障干预成功**。为此新增 G3.5 `cbf_candidate_pruning_observed` 与 `nominal_cbf_proxy_overlap_observed` 独立证据。参见 [G3.4 实际测试审计](docs/n01_g34_real_bag_acceptance_20261030_165128.md)。
-
-第 1 轮 G3.4 离线**平移限幅阶段通过**，但仍非四轮可执行模型。第 2 轮 G4 已新增 `g410_route_surface_ambiguity.py`，在 G4.9 原始 PCD 每路点 Z 表面统计之上生成 `g410_route_surface_ambiguity.json`，区分无 PCD 采样与多层 Z/未知地面；**不自动认地面，不允许放行到三维 SCAN**。见 [G4.10 只读路线表面证据审计](docs/n01_g48_real_bag_anchored_preflight.md#g410-更新沿真实-bag-锚定路线标记局部高度证据缺口只读)。
-
-## G4.11 — 用户目标转为导航全链演示：SCAN mode3 高度对齐只读诊断（2026-10-30）
-
-甲方 Hive2 `base_footprint→base_link` 名义 +0.90m，并不自动证明 `map` 的地面 Z=0。源码确认 SCAN `fsm.navi_mode=3` 的 `pathCallback` 将 `/initial_path` 的 Z 加 `grid_map.body_height`（现值 0.4m），而 G4 参考发布器还会核验路径起点 Z 与 Bag 重建的 `base_link` Z，严限 0.5m。现在的 G4.8 只读流程已新增 `g411_scan_mode3_height_alignment.json`：按**真实 Bag 首个有效位姿**计算如果研究假设 map Z=0 时的高度偏差，不猜地面、不自动放行 SCAN 或实机。新算法与单元测试已提交。下一步优先做**全局研究线→原生 SCAN→G2/G3 的隔离无电机输出联通演示**，之后在线只读确认唯一 0.9m TF 与 SLAM tracking；真实车轮行驶必须另经硬件、安全/停车验证。设计见 [导航全链联调决策与门槛](docs/n01_navigation_full_framework_integration_decision_20261030.md)。
-
-## G4.8 — 第一帧有效 Bag 位姿锚定的只读导航前置检查（2026-10-30）
-
-确认来自同次建图的局部 PCD + Bag 后，研究起点不再使用自动最远点，而是按**历史 Livox 第一帧有效 scan 时间戳**读取 `map→base_footprint`；研究目标必须位于该起点实际连通的 G4.3 已观测、无冲突自由格。地面 map Z 未知时**不允许用旧 `-1.0` 测试值继续生成三维参考路线**。
-
-```bash
-cd /home/demo/lyy/hivecore-navigation
-git -c http.version=HTTP/1.1 pull --ff-only origin main
-env -u N01_G4_GROUND_Z_MAP_M -u N01_G4_FLOOR_Z_VERIFIED bash scripts/run_n01_g4_full_chain.sh
-```
-
-输出 `.../runs/n01_g4_research/run_*/bag_start_preflight/g48_preflight.json` 和 G4.3 XY 研究线路/冲突 SVG。**这一步不运行 ROS 节点，不触发 SCAN，也不允许运动。** 若真实 Bag 起点处在 UNKNOWN，按证据阻断，不偷挪起点。详情：[G4.8 原始 Bag 起点和未知地面 Z 说明](docs/n01_g48_real_bag_anchored_preflight.md)。新版尚待用户 Ubuntu 端实际验证。
-
-
-## N-01 live six-module stack (vendor SLAM preserved)
-
-The `feat/live-localization-scan-bridge` branch integrates the vendor's existing localization with native SCAN: scan-time TF FIFO, exact-stamp `/cloud` + `/sensor_pose` pairing inside SCAN, static PCD overlay, dynamic occupancy plus visualization-only unmatched obstacle tracks, native SCAN B-spline planning, a non-actuating Hive2 four-wheel steering necessary-condition screen, runtime readiness and RViz visualization.
-
-Build/launch and limitations: [N-01 live six-module stack](docs/n01_live_navigation_full_stack.md). The launch remains planning-only; the Hive2 controller allocation, physical wheel-contact geometry, pitch-hold feedback, full-body collision envelope and braking distance are not verified. No actuator command publisher is included.
-
-## N-01 Navigation architecture boundary
-
-The repository's product boundary is N-01 Navigation. The native SCAN planner and N-01 runtime are independent of any one SLAM implementation. Vendor-specific localization status is translated by a backend adapter into the stable ROS interface /n01/localization/status (diagnostic_msgs/DiagnosticArray). The navigation bridge consumes that normalized interface plus standard nav_msgs/Odometry, sensor_msgs/PointCloud2, and TF contracts. The current Hivecore-specific adapter is one backend implementation; other localization systems can provide the same normalized contract without changing SCAN or navigation-core algorithms.
-
-Repository name hivecore-navigation is retained for path/remote compatibility. ROS package/node/internal-topic names follow the n01_ and /n01/<domain>/... conventions. See docs/n01_localization_backend_contract.md and scripts/README.md.
-
-
----
-
-## 仓库统一入口与分支约束
-
-- 日常命令：bash scripts/n01 help
-- 当前架构、模块边界、文档索引和安全验收层级：docs/N01_PROJECT_GUIDE.md
-- Shell 目录、命名与安全清理规则：docs/n01_repository_structure_and_script_policy.md
-- 远程只保留 main 和 dev/n01-current；所有开发直接在 dev/n01-current 进行，不再创建其他迭代分支。
+日常开发仅在 `dev/n01-current`，稳定发布分支为 `main`。禁止创建其他长期或临时开发分支。

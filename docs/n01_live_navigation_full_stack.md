@@ -4,7 +4,7 @@
 
 This branch keeps the vendor Hivecore SLAM process as the localization authority. It does not patch or replace the vendor ICP/IMU implementation.
 
-1. **Localization adapter** — consumes `/localization_status`, filtered Livox clouds and the vendor's `/robot_pose` Odometry. It interpolates the map-frame `base_footprint` pose at each original LiDAR scan timestamp, then composes it with the robot-description `base_footprint <- lidar_link` extrinsic. It publishes exact-stamp map-frame `/cloud`, `/sensor_pose` and `/n01/live_navigation/scan_body_pose`; `/body_pose` is a separate high-rate current body estimate propagated from a recent SLAM anchor using timestamped `/odom`. A bounded FIFO waits for a bracketing odometry pair and the sensor extrinsic; it never substitutes the latest pose or a latest TF.
+1. **Localization adapter** — consumes `/loc_status`, filtered Livox clouds and the vendor's `/robot_pose` Odometry. It interpolates the map-frame `base_footprint` pose at each original LiDAR scan timestamp, then composes it with the robot-description `base_footprint <- lidar_link` extrinsic. It publishes exact-stamp map-frame `/cloud`, `/sensor_pose` and `/n01/live_navigation/scan_body_pose`; `/body_pose` is a separate high-rate current body estimate propagated from a recent SLAM anchor using timestamped `/odom`. A bounded FIFO waits for a bracketing odometry pair and the sensor extrinsic; it never substitutes the latest pose or a latest TF.
 2. **Map system** — `n01_static_map` reads the operator-supplied binary XYZ PCD as a read-only source and publishes one retained `/grid_map/static_occupancy` sample with transient-local QoS; native SCAN retains the static overlay independently from dynamic raycasting and restores it when the sliding window moves.
 3. **Obstacle system** — native SCAN receives the unfiltered map-frame live cloud as its authoritative dynamic occupancy/raycast input. A separate visualization-only tracker compares live returns with coarse static PCD voxels and publishes unmatched candidates and short-lived cluster tracks. Those candidate topics do not replace or filter the SCAN input.
 4. **Path planning** — the repository's native SCAN planner remains the planner. It consumes exact-stamp cloud/pose pairs, maintains the rolling occupancy map, uses the static PCD collision overlay, and accepts goals only through the live readiness gate.
@@ -107,7 +107,7 @@ ros2 launch n01_live_navigation live_scan.launch.py \
 - `ros2 run n01_live_navigation n01_navigation_acceptance` — one-shot read-only A-D topic snapshot.
 - `python3 scripts/n01_live_stack_preflight.py --duration 10` — read-only 10-second topic-rate, timestamp-age, exact cloud/pose pairing, TF publisher and stage-health audit.
 - `/mapping_processing_timings` — raw vendor Vector3Stamped, captured by the supervisor; after the full launch, its subscription count should include `n01_live_runtime_supervisor`.
-- `/robot_pose` — vendor map-frame Odometry used for exact-scan-time pose interpolation.
+- `/n01/localization/pose` — normalized map-frame Odometry used for exact-scan-time pose interpolation.
 
 ## Acceptance boundary
 

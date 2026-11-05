@@ -10,7 +10,7 @@ setup(
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
         ("share/" + package_name, ["package.xml"]),
         ("share/" + package_name + "/launch", ["launch/live_scan.launch.py"]),
-        ("share/" + package_name + "/config", ["config/live_scan.yaml"]),
+        ("share/" + package_name + "/config", ["config/live_scan.yaml", "config/slam3d_lite_adapter.yaml"]),
         ("share/" + package_name + "/rviz", ["rviz/n01_live_navigation.rviz"]),
     ],
     install_requires=["setuptools"],
@@ -21,6 +21,7 @@ setup(
     license="Apache-2.0",
     entry_points={
         "console_scripts": [
+            "n01_localization_adapter = n01_live_navigation.localization_adapter:main",
             "n01_live_scan_bridge = n01_live_navigation.live_scan_bridge:main",
             "n01_live_goal_gate = n01_live_navigation.goal_gate:main",
             "n01_live_runtime_supervisor = n01_live_navigation.runtime_supervisor:main",

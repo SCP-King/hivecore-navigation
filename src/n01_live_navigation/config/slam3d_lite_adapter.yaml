@@ -1,0 +1,16 @@
+# External backend wiring. Navigation consumes only normalized N-01 topics.
+# Fill status_field_paths_json after inspecting the installed /loc_status type.
+# An empty mapping deliberately leaves localization NOT READY.
+n01_localization_adapter:
+  ros__parameters:
+    status_input_topic: /loc_status
+    status_output_topic: /n01/localization/status
+    status_header_path: header
+    status_stamp_path: header.stamp
+    status_field_paths_json: '{}'
+    status_expected_values_json: '{"role":"localization","mode":"tracking"}'
+    status_discovery_period_s: 1.0
+    pose_input_topic: /robot_pose
+    pose_output_topic: /n01/localization/pose
+    expected_pose_frame: map
+    expected_pose_child_frame: base_footprint

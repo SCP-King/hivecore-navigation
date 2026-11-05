@@ -114,3 +114,32 @@ class LiveStackContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LocalizationBackendDecouplingTests(unittest.TestCase):
+    def test_navigation_bridge_uses_only_normalized_localization_inputs(self):
+        bridge = (ROOT / "src/n01_live_navigation/n01_live_navigation/live_scan_bridge.py").read_text()
+        launch = (ROOT / "src/n01_live_navigation/launch/live_scan.launch.py").read_text()
+        self.assertIn('"pose_topic": "/n01/localization/pose"', launch)
+        self.assertIn('"status_topic": "/n01/localization/status"', launch)
+        self.assertNotIn("/loc_status", bridge)
+        self.assertNotIn('"/robot_pose"', bridge)
+        self.assertNotIn("hivecore_slam3d", bridge)
+
+    def test_adapter_discovers_external_type_and_fails_closed_without_mapping(self):
+        adapter = (ROOT / "src/n01_live_navigation/n01_live_navigation/localization_adapter.py").read_text()
+        self.assertIn('"/loc_status"', adapter)
+        self.assertIn("get_topic_names_and_types", adapter)
+        self.assertIn("get_message(type_name)", adapter)
+        self.assertIn('"status_field_paths_json": "{}"', adapter)
+        self.assertIn("field_path_not_configured", adapter)
+        self.assertNotIn("hivecore_slam3d", adapter)
+        self.assertNotIn("from hivecore", adapter)
+
+    def test_adapter_profile_uses_vendor_topics_only_at_boundary(self):
+        profile = (ROOT / "src/n01_live_navigation/config/slam3d_lite_adapter.yaml").read_text()
+        self.assertIn("status_input_topic: /loc_status", profile)
+        self.assertIn("pose_input_topic: /robot_pose", profile)
+        self.assertIn("status_output_topic: /n01/localization/status", profile)
+        self.assertIn("pose_output_topic: /n01/localization/pose", profile)
+        self.assertIn("status_field_paths_json: '{}'", profile)

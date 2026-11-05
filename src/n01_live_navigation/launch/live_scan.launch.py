@@ -1,4 +1,4 @@
-"""Live vendor SLAM -> native SCAN integration; planning outputs only.
+"""External localization -> native SCAN integration; planning outputs only.
 
 This launch does not start a SLAM backend, a controller, or any cmd_vel publisher.
 The operator must explicitly assert that the supplied PCD belongs to the active
@@ -9,15 +9,11 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
-from launch.conditions import IfCondition
-from launch.substitutions import LaunchConfiguration, PythonExpression
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 
 def _nodes(context):
-    backend = LaunchConfiguration("localization_backend").perform(context).strip().lower()
-    if backend not in ("hivecore", "external"):
-        raise RuntimeError("localization_backend must be 'hivecore' or 'external'")
     pcd = LaunchConfiguration("pcd_path").perform(context)
     asserted = LaunchConfiguration("pcd_map_frame_asserted").perform(context).lower()
     if asserted != "true":
@@ -36,25 +32,10 @@ def _nodes(context):
     rviz_config = LaunchConfiguration("rviz_config").perform(context)
     return [
         Node(
-            package="n01_live_navigation", executable="n01_hivecore_localization_adapter",
-            name="n01_hivecore_localization_adapter",
-            parameters=[{
-                "input_topic": "/localization_status",
-                "input_type": "hivecore_slam3d/msg/LocalizationStatus",
-                "output_topic": "/n01/localization/status",
-            }],
-            output="screen",
-            condition=IfCondition(PythonExpression([
-                "'", LaunchConfiguration("localization_backend"), "' == 'hivecore'"
-            ])),
-        ),
-        Node(
-            package="n01_static_map", executable="static_map_node",
-            name="n01_live_static_pcd",
-            parameters=[{
-                "pcd_path": pcd, "resolution": 0.05, "publish_rate": 1.0,
-                "frame_id": "map", "min_z": -1.75, "max_z": 3.35, "seed": 0,
-            }],
+            package="n01_live_navigation", executable="n01_localization_adapter",
+            name="n01_localization_adapter",
+            parameters=[os.path.join(get_package_share_directory("n01_live_navigation"),
+                "config", "slam3d_lite_adapter.yaml")],
             output="screen",
         ),
         Node(
@@ -63,7 +44,7 @@ def _nodes(context):
             parameters=[{
                 "status_topic": "/n01/localization/status",
                 "cloud_topic": "/livox/lidar/geo_filtered",
-                "pose_topic": "/robot_pose",
+                "pose_topic": "/n01/localization/pose",
                 "odom_topic": "/odom", "odom_frame": "odom",
                 "odom_child_frame": "base_link",
                 "expected_cloud_frame": "lidar_link",
@@ -209,7 +190,6 @@ def _nodes(context):
 def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument("pcd_path"),
-        DeclareLaunchArgument("localization_backend", default_value="hivecore"),
         DeclareLaunchArgument("pcd_map_frame_asserted", default_value="false"),
         DeclareLaunchArgument("ground_z_map_m", default_value="-0.55"),
         DeclareLaunchArgument("body_height_m", default_value="0.90"),

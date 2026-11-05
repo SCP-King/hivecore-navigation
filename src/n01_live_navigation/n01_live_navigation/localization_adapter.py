@@ -1,82 +1,215 @@
-"""Hivecore-specific localization status adapter.
+"""Backend-neutral N-01 localization adapter.
 
-This is the only N-01 module that knows the vendor LocalizationStatus schema.
-It translates that schema into the stable, backend-neutral DiagnosticArray
-contract consumed by the navigation core.
+Discovers the external status message type at runtime and maps only explicitly
+configured field paths. Unknown or unmapped status fields always fail closed.
 """
+import json
 import math
+import time
 
 import rclpy
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
+from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from rosidl_runtime_py.utilities import get_message
 
 
-class HivecoreLocalizationAdapter(Node):
+def resolve_path(message, path):
+    if not path:
+        raise ValueError("field_path_not_configured")
+    value = message
+    for part in path.split("."):
+        if not hasattr(value, part):
+            raise ValueError("field_path_missing:" + path)
+        value = getattr(value, part)
+    return value
+
+
+def strict_bool(value):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in ("true", "1", "yes", "valid", "ok"):
+            return True
+        if normalized in ("false", "0", "no", "invalid", "error"):
+            return False
+    raise ValueError("boolean_value_unrecognized")
+
+
+class N01LocalizationAdapter(Node):
     def __init__(self):
-        super().__init__("n01_hivecore_localization_adapter")
-        self.declare_parameter("input_topic", "/localization_status")
-        self.declare_parameter("input_type", "hivecore_slam3d/msg/LocalizationStatus")
-        self.declare_parameter("output_topic", "/n01/localization/status")
-        self.input_topic = str(self.get_parameter("input_topic").value)
-        self.input_type = str(self.get_parameter("input_type").value)
-        self.output_topic = str(self.get_parameter("output_topic").value)
-        if not self.input_topic or not self.output_topic:
-            raise ValueError("localization adapter topics must be non-empty")
-        self.input_class = get_message(self.input_type)
-        self.publisher = self.create_publisher(
-            DiagnosticArray, self.output_topic, qos_profile_sensor_data)
-        self.subscription = self.create_subscription(
-            self.input_class, self.input_topic, self.on_status, qos_profile_sensor_data)
+        super().__init__("n01_localization_adapter")
+        defaults = {
+            "status_input_topic": "/loc_status",
+            "status_output_topic": "/n01/localization/status",
+            "status_header_path": "header",
+            "status_stamp_path": "header.stamp",
+            "status_field_paths_json": "{}",
+            "status_expected_values_json": '{"role":"localization","mode":"tracking"}',
+            "status_discovery_period_s": 1.0,
+            "pose_input_topic": "/robot_pose",
+            "pose_output_topic": "/n01/localization/pose",
+            "expected_pose_frame": "map",
+            "expected_pose_child_frame": "base_footprint",
+        }
+        for name, value in defaults.items():
+            self.declare_parameter(name, value)
+        get = lambda name: self.get_parameter(name).value
+        self.status_input_topic = str(get("status_input_topic"))
+        self.status_output_topic = str(get("status_output_topic"))
+        self.status_header_path = str(get("status_header_path"))
+        self.status_stamp_path = str(get("status_stamp_path"))
+        self.field_paths = json.loads(str(get("status_field_paths_json")))
+        self.expected_values = json.loads(str(get("status_expected_values_json")))
+        self.pose_input_topic = str(get("pose_input_topic"))
+        self.pose_output_topic = str(get("pose_output_topic"))
+        self.expected_pose_frame = str(get("expected_pose_frame")).lstrip("/")
+        self.expected_pose_child_frame = str(get("expected_pose_child_frame")).lstrip("/")
+        period = float(get("status_discovery_period_s"))
+        if not all((self.status_input_topic.startswith("/"),
+                    self.status_output_topic.startswith("/"),
+                    self.pose_input_topic.startswith("/"),
+                    self.pose_output_topic.startswith("/"),
+                    0.2 <= period <= 5.0,
+                    isinstance(self.field_paths, dict),
+                    isinstance(self.expected_values, dict))):
+            raise ValueError("invalid localization adapter configuration")
+
+        self.status_pub = self.create_publisher(
+            DiagnosticArray, self.status_output_topic, qos_profile_sensor_data)
+        self.pose_pub = self.create_publisher(
+            Odometry, self.pose_output_topic, qos_profile_sensor_data)
+        self.pose_sub = self.create_subscription(
+            Odometry, self.pose_input_topic, self.on_pose, qos_profile_sensor_data)
+        self.status_sub = None
+        self.status_type = ""
+        self.status_counts = {"received": 0, "published": 0, "mapping_errors": 0}
+        self.pose_counts = {"received": 0, "published": 0, "rejected": 0}
+        self.create_timer(period, self.discover_status_type)
         self.get_logger().info(
-            "Hivecore-specific status adapter: %s -> %s" %
-            (self.input_topic, self.output_topic))
+            "N-01 backend adapter: status %s -> %s; pose %s -> %s"
+            % (self.status_input_topic, self.status_output_topic,
+               self.pose_input_topic, self.pose_output_topic))
+        self.get_logger().warning(
+            "Unconfigured status field paths fail closed; configure from the "
+            "installed Lite interface definition and observed status semantics.")
+
+    def discover_status_type(self):
+        matches = [types for name, types in self.get_topic_names_and_types()
+                   if name == self.status_input_topic]
+        if not matches or len(matches[0]) != 1:
+            return
+        type_name = matches[0][0]
+        if type_name == self.status_type and self.status_sub is not None:
+            return
+        try:
+            message_class = get_message(type_name)
+            if self.status_sub is not None:
+                self.destroy_subscription(self.status_sub)
+            self.status_sub = self.create_subscription(
+                message_class, self.status_input_topic, self.on_status,
+                qos_profile_sensor_data)
+            self.status_type = type_name
+            self.get_logger().info(
+                "Discovered external localization status type: %s" % type_name)
+        except Exception as exc:
+            self.status_sub = None
+            self.status_type = ""
+            self.get_logger().error("Cannot load status type %s: %s" % (type_name, exc))
 
     @staticmethod
-    def _bool(value):
-        return "true" if bool(value) else "false"
+    def stamp_ns(stamp):
+        return int(stamp.sec) * 1000000000 + int(stamp.nanosec)
 
     def on_status(self, message):
-        values = {
-            "map_loaded": self._bool(getattr(message, "config_context_map_loaded", False)),
-            "role": str(getattr(message, "control_signal_outer_role", "")),
-            "mode": str(getattr(message, "control_signal_session_mode", "")),
-            "pose_valid": self._bool(getattr(message, "registration_output_pose_published", False)),
-            "tf_valid": self._bool(getattr(message, "registration_output_tf_published", False)),
-            "quality_valid": self._bool(getattr(message, "registration_output_fitness_evaluation_ok", False)),
-            "tracking_valid": self._bool(getattr(message, "registration_output_tracking_compose_ok", False)),
-            "imu_sync_ok": self._bool(getattr(message, "fusion_path_imu_sync_ok", False)),
-        }
+        self.status_counts["received"] += 1
+        values = {}
+        errors = []
+        boolean_keys = ("map_loaded", "pose_valid", "tf_valid",
+                        "quality_valid", "tracking_valid", "imu_sync_ok")
+        for key in ("map_loaded", "role", "mode", "pose_valid",
+                    "tf_valid", "quality_valid", "tracking_valid", "imu_sync_ok"):
+            try:
+                raw = resolve_path(message, self.field_paths.get(key, ""))
+                if key in boolean_keys:
+                    values[key] = "true" if strict_bool(raw) else "false"
+                else:
+                    values[key] = str(raw).strip().lower()
+            except (ValueError, TypeError, AttributeError) as exc:
+                values[key] = ""
+                errors.append("%s:%s" % (key, exc))
         try:
-            fitness = float(getattr(message, "registration_output_fitness_mse", float("nan")))
-        except (TypeError, ValueError):
-            fitness = float("nan")
-        values["fitness_mse"] = repr(fitness) if math.isfinite(fitness) else "nan"
+            fitness = float(resolve_path(
+                message, self.field_paths.get("fitness_mse", "")))
+            values["fitness_mse"] = repr(fitness) if math.isfinite(fitness) else "nan"
+        except (ValueError, TypeError, AttributeError):
+            values["fitness_mse"] = "nan"
 
-        ready = all((
-            values["map_loaded"] == "true",
-            values["role"].lower() == "localization",
-            values["mode"].lower() == "tracking",
-            values["pose_valid"] == "true",
-            values["tf_valid"] == "true",
-            values["quality_valid"] == "true",
-            values["tracking_valid"] == "true",
-        ))
+        expected_role = str(self.expected_values.get("role", "localization")).lower()
+        expected_mode = str(self.expected_values.get("mode", "tracking")).lower()
+        ready = (
+            values["map_loaded"] == "true"
+            and values["role"] == expected_role
+            and values["mode"] == expected_mode
+            and values["pose_valid"] == "true"
+            and values["tf_valid"] == "true"
+            and values["quality_valid"] == "true"
+            and values["tracking_valid"] == "true"
+        )
+        try:
+            stamp = resolve_path(message, self.status_stamp_path)
+            source_stamp_ns = self.stamp_ns(stamp)
+            if source_stamp_ns <= 0:
+                raise ValueError("zero_status_stamp")
+            header = resolve_path(message, self.status_header_path)
+            frame_id = str(getattr(header, "frame_id", ""))
+        except (ValueError, TypeError, AttributeError) as exc:
+            source_stamp_ns = 0
+            frame_id = ""
+            ready = False
+            errors.append("stamp:%s" % exc)
+
+        values["backend_status_type"] = self.status_type
+        values["mapping_configured"] = str(bool(self.field_paths)).lower()
+        values["mapping_errors"] = ";".join(errors) if errors else "none"
+        values["source_stamp_valid"] = str(source_stamp_ns > 0).lower()
+        output = DiagnosticArray()
+        output.header.stamp.sec = source_stamp_ns // 1000000000
+        output.header.stamp.nanosec = source_stamp_ns % 1000000000
+        output.header.frame_id = frame_id
         status = DiagnosticStatus()
         status.name = "localization"
         status.level = DiagnosticStatus.OK if ready else DiagnosticStatus.ERROR
         status.message = "tracking_ready" if ready else "localization_not_ready"
-        status.values = [KeyValue(key=key, value=value) for key, value in values.items()]
-        output = DiagnosticArray()
-        output.header = message.header
+        status.values = [KeyValue(key=k, value=str(v)) for k, v in values.items()]
         output.status = [status]
-        self.publisher.publish(output)
+        self.status_pub.publish(output)
+        self.status_counts["published"] += 1
+        if errors:
+            self.status_counts["mapping_errors"] += 1
+
+    def on_pose(self, message):
+        self.pose_counts["received"] += 1
+        stamp_ns = self.stamp_ns(message.header.stamp)
+        frame = str(message.header.frame_id).lstrip("/")
+        child = str(message.child_frame_id).lstrip("/")
+        if (stamp_ns <= 0 or not self.expected_pose_frame
+                or not self.expected_pose_child_frame
+                or frame != self.expected_pose_frame
+                or child != self.expected_pose_child_frame):
+            self.pose_counts["rejected"] += 1
+            return
+        self.pose_pub.publish(message)
+        self.pose_counts["published"] += 1
 
 
 def main(args=None):
     rclpy.init(args=args)
-    node = HivecoreLocalizationAdapter()
+    node = N01LocalizationAdapter()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:

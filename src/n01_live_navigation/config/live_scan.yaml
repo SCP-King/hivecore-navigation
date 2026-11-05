@@ -1,14 +1,13 @@
-# Live vendor SLAM -> SCAN adapter defaults.
+# Backend-neutral N-01 -> SCAN adapter defaults.
 # The bridge waits briefly for scan-time TF but never substitutes latest TF.
 # The original scan timestamp and max_cloud_age_s remain strict freshness gates.
 # use_sim_time must remain false for live sensors.
 n01_live_scan_bridge:
   ros__parameters:
     use_sim_time: false
-    status_topic: /localization_status
-    status_type: hivecore_slam3d/msg/LocalizationStatus
+    status_topic: /n01/localization/status
     cloud_topic: /livox/lidar/geo_filtered
-    pose_topic: /robot_pose
+    pose_topic: /n01/localization/pose
     odom_topic: /odom
     odom_frame: odom
     odom_child_frame: base_link

@@ -45,7 +45,7 @@ class LiveScanBridge(Node):
         defaults = {
             "status_topic": "/n01/localization/status",
             "cloud_topic": "/livox/lidar/geo_filtered",
-            "pose_topic": "/robot_pose",
+            "pose_topic": "/n01/localization/pose",
             "odom_topic": "/odom",
             "odom_frame": "odom",
             "odom_child_frame": "base_link",
@@ -222,7 +222,7 @@ class LiveScanBridge(Node):
         self.create_timer(self.tf_retry_period, self.process_pending_clouds)
         self.create_timer(0.5, self.publish_diagnostics)
         self.get_logger().warning(
-            "READ-ONLY bridge: /robot_pose global anchors + timestamped /odom relative "
+            "READ-ONLY bridge: normalized N-01 pose anchors + timestamped /odom relative "
             "motion compensation + body-to-LiDAR extrinsic; no actuator publishers")
 
     @staticmethod
