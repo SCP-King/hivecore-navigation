@@ -250,7 +250,10 @@ def main(args=None):
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        # ROS signal handling may already have shut the default context down
+        # before KeyboardInterrupt reaches this finally block.
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":
