@@ -58,7 +58,10 @@ if ! colcon build --symlink-install \
   echo "BUILD FAILED: $BUILD_LOG"
   exit 2
 fi
+# ROS/colcon setup scripts read optional variables that may be unset.
+set +u
 source "$ROOT/install/setup.bash"
+set -u
 
 echo
 echo "===== 3. AUTOMATED TESTS ====="
