@@ -28,6 +28,9 @@ n01_live_scan_bridge:
     max_latest_scan_lag_s: 0.45
     body_pose_publish_period_s: 0.05
     max_live_body_pose_age_s: 0.25
+    # /body_pose may use the latest real TF sample up to 150 ms behind /odom.
+    # The output stamp follows that TF sample; scan-time deskew remains exact.
+    max_live_tf_lag_s: 0.15
     max_tf_wait_s: 0.45
     tf_retry_period_s: 0.02
     max_pending_clouds: 1
