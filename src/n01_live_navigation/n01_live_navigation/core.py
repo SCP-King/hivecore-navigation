@@ -24,6 +24,34 @@ def localization_is_tracking(status):
     return True, "tracking_ready"
 
 
+def select_latest_tf_stamp(requested_stamp_ns, tf_stamp_ns, max_lag_s):
+    """Resolve a live pose to the actual latest TF sample without falsifying time.
+
+    A zero TF stamp denotes a static transform and is valid at the requested
+    odometry time. Dynamic TF may trail odometry by a bounded amount; callers
+    must use odometry interpolated at the returned TF timestamp.
+    """
+    try:
+        requested = int(requested_stamp_ns)
+        transform = int(tf_stamp_ns)
+        max_lag = float(max_lag_s)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if (
+        requested <= 0 or transform < 0
+        or not math.isfinite(max_lag) or max_lag < 0.0
+    ):
+        return None
+    if transform == 0:
+        return requested
+    if transform > requested:
+        return None
+    lag_s = (requested - transform) / 1e9
+    if lag_s > max_lag:
+        return None
+    return transform
+
+
 def select_pose_anchor(samples, stamp_ns, max_delta_s):
     """Select a nearby SLAM anchor; prefer a causal previous sample."""
     if not samples:
