@@ -22,6 +22,7 @@ from n01_live_navigation.core import (
     stamped_data_is_fresh,
     trajectory_window_is_active,
     select_pose_anchor,
+    select_latest_tf_stamp,
     pose_samples_equivalent,
 )
 
@@ -149,6 +150,20 @@ class LiveScanCoreTests(unittest.TestCase):
         self.assertIsNone(interpolate_pose(samples, 500_000_000, max_gap_s=0.5))
         self.assertIsNone(interpolate_pose(samples, 3_500_000_000, max_gap_s=0.5))
         self.assertIsNone(interpolate_pose(samples, 2_000_000_000, max_gap_s=0.5))
+
+    def test_live_tf_lag_uses_actual_transform_stamp_with_bounded_age(self):
+        requested = 1_000_000_000
+        # 37.76 ms behind odometry is normal bounded TF publication latency.
+        self.assertEqual(
+            select_latest_tf_stamp(requested, 962_240_000, 0.15),
+            962_240_000,
+        )
+        # Static transforms (stamp zero) apply at the requested odometry time.
+        self.assertEqual(select_latest_tf_stamp(requested, 0, 0.15), requested)
+        # Do not silently use a future transform or an excessively stale one.
+        self.assertIsNone(select_latest_tf_stamp(requested, 1_001_000_000, 0.15))
+        self.assertIsNone(select_latest_tf_stamp(requested, 800_000_000, 0.15))
+        self.assertIsNone(select_latest_tf_stamp(requested, 962_240_000, 0.02))
 
     def test_stale_global_anchor_is_usable_only_with_explicit_odom_budget(self):
         samples = [
