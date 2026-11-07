@@ -35,6 +35,7 @@ from .core import (
     motion_compensated_pose,
     scan_output_is_fresh,
     select_pose_anchor,
+    select_latest_tf_stamp,
     pose_samples_equivalent,
 )
 
@@ -66,6 +67,7 @@ class LiveScanBridge(Node):
             "max_latest_scan_lag_s": 0.45,
             "body_pose_publish_period_s": 0.05,
             "max_live_body_pose_age_s": 0.25,
+            "max_live_tf_lag_s": 0.15,
             "max_tf_wait_s": 0.45,
             "tf_retry_period_s": 0.02,
             "max_pending_clouds": 1,
@@ -98,6 +100,7 @@ class LiveScanBridge(Node):
         self.max_latest_scan_lag = float(get("max_latest_scan_lag_s"))
         self.body_pose_publish_period = float(get("body_pose_publish_period_s"))
         self.max_live_body_pose_age = float(get("max_live_body_pose_age_s"))
+        self.max_live_tf_lag = float(get("max_live_tf_lag_s"))
         self.max_tf_wait = float(get("max_tf_wait_s"))
         self.tf_retry_period = float(get("tf_retry_period_s"))
         self.max_pending_clouds = int(get("max_pending_clouds"))
@@ -118,6 +121,7 @@ class LiveScanBridge(Node):
             and 0.05 <= self.max_latest_scan_lag <= 1.0
             and 0.02 <= self.body_pose_publish_period <= 0.2
             and 0.1 <= self.max_live_body_pose_age <= 1.0
+            and 0.02 <= self.max_live_tf_lag <= 0.5
             and 0.01 <= self.max_tf_wait <= 1.0
             and 0.005 <= self.tf_retry_period <= 0.1
             and 1 <= self.max_pending_clouds <= 32
@@ -155,6 +159,8 @@ class LiveScanBridge(Node):
         self.last_live_body_pose_monotonic = 0.0
         self.last_live_body_pose_anchor_stamp_ns = None
         self.last_live_body_pose_anchor_delta_s = None
+        self.last_live_body_tf_lag_s = None
+        self.live_body_tf_latest_fallback_count = 0
         self.last_live_body_pose_error = "waiting_global_anchor"
         self.last_live_body_velocity_valid = False
 
@@ -468,6 +474,57 @@ class LiveScanBridge(Node):
             self.last_odom_error = "odom_body_frame_tf_unavailable: %s" % exc
             return None
 
+    def _odom_body_pose_latest(self, requested_stamp_ns):
+        """Resolve live body pose at latest available TF time, with bounded lag.
+
+        This path is only for the continuously refreshed /body_pose output.
+        Scan-time deskew remains strict and continues to query the exact scan
+        timestamp in _odom_body_pose_at/_pose_at.
+        """
+        if self.odom_child_frame == self.body_frame:
+            pose = self._odom_at(requested_stamp_ns)
+            return (pose, int(requested_stamp_ns)) if pose is not None else None
+        try:
+            child_from_body = self.tf_buffer.lookup_transform(
+                self.odom_child_frame, self.body_frame, Time(),
+                timeout=Duration(seconds=0.0))
+            tf_stamp_ns = self._stamp_ns(child_from_body.header.stamp)
+            effective_stamp_ns = select_latest_tf_stamp(
+                requested_stamp_ns, tf_stamp_ns, self.max_live_tf_lag)
+            if effective_stamp_ns is None:
+                lag = (
+                    (int(requested_stamp_ns) - int(tf_stamp_ns)) / 1e9
+                    if tf_stamp_ns > 0 else None
+                )
+                self.last_odom_error = (
+                    "live_body_tf_outside_lag_budget: requested=%s tf=%s lag_s=%s max_s=%.3f"
+                    % (requested_stamp_ns, tf_stamp_ns, lag, self.max_live_tf_lag)
+                )
+                return None
+            # Crucial: interpolate odometry at the TF sample's real timestamp.
+            # Never stamp a delayed transform as if it belonged to a newer time.
+            odom_child_pose = self._odom_at(effective_stamp_ns)
+            if odom_child_pose is None:
+                return None
+            child_body_translation, child_body_quaternion = self._transform_values(
+                child_from_body)
+            pose = compose_transform(
+                odom_child_pose[0], odom_child_pose[1],
+                child_body_translation, child_body_quaternion)
+            lag_s = (
+                (int(requested_stamp_ns) - int(tf_stamp_ns)) / 1e9
+                if tf_stamp_ns > 0 else 0.0
+            )
+            self.last_live_body_tf_lag_s = max(0.0, lag_s)
+            if tf_stamp_ns > 0 and effective_stamp_ns != int(requested_stamp_ns):
+                self.live_body_tf_latest_fallback_count += 1
+            self.last_odom_error = ""
+            return pose, int(effective_stamp_ns)
+        except (TransformException, ValueError) as exc:
+            self.counts["drop_odom_tf"] += 1
+            self.last_odom_error = "live_body_tf_latest_unavailable: %s" % exc
+            return None
+
     def _publish_live_body_pose(self):
         """Publish current map<-body from a bounded SLAM anchor and timestamped odometry."""
         now_mono = time.monotonic()
@@ -482,12 +539,18 @@ class LiveScanBridge(Node):
         if not self._odom_rx_is_fresh():
             self.last_live_body_pose_error = "odom_receive_or_stamp_stale"
             return
-        stamp_ns = int(self.odom_samples[-1][0])
+        requested_stamp_ns = int(self.odom_samples[-1][0])
+        latest_body = self._odom_body_pose_latest(requested_stamp_ns)
+        if latest_body is None:
+            self.last_live_body_pose_error = self.last_odom_error or "odom_current_unavailable"
+            return
+        odom_current, stamp_ns = latest_body
         if stamp_ns <= self.last_live_body_pose_stamp_ns:
             return
-        # This tolerance is intentionally separate from the stricter scan-time
-        # anchor bound. Current body pose is propagated with timestamped odometry;
-        # scan-time cloud compensation continues to use max_pose_anchor_delta_s.
+        # The live display pose follows the newest available TF sample, not a
+        # future odometry stamp. A bounded 150 ms lag accommodates real TF
+        # publication latency while preserving the transform's true timestamp.
+        # Scan-time deskew remains exact and is not relaxed by this fallback.
         anchor = self._pose_anchor_at(
             stamp_ns, self.max_live_body_pose_anchor_delta)
         if anchor is None:
@@ -496,10 +559,6 @@ class LiveScanBridge(Node):
         odom_anchor = self._odom_body_pose_at(anchor[0])
         if odom_anchor is None:
             self.last_live_body_pose_error = self.last_odom_error or "odom_anchor_unavailable"
-            return
-        odom_current = self._odom_body_pose_at(stamp_ns)
-        if odom_current is None:
-            self.last_live_body_pose_error = self.last_odom_error or "odom_current_unavailable"
             return
         try:
             map_body = motion_compensated_pose(
@@ -957,6 +1016,9 @@ class LiveScanBridge(Node):
             "body_pose_live_anchor_delta_s": self.last_live_body_pose_anchor_delta_s,
             "body_pose_live_anchor_fresh": bool(live_body_anchor_fresh),
             "body_pose_live_anchor_max_delta_s": self.max_live_body_pose_anchor_delta,
+            "body_pose_live_tf_lag_s": self.last_live_body_tf_lag_s,
+            "body_pose_live_tf_max_lag_s": self.max_live_tf_lag,
+            "body_pose_live_tf_latest_fallback_count": self.live_body_tf_latest_fallback_count,
             "body_pose_live_error": self.last_live_body_pose_error,
             "body_pose_publish_period_s": self.body_pose_publish_period,
             "cloud_output_fresh": bool(cloud_fresh),
