@@ -2,7 +2,8 @@
 # One-command N-01 live SCAN bring-up + read-only acceptance.
 # Starts the static PCD layer and planning/perception stack, then audits live data.
 # Never publishes goals or actuator commands; planner remains non-actuating.
-set -Eeuo pipefail
+set -Eeo pipefail
+# ROS setup scripts reference optional unset variables; enable nounset only afterwards.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 RUNTIME_ROOT="${N01_RUNTIME_ROOT:-$HOME/lyy/n01_runtime}"
@@ -27,6 +28,7 @@ if [[ ! -f "$ROOT/install/setup.bash" ]]; then
   exit 2
 fi
 source "$ROOT/install/setup.bash"
+set -u
 
 if [[ ! -f "$PCD" || ! -r "$PCD" ]]; then
   echo "ERROR: active Lite PCD not readable: $PCD"
