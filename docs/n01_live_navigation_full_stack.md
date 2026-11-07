@@ -60,9 +60,9 @@ Stop only the previous `live_scan.launch.py` instance with Ctrl+C. Keep the vend
 cd /home/demo/lyy/hivecore-navigation
 source /opt/ros/humble/setup.bash
 git fetch origin
-git branch --set-upstream-to=origin/feat/live-localization-scan-bridge
-git pull --ff-only
-colcon build --packages-up-to n01_live_navigation scan_planner n01_static_map n01_scan_dynacbf_bridge --event-handlers console_direct+
+git switch dev/n01-current
+git pull --ff-only origin dev/n01-current
+colcon build --symlink-install --packages-up-to n01_live_navigation scan_planner n01_static_map n01_scan_dynacbf_bridge --event-handlers console_direct+
 source install/setup.bash
 colcon test --packages-select n01_live_navigation
 colcon test-result --verbose
@@ -81,14 +81,15 @@ Launch the same PCD/map integration with RViz enabled:
 
 ```bash
 ros2 launch n01_live_navigation live_scan.launch.py \
-  pcd_path:=/home/demo/lyy/slam_data/maps/cloud_map_20261027_225549.pcd \
+  pcd_path:=/opt/slam3d_release/resource/mapping_lite.pcd \
   pcd_map_frame_asserted:=true \
+  start_localization_adapter:=false \
   ground_z_map_m:=-0.55 \
   body_height_m:=0.90 \
   rviz:=true
 ```
 
-`pcd_map_frame_asserted:=true` remains an operator assertion that this PCD belongs to the active vendor map frame. It is not automatic registration. If that assumption is not true, do not start the static overlay.
+`pcd_map_frame_asserted:=true` is valid here only when this is the exact PCD currently loaded by Lite SLAM. The launch starts `n01_static_map` with that path and publishes the retained static overlay. Do not use a different map without confirming registration. `start_localization_adapter` defaults to false to avoid a duplicate publisher when the adapter is already running separately; set it true only after stopping that adapter.
 
 ## Runtime topics
 
