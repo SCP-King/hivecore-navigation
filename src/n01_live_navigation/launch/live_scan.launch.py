@@ -32,11 +32,28 @@ def _nodes(context):
         get_package_share_directory("scan_planner"), "config", "planner.yaml")
     rviz_config = LaunchConfiguration("rviz_config").perform(context)
     return [
+        # The adapter may already be running as an independently supervised process.
+        # Default false prevents duplicate publishers on /n01/localization/pose.
         Node(
             package="n01_live_navigation", executable="n01_localization_adapter",
             name="n01_localization_adapter",
+            condition=IfCondition(LaunchConfiguration("start_localization_adapter")),
             parameters=[os.path.join(get_package_share_directory("n01_live_navigation"),
                 "config", "slam3d_lite_adapter.yaml")],
+            output="screen",
+        ),
+        Node(
+            package="n01_static_map", executable="static_map_node",
+            name="n01_static_map",
+            parameters=[
+                os.path.join(get_package_share_directory("n01_static_map"),
+                    "config", "static_map.yaml"),
+                {
+                    "pcd_path": pcd,
+                    "frame_id": "map",
+                    "resolution": 0.05,
+                },
+            ],
             output="screen",
         ),
         Node(
@@ -192,6 +209,9 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument("pcd_path"),
         DeclareLaunchArgument("pcd_map_frame_asserted", default_value="false"),
+        DeclareLaunchArgument(
+            "start_localization_adapter", default_value="false",
+            description="Start adapter only when no independent adapter is already running"),
         DeclareLaunchArgument("ground_z_map_m", default_value="-0.55"),
         DeclareLaunchArgument("body_height_m", default_value="0.90"),
         DeclareLaunchArgument("rviz", default_value="false"),
