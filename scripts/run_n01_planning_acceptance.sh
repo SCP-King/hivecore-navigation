@@ -14,7 +14,25 @@ LOG="$LOG_DIR/n01_planning_acceptance_run_$STAMP.log"
 BUILD_LOG="$LOG_DIR/n01_planning_build_$STAMP.log"
 LAUNCH_LOG="$LOG_DIR/n01_planning_launch_$STAMP.log"
 REPORT="$RUN_DIR/n01_planning_acceptance_$STAMP.json"
-PID_FILE="$RUN_DIR/live_scan_launch.pid"
+PID_FILE="$RUNTIME_ROOT/runs/navigation/live_scan_launch.pid"
+LIFECYCLE="$ROOT/scripts/n01_navigation.sh"
+LIFECYCLE_ACTIVE=0
+
+cleanup_navigation() {
+  local rc=$?
+  if (( LIFECYCLE_ACTIVE == 1 )); then
+    echo
+    echo "===== AUTOMATIC NAVIGATION SHUTDOWN ====="
+    if ! bash "$LIFECYCLE" stop; then
+      echo "ERROR: automatic navigation shutdown reported a failure."
+      rc=13
+    fi
+  fi
+  exit "$rc"
+}
+trap cleanup_navigation EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 mkdir -p "$LOG_DIR" "$RUN_DIR"
 exec > >(tee "$LOG") 2>&1
@@ -48,14 +66,11 @@ fi
 echo "PASS: $PCD matches the installed Lite localization config."
 
 echo
-echo "===== 3. STOP ONLY N01 LIVE NAVIGATION PROCESSES ====="
-if ! python3 "$ROOT/scripts/n01_stop_live_stack.py"; then
-  echo "ERROR: scoped N-01 process cleanup was incomplete."
-  echo "No navigation stack will be started."
+echo "===== 3. CLOSE ANY PREVIOUS N01 NAVIGATION SESSION ====="
+if ! bash "$LIFECYCLE" stop; then
+  echo "ERROR: previous N-01 navigation session could not be closed."
   exit 3
 fi
-# Allow DDS discovery to remove the just-stopped processes from the graph.
-sleep 2
 
 echo
 echo "===== 4. VERIFY NO ORPHANED N01 NAVIGATION NODES ====="
@@ -72,13 +87,12 @@ MANAGED=(
   /n01_live_navigation_rviz
 )
 LEFTOVERS=()
-for node in "${MANAGED[@]}"; do
+for node in "\${MANAGED[@]}"; do
   if grep -Fxq "$node" <<<"$NODES"; then LEFTOVERS+=("$node"); fi
 done
-if (("${#LEFTOVERS[@]}" > 0)); then
-  echo "ERROR: N01 nodes remain after stopping launch parent:"
-  printf '  %s\n' "${LEFTOVERS[@]}"
-  echo "A manually started/orphan node remains. Do not launch a second stack."
+if (("\${#LEFTOVERS[@]}" > 0)); then
+  echo "ERROR: managed N-01 graph entries remain after lifecycle stop:"
+  printf '  %s\n' "\${LEFTOVERS[@]}"
   exit 3
 fi
 
@@ -129,44 +143,14 @@ fi
 
 echo
 echo "===== 7. START ONE PROTECTED LIVE STACK ====="
-nohup setsid ros2 launch n01_live_navigation live_scan.launch.py \
-  pcd_path:="$PCD" \
-  pcd_map_frame_asserted:=true \
-  start_localization_adapter:="$START_ADAPTER" \
-  rviz:=true \
-  >"$LAUNCH_LOG" 2>&1 </dev/null &
-LAUNCH_PID=$!
-echo "$LAUNCH_PID" > "$PID_FILE"
-echo "launch_pid=$LAUNCH_PID"
-echo "launch_log=$LAUNCH_LOG"
-
-REQUIRED=(/n01_static_map /n01_live_scan_bridge /n01_live_runtime_supervisor \
-  /n01_live_safety_supervisor /n01_live_dynamic_obstacle_tracker \
-  /n01_hive2_trajectory_monitor /n01_live_scan_goal_gate /scan_planner_node)
-READY=0
-for _ in $(seq 1 45); do
-  if ! kill -0 "$LAUNCH_PID" 2>/dev/null; then
-    echo "ERROR: launch exited before all nodes became visible."
-    tail -120 "$LAUNCH_LOG" || true
-    exit 5
-  fi
-  CURRENT="$(ros2 node list 2>/dev/null || true)"
-  missing=0
-  for node in "${REQUIRED[@]}"; do
-    count="$(grep -Fxc "$node" <<<"$CURRENT" || true)"
-    [[ "$count" -eq 1 ]] || missing=1
-  done
-  if (( missing == 0 )); then READY=1; break; fi
-  sleep 1
-done
-if (( READY == 0 )); then
-  echo "ERROR: live stack did not reach a unique-node graph within 45 seconds."
-  ros2 node list || true
-  tail -120 "$LAUNCH_LOG" || true
+if ! bash "$LIFECYCLE" start; then
+  echo "ERROR: unified N-01 navigation start failed."
   exit 5
 fi
+LIFECYCLE_ACTIVE=1
+LAUNCH_PID="$(cat "$PID_FILE")"
+echo "launch_pid=$LAUNCH_PID"
 
-echo
 echo "===== 8. GOAL-AWARE READ-ONLY ACCEPTANCE ====="
 echo "RViz is running. During the next 30 seconds, click '2D Goal Pose' once"
 echo "and select a short, visibly clear target in the current map."
@@ -232,7 +216,7 @@ echo "Build/test log: $BUILD_LOG"
 echo "Launch log:     $LAUNCH_LOG"
 echo "Acceptance:     $REPORT"
 echo "Run log:        $LOG"
-echo "Live stack remains running; Lite SLAM and adapter were not stopped."
+echo "Navigation stack will be stopped automatically when this command exits."
 echo "ACTUATOR_OUTPUT=DISABLED"
 echo "EXECUTION_AUTHORIZED=false"
 echo "SAFETY_AUTHORIZATION=NEVER"
