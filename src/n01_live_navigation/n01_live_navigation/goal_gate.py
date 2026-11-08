@@ -19,6 +19,8 @@ class LiveGoalGate(Node):
         self.navigation_ready = False
         self.static_ready = False
         self.live_reason = "waiting_system_health"
+        self.last_goal_status = None
+        self.last_goal_monotonic = None
         # Use one supervisor snapshot for every gate decision. Separate Bool
         # and bridge topics can be sampled at different times and disagree.
         self.create_subscription(
@@ -29,6 +31,9 @@ class LiveGoalGate(Node):
             PoseStamped, "/n01/live_navigation/goal_gated", 10)
         self.status_pub = self.create_publisher(
             String, "/n01/live_navigation/goal_gate_status", 10)
+        # Publish a heartbeat even before the operator selects a goal. This
+        # distinguishes an idle gate from a missing/dead gate process.
+        self.create_timer(0.5, self.publish_heartbeat)
         self.get_logger().warning(
             "RViz goal relay is fail-closed until localization, fresh scan, body pose and static PCD are ready")
 
@@ -64,6 +69,40 @@ class LiveGoalGate(Node):
             self.live_ready = False
             self.live_reason = "invalid_system_health_message"
 
+    def publish_heartbeat(self):
+        now = time.monotonic()
+        health_age = (
+            now - self.health_rx_monotonic
+            if self.health_rx_monotonic is not None else None)
+        health_fresh = bool(
+            health_age is not None and 0.0 <= health_age <= 0.75)
+        goal_age = (
+            now - self.last_goal_monotonic
+            if self.last_goal_monotonic is not None else None)
+        last = self.last_goal_status or {}
+        status = {
+            "schema": "n01.live_goal_gate.v2",
+            "event": "heartbeat",
+            "goal_received": self.last_goal_status is not None,
+            "goal_event_age_s": goal_age,
+            "accepted": False,
+            "last_goal_accepted": last.get("last_goal_accepted", False),
+            "reason": (
+                "waiting_for_goal" if self.last_goal_status is None
+                else str(last.get("reason", "goal_event_recorded"))),
+            "localization_reason": self.live_reason,
+            "system_health_status": self.health.get("status", "WAITING"),
+            "system_health_fresh": health_fresh,
+            "system_health_age_s": health_age,
+            "system_health_blockers": self.health.get("blockers", []),
+            "system_health_error": self.health_error,
+            "navigation_ready": self.navigation_ready,
+            "static_overlay_ready": self.static_ready,
+            "actuator_output": "DISABLED",
+            "safety_authorization": "NEVER",
+        }
+        self.status_pub.publish(String(data=json.dumps(status, sort_keys=True)))
+
     def on_goal(self, msg):
         health_age = (
             time.monotonic() - self.health_rx_monotonic
@@ -86,7 +125,11 @@ class LiveGoalGate(Node):
             valid, reason = False, "goal_stamp_missing_stale_or_future"
         status = {
             "schema": "n01.live_goal_gate.v2",
+            "event": "goal_evaluated",
+            "goal_received": True,
+            "goal_event_age_s": 0.0,
             "accepted": bool(valid),
+            "last_goal_accepted": bool(valid),
             "reason": reason,
             "localization_reason": self.live_reason,
             "system_health_status": self.health.get("status", "WAITING"),
@@ -100,6 +143,8 @@ class LiveGoalGate(Node):
             "actuator_output": "DISABLED",
             "safety_authorization": "NEVER",
         }
+        self.last_goal_status = dict(status)
+        self.last_goal_monotonic = time.monotonic()
         self.status_pub.publish(String(data=json.dumps(status, sort_keys=True)))
         if not valid:
             self.get_logger().warning("RViz goal rejected: " + reason)
