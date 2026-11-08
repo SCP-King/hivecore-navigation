@@ -143,11 +143,11 @@ fi
 
 echo
 echo "===== 7. START ONE PROTECTED LIVE STACK ====="
+LIFECYCLE_ACTIVE=1
 if ! bash "$LIFECYCLE" start; then
   echo "ERROR: unified N-01 navigation start failed."
   exit 5
 fi
-LIFECYCLE_ACTIVE=1
 LAUNCH_PID="$(cat "$PID_FILE")"
 echo "launch_pid=$LAUNCH_PID"
 
