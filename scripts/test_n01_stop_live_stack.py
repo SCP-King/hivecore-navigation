@@ -29,6 +29,13 @@ class ScopedN01CleanupTests(unittest.TestCase):
         ]):
             self.assertEqual(MODULE.is_managed_process(1234), (False, None))
 
+    def test_matches_only_n01_ros2_launch_parent(self):
+        with patch.object(MODULE, "process_cmdline", return_value=[
+            "/usr/bin/python3", "/opt/ros/humble/bin/ros2", "launch",
+            "n01_live_navigation", "live_scan.launch.py"
+        ]):
+            self.assertEqual(MODULE.is_managed_process(1234), (True, "n01 live launch parent"))
+
     def test_never_matches_independent_localization_adapter(self):
         with patch.object(MODULE, "process_cmdline", return_value=[
             "/home/demo/lyy/hivecore-navigation/install/n01_live_navigation/lib/"
