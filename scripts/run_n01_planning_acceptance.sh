@@ -148,6 +148,7 @@ if ! bash "$LIFECYCLE" start; then
   exit 5
 fi
 LAUNCH_PID="$(cat "$PID_FILE")"
+LAUNCH_LOG="$(ls -1t "$LOG_DIR"/n01_navigation_launch_*.log 2>/dev/null | head -1)"
 echo "launch_pid=$LAUNCH_PID"
 
 echo "===== 8. GOAL-AWARE READ-ONLY ACCEPTANCE ====="
@@ -171,6 +172,7 @@ ros2 node list | sort
 
 echo
 echo "===== 11. ACCEPTANCE VERDICT ====="
+set +e
 python3 - "$REPORT" <<'PY'
 import json, sys
 path = sys.argv[1]
@@ -208,6 +210,7 @@ if data.get("candidate_review", {}).get("candidate_review_ready") is not True:
 print("PASS: single stack, ready navigation, goal accepted, native SCAN B-spline and candidate review ready.")
 PY
 VERDICT_RC=$?
+set -e
 
 echo
 echo "===== COMPLETE ====="
