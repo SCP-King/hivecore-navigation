@@ -38,7 +38,7 @@ class ScopedN01CleanupTests(unittest.TestCase):
 
 
     def test_process_cmdline_splits_procfs_nul_delimiters(self):
-        with patch.object(MODULE.Path, "read_bytes", return_value=b"/usr/bin/demo\\x00--flag\\x00"):
+        with patch.object(MODULE.Path, "read_bytes", return_value=b"/usr/bin/demo" + bytes([0]) + b"--flag" + bytes([0])):
             self.assertEqual(MODULE.process_cmdline(1234), ["/usr/bin/demo", "--flag"])
 
     def test_proc_stat_extracts_process_group(self):
