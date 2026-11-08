@@ -73,16 +73,15 @@ class FastLio2IntegrationContract(unittest.TestCase):
     def test_package_manifest_is_valid_xml(self):
         ET.parse(ROOT / "src/n01_fast_lio/package.xml")
 
-    def test_vendor_slam_contract_is_retained(self):
+    def test_localization_contract_uses_normalized_lite_adapter_boundary(self):
         bridge = self.read("src/n01_offline_integration/config/offline_bridge.yaml")
         sensor = self.read("src/n01_bringup/config/n01_sensor.yaml")
-        self.assertIn("status_topic: /localization_status", bridge)
-        self.assertIn("outer_value: localization", bridge)
-        self.assertIn("inner_value: tracking", bridge)
-        self.assertIn("tf_flag_path: registration_output_tf_published", bridge)
+        self.assertIn("status_topic: /n01/localization/status", bridge)
+        self.assertNotIn("outer_value: localization", bridge)
+        self.assertNotIn("tf_flag_path: registration_output_tf_published", bridge)
+        self.assertIn("slam_rsp_disabled_confirmed: false", bridge)
         self.assertIn("input_topic: /livox/lidar/geo_filtered", sensor)
         self.assertIn("target_frame: map", sensor)
-        self.assertIn("甲方 slam", self.read("docs/n01_fast_lio2_integration.md").lower())
 
 
 if __name__ == "__main__":
