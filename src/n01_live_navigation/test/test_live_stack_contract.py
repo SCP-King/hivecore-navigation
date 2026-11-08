@@ -69,8 +69,12 @@ class LiveStackContractTests(unittest.TestCase):
         self.assertIn('"max_live_body_pose_anchor_delta_s": 1.4', launch)
         self.assertIn("max_live_body_pose_anchor_delta", bridge)
         self.assertIn('"max_pending_clouds": 1', launch)
+        self.assertIn('"max_cloud_age_s": 0.9', launch)
+        self.assertIn('"max_tf_wait_s": 0.55', launch)
         self.assertIn('max_pose_stamp_age_s: 1.5', config)
-        self.assertIn('max_latest_scan_lag_s: 0.45', config)
+        self.assertIn('max_latest_scan_lag_s: 0.7', config)
+        self.assertIn('max_cloud_age_s: 0.9', config)
+        self.assertIn('max_tf_wait_s: 0.55', config)
         self.assertIn('body_pose_publish_period_s: 0.05', config)
         self.assertIn('max_pose_anchor_delta_s: 1.25', config)
         self.assertIn('max_live_body_pose_anchor_delta_s: 1.4', config)
@@ -96,6 +100,14 @@ class LiveStackContractTests(unittest.TestCase):
         self.assertIn("DurabilityPolicy.TRANSIENT_LOCAL", provider)
         self.assertIn("rclcpp::QoS(1).reliable().transient_local()", grid_map)
         self.assertNotIn("create_timer(1.0 / self._publish_rate", provider)
+
+    def test_dynamic_tracker_rejects_stale_and_out_of_order_cloud_stamps(self):
+        tracker = (ROOT / "src/n01_live_navigation/n01_live_navigation/dynamic_obstacle_tracker.py").read_text()
+        core = (ROOT / "src/n01_live_navigation/n01_live_navigation/core.py").read_text()
+        self.assertIn("sensor_cloud_stamp_gate(", tracker)
+        self.assertIn("OUT_OF_ORDER_CLOUD", tracker)
+        self.assertIn("cloud_stamp_not_monotonic", core)
+        self.assertIn('"max_cloud_age_s": 0.9', (ROOT / "src/n01_live_navigation/launch/live_scan.launch.py").read_text())
 
     def test_global_map_cloud_is_not_clipped_by_sensor_origin_range(self):
         tracker = (ROOT / "src/n01_live_navigation/n01_live_navigation/dynamic_obstacle_tracker.py").read_text()

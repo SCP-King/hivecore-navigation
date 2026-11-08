@@ -24,6 +24,7 @@ from n01_live_navigation.core import (
     select_pose_anchor,
     select_latest_tf_stamp,
     pose_samples_equivalent,
+    sensor_cloud_stamp_gate,
 )
 
 
@@ -258,6 +259,30 @@ class LiveScanCoreTests(unittest.TestCase):
                          (False, None))
         self.assertEqual(trajectory_window_is_active(
             1_000_000_000, 2_000_000_000, 0.0), (False, None))
+
+    def test_cloud_stamp_gate_accepts_bounded_delay_and_rejects_bad_order(self):
+        now_ns = 10_000_000_000
+        ok, reason, age = sensor_cloud_stamp_gate(
+            9_300_000_000, now_ns, 0.9, previous_stamp_ns=9_000_000_000)
+        self.assertTrue(ok)
+        self.assertEqual(reason, "accepted")
+        self.assertAlmostEqual(age, 0.7)
+        self.assertEqual(
+            sensor_cloud_stamp_gate(8_900_000_000, now_ns, 0.9)[1],
+            "cloud_stamp_stale",
+        )
+        self.assertEqual(
+            sensor_cloud_stamp_gate(10_300_000_000, now_ns, 0.9)[1],
+            "cloud_stamp_in_future",
+        )
+        self.assertEqual(
+            sensor_cloud_stamp_gate(9_200_000_000, now_ns, 0.9, 9_200_000_000)[1],
+            "cloud_stamp_not_monotonic",
+        )
+        self.assertEqual(
+            sensor_cloud_stamp_gate(0, now_ns, 0.9)[1],
+            "cloud_stamp_invalid",
+        )
 
     def test_sensor_stamp_freshness_rejects_stale_future_and_zero_stamps(self):
         now_ns = 2_000_000_000

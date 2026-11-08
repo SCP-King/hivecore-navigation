@@ -562,6 +562,35 @@ def trajectory_window_is_active(start_stamp_ns, now_ns, duration_s,
     return bool(active), float(age_s)
 
 
+def sensor_cloud_stamp_gate(stamp_ns, now_ns, max_age_s,
+                            previous_stamp_ns=None, future_tolerance_s=0.2):
+    """Validate cloud age and monotonic source time without changing its stamp."""
+    try:
+        stamp = int(stamp_ns)
+        now = int(now_ns)
+        max_age = float(max_age_s)
+        future_tolerance = float(future_tolerance_s)
+        previous = None if previous_stamp_ns is None else int(previous_stamp_ns)
+    except (TypeError, ValueError, OverflowError):
+        return False, "cloud_stamp_invalid", None
+    if (
+        stamp <= 0 or now <= 0
+        or not math.isfinite(max_age) or max_age <= 0.0
+        or not math.isfinite(future_tolerance) or future_tolerance < 0.0
+    ):
+        return False, "cloud_stamp_invalid", None
+    age_s = (now - stamp) / 1e9
+    if not math.isfinite(age_s):
+        return False, "cloud_stamp_invalid", None
+    if age_s < -future_tolerance:
+        return False, "cloud_stamp_in_future", float(age_s)
+    if age_s > max_age:
+        return False, "cloud_stamp_stale", float(age_s)
+    if previous is not None and stamp <= previous:
+        return False, "cloud_stamp_not_monotonic", float(age_s)
+    return True, "accepted", float(age_s)
+
+
 def stamped_data_is_fresh(stamp_ns, now_ns, max_age_s, future_tolerance_s=0.2):
     """Validate a sensor/source timestamp against the node's ROS clock."""
     try:

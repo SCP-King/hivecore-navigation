@@ -21,6 +21,7 @@ class LiveRuntimeSupervisor(Node):
         super().__init__("n01_live_runtime_supervisor")
         self.declare_parameter("max_body_pose_age_s", 0.25)
         self.declare_parameter("max_body_pose_rx_age_s", 0.35)
+        self.declare_parameter("max_dynamic_diagnostic_age_s", 0.9)
         self.declare_parameter("status_topic", "/n01/live_navigation/readiness")
         self.declare_parameter("static_ready_topic", "/grid_map/static_overlay_ready")
         self.declare_parameter("body_pose_topic", "/body_pose")
@@ -28,7 +29,13 @@ class LiveRuntimeSupervisor(Node):
         self.declare_parameter("timings_topic", "/mapping_processing_timings")
         self.max_body_age = float(self.get_parameter("max_body_pose_age_s").value)
         self.max_body_rx_age = float(self.get_parameter("max_body_pose_rx_age_s").value)
-        if not (0.1 <= self.max_body_age <= 2.0 and 0.1 <= self.max_body_rx_age <= 3.0):
+        self.max_dynamic_diagnostic_age = float(
+            self.get_parameter("max_dynamic_diagnostic_age_s").value)
+        if not (
+            0.1 <= self.max_body_age <= 2.0
+            and 0.1 <= self.max_body_rx_age <= 3.0
+            and 0.1 <= self.max_dynamic_diagnostic_age <= 2.0
+        ):
             raise ValueError("runtime supervisor age bounds invalid")
 
         self.bridge = {}
@@ -208,11 +215,12 @@ class LiveRuntimeSupervisor(Node):
         navigation_ready = not blockers
         stage_b_ready = bool(navigation_ready and self.static_ready)
         dynamic_receive_fresh = (
-            dynamic_age is not None and 0.0 <= dynamic_age <= 0.6)
+            dynamic_age is not None
+            and 0.0 <= dynamic_age <= self.max_dynamic_diagnostic_age)
         dynamic_stamp_fresh, dynamic_stamp_age = stamped_data_is_fresh(
             self.dynamic_obstacle.get("cloud_stamp_ns"),
             now_ns,
-            0.6,
+            self.max_dynamic_diagnostic_age,
         )
         dynamic_fresh = bool(dynamic_receive_fresh and dynamic_stamp_fresh)
         dynamic_status = self.dynamic_obstacle.get("status", "WAITING")
@@ -244,6 +252,7 @@ class LiveRuntimeSupervisor(Node):
                 "dynamic_tracker_fresh": bool(dynamic_fresh),
                 "dynamic_tracker_receive_fresh": bool(dynamic_receive_fresh),
                 "dynamic_tracker_stamp_age_s": dynamic_stamp_age,
+                "dynamic_tracker_max_age_s": self.max_dynamic_diagnostic_age,
                 "dynamic_tracker_status_valid": bool(dynamic_status_valid),
                 "dynamic_tracker_review_required": bool(
                     dynamic_status == "CANDIDATES_AVAILABLE"),

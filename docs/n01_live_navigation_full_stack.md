@@ -35,6 +35,27 @@ The TF retry queue is bounded:
 
 The observed vendor `/mapping_processing_timings` is a `geometry_msgs/msg/Vector3Stamped`. The supervisor now subscribes to it and records raw x/y/z values and timestamp age. It intentionally does not assign units or meanings to those axes without the vendor's field semantics.
 
+## Bounded latency and out-of-order input policy
+
+The live bridge remains latest-scan-first with a single pending scan. It does
+not build an unbounded FIFO backlog: a newer scan supersedes a pending older
+scan so the planner is not fed an ever-growing history. Exact source timestamps
+are preserved on /cloud, /sensor_pose, and /n01/live_navigation/scan_body_pose.
+
+The live profile now uses a 0.9 s hard cloud-age bound, 0.7 s maximum lag
+between the newest received scan and the latest completed scan, and a 0.55 s
+bounded wait for scan-time pose/TF dependencies. These values provide tolerance
+for the measured variable scan cadence; they do not permit extrapolation,
+latest-pose substitution, timestamp rewriting, or reuse of stale clouds.
+Pose and odometry interpolation retain their independent bracket and age
+limits. A cloud that exceeds the hard age bound is discarded.
+
+The visualization-only dynamic tracker independently rejects zero, future,
+stale, duplicate, and out-of-order cloud stamps before changing obstacle tracks.
+Its 0.9 s diagnostic age budget matches the observed variable cloud cadence.
+The safety supervisor retains its stricter 0.6 s dynamic-status freshness gate;
+this diagnostic tolerance does not weaken safety review or authorize motion.
+
 ## Dynamic obstacle interpretation
 
 The planner's authoritative dynamic obstacle input is still the complete `/cloud` stream, consumed by native SCAN raycasting. The extra tracker is for visualization and evidence: it reports live returns not found in the coarse static PCD voxel set, clusters them in XY and associates short-lived IDs. This is not a semantic classifier; map misregistration, sparse PCD sampling, glass, occlusion and moving objects against static surfaces can produce false candidates or missed candidates. Do not use its JSON or markers as a safety sensor or as the only collision layer.

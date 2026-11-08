@@ -12,7 +12,10 @@ from sensor_msgs.msg import PointCloud2, PointField
 from std_msgs.msg import String
 from visualization_msgs.msg import Marker, MarkerArray
 
-from .core import decode_pointcloud_xyz, cluster_xy_points, estimate_velocity
+from .core import (
+    decode_pointcloud_xyz, cluster_xy_points, estimate_velocity,
+    sensor_cloud_stamp_gate,
+)
 
 
 class DynamicObstacleTracker(Node):
@@ -29,6 +32,7 @@ class DynamicObstacleTracker(Node):
         self.declare_parameter("max_points", 100000)
         self.declare_parameter("track_timeout_s", 1.0)
         self.declare_parameter("association_distance_m", 0.8)
+        self.declare_parameter("max_cloud_age_s", 0.9)
         get = lambda name: self.get_parameter(name).value
         self.map_frame = str(get("map_frame"))
         self.ground_z = float(get("ground_z_map_m"))
@@ -39,7 +43,10 @@ class DynamicObstacleTracker(Node):
         self.max_points = int(get("max_points"))
         self.track_timeout = float(get("track_timeout_s"))
         self.association_distance = float(get("association_distance_m"))
-        if not (
+        self.max_cloud_age = float(get("max_cloud_age_s"))
+        self.last_cloud_stamp_ns = 0
+        self.rejected_cloud_stamp_count = 0
+        if (
             self.map_frame == "map" and math.isfinite(self.ground_z)
             and 0.5 <= self.body_height <= 1.5
             and 0.1 <= self.voxel <= 1.0
@@ -48,6 +55,7 @@ class DynamicObstacleTracker(Node):
             and 100 <= self.max_points <= 300000
             and 0.2 <= self.track_timeout <= 5.0
             and 0.2 <= self.association_distance <= 3.0
+            and 0.1 <= self.max_cloud_age <= 2.0
         ):
             raise ValueError("dynamic obstacle tracker parameters outside bounds")
 
@@ -227,6 +235,33 @@ class DynamicObstacleTracker(Node):
             array.markers.append(label)
         self.marker_pub.publish(array)
 
+    def _reject_cloud_stamp(self, msg, reason, age_s):
+        self.rejected_cloud_stamp_count += 1
+        self.last_error = reason
+        self.candidate_pub.publish(self._cloud_message(np.empty((0, 3)), msg.header))
+        stamp_ns = (
+            int(msg.header.stamp.sec) * 1000000000
+            + int(msg.header.stamp.nanosec))
+        status = (
+            "OUT_OF_ORDER_CLOUD" if reason == "cloud_stamp_not_monotonic"
+            else "STALE_CLOUD" if reason in (
+                "cloud_stamp_stale", "cloud_stamp_in_future")
+            else "INVALID_CLOUD_STAMP"
+        )
+        self.diag_pub.publish(String(data=json.dumps({
+            "schema": "n01.dynamic_obstacle_status.v1",
+            "status": status,
+            "reason": reason,
+            "cloud_stamp_ns": stamp_ns,
+            "cloud_stamp_age_s": age_s,
+            "max_cloud_age_s": self.max_cloud_age,
+            "rejected_cloud_stamp_count": self.rejected_cloud_stamp_count,
+            "visualization_only": True,
+            "planner_input": "unfiltered /cloud remains connected directly to native SCAN",
+            "actuator_output": "DISABLED",
+            "safety_authorization": "NEVER",
+        }, sort_keys=True)))
+
     def on_cloud(self, msg):
         self.cloud_count += 1
         if msg.header.frame_id.lstrip("/") != self.map_frame:
@@ -242,6 +277,19 @@ class DynamicObstacleTracker(Node):
                 "safety_authorization": "NEVER",
             }, sort_keys=True)))
             return
+        cloud_stamp_ns = (
+            int(msg.header.stamp.sec) * 1000000000
+            + int(msg.header.stamp.nanosec))
+        stamp_ok, stamp_reason, stamp_age_s = sensor_cloud_stamp_gate(
+            cloud_stamp_ns,
+            self.get_clock().now().nanoseconds,
+            self.max_cloud_age,
+            self.last_cloud_stamp_ns or None,
+        )
+        if not stamp_ok:
+            self._reject_cloud_stamp(msg, stamp_reason, stamp_age_s)
+            return
+        self.last_cloud_stamp_ns = cloud_stamp_ns
         if not self.static_ready:
             self.candidate_pub.publish(self._cloud_message(np.empty((0, 3)), msg.header))
             delete_all = MarkerArray()
@@ -255,9 +303,8 @@ class DynamicObstacleTracker(Node):
             self.diag_pub.publish(String(data=json.dumps({
                 "schema": "n01.dynamic_obstacle_status.v1",
                 "status": "WAITING_STATIC_MAP",
-                "cloud_stamp_ns": (
-                    int(msg.header.stamp.sec) * 1000000000
-                    + int(msg.header.stamp.nanosec)),
+                "cloud_stamp_ns": cloud_stamp_ns,
+                "cloud_stamp_age_s": stamp_age_s,
                 "visualization_only": True,
                 "planner_input": "unfiltered /cloud remains connected directly to native SCAN",
                 "actuator_output": "DISABLED",
@@ -299,9 +346,6 @@ class DynamicObstacleTracker(Node):
         clusters = cluster_xy_points(
             candidates, self.cluster_cell, self.min_points, max_clusters=64)
         now = time.monotonic()
-        cloud_stamp_ns = (
-            int(msg.header.stamp.sec) * 1000000000
-            + int(msg.header.stamp.nanosec))
         expired = self._associate(clusters, now, cloud_stamp_ns)
         self.cluster_count = len(clusters)
         self._publish_markers(msg.header.stamp, expired)
@@ -311,6 +355,9 @@ class DynamicObstacleTracker(Node):
             "status": "CANDIDATES_AVAILABLE" if clusters else "NO_UNMATCHED_CLUSTERS",
             "cloud_frame": self.map_frame,
             "cloud_stamp_ns": cloud_stamp_ns,
+            "cloud_stamp_age_s": stamp_age_s,
+            "max_cloud_age_s": self.max_cloud_age,
+            "rejected_cloud_stamp_count": self.rejected_cloud_stamp_count,
             "z_band_map_m": [z_min, z_max],
             "static_voxel_size_m": self.voxel,
             "candidate_voxel_match": "exact_coarse_voxel_match",

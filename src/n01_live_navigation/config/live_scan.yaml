@@ -24,14 +24,14 @@ n01_live_scan_bridge:
     max_odom_stamp_age_s: 0.4
     odom_interpolation_max_gap_s: 0.08
     odom_cache_size: 512
-    max_cloud_age_s: 0.6
-    max_latest_scan_lag_s: 0.45
+    max_cloud_age_s: 0.9
+    max_latest_scan_lag_s: 0.7
     body_pose_publish_period_s: 0.05
     max_live_body_pose_age_s: 0.25
     # /body_pose may use the latest real TF sample up to 150 ms behind /odom.
     # The output stamp follows that TF sample; scan-time deskew remains exact.
     max_live_tf_lag_s: 0.15
-    max_tf_wait_s: 0.45
+    max_tf_wait_s: 0.55
     tf_retry_period_s: 0.02
     max_pending_clouds: 1
     max_points: 100000
