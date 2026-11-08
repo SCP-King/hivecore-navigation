@@ -128,6 +128,12 @@ def stop_group(launch_pid):
     if not stat:
         print(f"Recorded launch PID {launch_pid} is already absent.")
         return []
+    matched, role = is_managed_process(launch_pid)
+    if not matched or role != "n01 live launch parent":
+        raise RuntimeError(
+            f"Recorded PID {launch_pid} is not the expected N-01 ros2 launch process; "
+            "refusing to signal a possibly reused PID."
+        )
     pgid = stat["pgrp"]
     # setsid launch contract: the launch PID must own a private process group.
     if pgid != launch_pid:
