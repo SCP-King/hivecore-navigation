@@ -29,7 +29,7 @@ RVIZ_CONFIG = "n01_live_navigation.rviz"
 def process_cmdline(pid):
     try:
         raw = Path(f"/proc/{pid}/cmdline").read_bytes()
-        return [part.decode(errors="replace") for part in raw.split(b"\\0") if part]
+        return [part.decode(errors="replace") for part in raw.split(bytes([0])) if part]
     except (OSError, ProcessLookupError):
         return []
 
