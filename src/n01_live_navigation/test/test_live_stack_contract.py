@@ -213,8 +213,17 @@ class LivePlanningAcceptanceContractTests(unittest.TestCase):
 
     def test_one_command_acceptance_never_publishes_actuator_commands(self):
         script = (ROOT / "scripts/run_n01_planning_acceptance.sh").read_text()
-        self.assertIn("ros2 launch n01_live_navigation live_scan.launch.py", script)
+        lifecycle = (ROOT / "scripts/n01_navigation.sh").read_text()
+        stopper = (ROOT / "scripts/n01_stop_live_stack.py").read_text()
+        self.assertIn('LIFECYCLE="$ROOT/scripts/n01_navigation.sh"', script)
+        self.assertIn("trap cleanup_navigation EXIT", script)
         self.assertIn("n01_navigation_acceptance", script)
+        self.assertIn("setsid ros2 launch n01_live_navigation live_scan.launch.py", lifecycle)
+        self.assertIn('*) usage; exit 2 ;;', lifecycle)
+        self.assertIn('case "\${1:-}" in', lifecycle)
+        self.assertIn('stop) stop_stack ;;', lifecycle)
+        self.assertIn("os.killpg(pgid, sig)", stopper)
+        self.assertIn("SIGKILL (isolated N-01 process group only)", stopper)
         self.assertIn("ACTUATOR_OUTPUT=DISABLED", script)
         self.assertIn("EXECUTION_AUTHORIZED=false", script)
         self.assertNotIn("ros2 topic pub", script)
