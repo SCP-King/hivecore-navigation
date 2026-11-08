@@ -87,14 +87,13 @@ class WheelOnlyTfContractTest(unittest.TestCase):
         self.assertIn("default_value='lidar_link'", launcher)
         self.assertNotIn("must already provide /odom", launcher)
 
-    def test_localization_status_config_is_sourced_and_remains_fail_closed(self):
+    def test_localization_status_config_uses_normalized_contract_and_remains_fail_closed(self):
         config = (REPO / "src/n01_offline_integration/config/offline_bridge.yaml").read_text()
-        self.assertIn("status_type: hivecore_slam3d/msg/LocalizationStatus", config)
-        self.assertIn("outer_path: control_signal_outer_role", config)
-        self.assertIn("outer_value: localization", config)
-        self.assertIn("inner_path: control_signal_session_mode", config)
-        self.assertIn("inner_value: tracking", config)
-        self.assertIn("tf_flag_path: registration_output_tf_published", config)
+        self.assertIn("status_topic: /n01/localization/status", config)
+        self.assertNotIn("hivecore_slam3d/msg/LocalizationStatus", config)
+        self.assertIn("status_timeout_s: 1.0", config)
+        self.assertIn("tf_timeout_s: 0.05", config)
+        self.assertIn("fixture_mode: false", config)
         self.assertIn("slam_rsp_disabled_confirmed: false", config)
 
     def test_mount_conflict_unknown_ground_and_strict_research_scope(self):
