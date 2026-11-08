@@ -111,7 +111,17 @@ elif [[ "${ADAPTER_COUNT:-0}" -eq 1 ]]; then
   echo "Reusing the existing Lite localization adapter."
 else
   START_ADAPTER=true
-  echo "No adapter found; live launch will start the configured Lite adapter."
+  echo "No adapter found; source the installed Lite runtime before starting its adapter."
+  if [[ ! -r /opt/slam3d_release/setup_runtime.sh ]]; then
+    echo "ERROR: /opt/slam3d_release/setup_runtime.sh is unavailable."
+    exit 3
+  fi
+  set +u
+  source /opt/slam3d_release/setup_runtime.sh
+  source "$ROOT/install/setup.bash"
+  set -u
+  ros2 interface show hivecore_slam3d_lite_localization/msg/LocStatus >/dev/null
+  echo "PASS: Lite LocStatus interface is available."
 fi
 
 echo
