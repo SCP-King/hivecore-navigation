@@ -175,3 +175,48 @@ class LocalizationBackendDecouplingTests(unittest.TestCase):
         self.assertIn("pose_output_topic: /n01/localization/pose", profile)
         self.assertIn('"reloc_fitness":"reloc_fitness"', profile)
         self.assertIn('"session":"tracking"', profile)
+
+
+class LivePlanningAcceptanceContractTests(unittest.TestCase):
+    def test_live_launch_has_process_lock_and_ros_graph_duplicate_guard(self):
+        launch = (ROOT / "src/n01_live_navigation/launch/live_scan.launch.py").read_text()
+        self.assertIn("fcntl.flock", launch)
+        self.assertIn("ROS_DOMAIN_ID", launch)
+        self.assertIn("ros2", launch)
+        self.assertIn("_guard_single_live_stack", launch)
+        self.assertIn("Refusing to start a second N-01 live navigation stack", launch)
+
+    def test_goal_gate_publishes_waiting_heartbeat_before_any_goal(self):
+        gate = (ROOT / "src/n01_live_navigation/n01_live_navigation/goal_gate.py").read_text()
+        self.assertIn("self.create_timer(0.5, self.publish_heartbeat)", gate)
+        self.assertIn('"event": "heartbeat"', gate)
+        self.assertIn('"reason": (', gate)
+        self.assertIn('"waiting_for_goal"', gate)
+        self.assertIn('"event": "goal_evaluated"', gate)
+
+    def test_acceptance_distinguishes_goal_input_gate_and_planner_output(self):
+        acceptance = (ROOT / "src/n01_live_navigation/n01_live_navigation/acceptance.py").read_text()
+        for marker in (
+            '"/move_base_simple/goal"',
+            '"/n01/live_navigation/goal_gate_status"',
+            '"/n01/live_navigation/goal_gated"',
+            '"/planning/bspline"',
+            '"/planning/data_display"',
+            "duplicate_managed_nodes",
+            "WAITING_FOR_RVIZ_GOAL",
+            "GOAL_REJECTED_OR_NOT_ACCEPTED",
+            "GOAL_FORWARDED_WAITING_FOR_NATIVE_SCAN_BSPLINE",
+            "NATIVE_SCAN_BSPLINE_RECEIVED",
+            '"execution_authorized": False',
+        ):
+            self.assertIn(marker, acceptance)
+
+    def test_one_command_acceptance_never_publishes_actuator_commands(self):
+        script = (ROOT / "scripts/run_n01_planning_acceptance.sh").read_text()
+        self.assertIn("ros2 launch n01_live_navigation live_scan.launch.py", script)
+        self.assertIn("n01_navigation_acceptance", script)
+        self.assertIn("ACTUATOR_OUTPUT=DISABLED", script)
+        self.assertIn("EXECUTION_AUTHORIZED=false", script)
+        self.assertNotIn("ros2 topic pub", script)
+        self.assertNotIn("/cmd_vel", script)
+        self.assertNotIn("/cmd_wheel", script)
