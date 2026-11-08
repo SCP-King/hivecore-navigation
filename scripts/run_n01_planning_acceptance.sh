@@ -48,34 +48,14 @@ fi
 echo "PASS: $PCD matches the installed Lite localization config."
 
 echo
-echo "===== 3. STOP ONLY PREVIOUS N01 LIVE LAUNCH PARENTS ====="
-mapfile -t OLD_PIDS < <(
-  ps -eo pid=,args= | awk '
-    index($0, "ros2 launch n01_live_navigation live_scan.launch.py") > 0 &&
-    index($0, "awk") == 0 {print $1}
-  ' | sort -u
-)
-if (("${#OLD_PIDS[@]}" > 0)); then
-  printf 'Sending SIGINT to prior N01 live launch PID(s): %s\n' "${OLD_PIDS[*]}"
-  for pid in "${OLD_PIDS[@]}"; do kill -INT "$pid" 2>/dev/null || true; done
-  for _ in $(seq 1 10); do
-    alive=0
-    for pid in "${OLD_PIDS[@]}"; do
-      kill -0 "$pid" 2>/dev/null && alive=1 || true
-    done
-    (( alive == 0 )) && break
-    sleep 1
-  done
-  for pid in "${OLD_PIDS[@]}"; do
-    if kill -0 "$pid" 2>/dev/null; then
-      echo "ERROR: previous launch PID $pid did not exit after SIGINT."
-      echo "Stop it manually; no force-kill will be issued."
-      exit 3
-    fi
-  done
-else
-  echo "No previous ros2 launch parent found."
+echo "===== 3. STOP ONLY N01 LIVE NAVIGATION PROCESSES ====="
+if ! python3 "$ROOT/scripts/n01_stop_live_stack.py"; then
+  echo "ERROR: scoped N-01 process cleanup was incomplete."
+  echo "No navigation stack will be started."
+  exit 3
 fi
+# Allow DDS discovery to remove the just-stopped processes from the graph.
+sleep 2
 
 echo
 echo "===== 4. VERIFY NO ORPHANED N01 NAVIGATION NODES ====="
@@ -149,7 +129,7 @@ fi
 
 echo
 echo "===== 7. START ONE PROTECTED LIVE STACK ====="
-nohup ros2 launch n01_live_navigation live_scan.launch.py \
+nohup setsid ros2 launch n01_live_navigation live_scan.launch.py \
   pcd_path:="$PCD" \
   pcd_map_frame_asserted:=true \
   start_localization_adapter:="$START_ADAPTER" \
