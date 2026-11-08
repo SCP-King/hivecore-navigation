@@ -95,30 +95,7 @@ if (("\${#LEFTOVERS[@]}" > 0)); then
   exit 3
 fi
 
-ADAPTER_COUNT="$(grep -Fxc "/n01_localization_adapter" <<<"$NODES" || true)"
-if [[ "${ADAPTER_COUNT:-0}" -gt 1 ]]; then
-  echo "ERROR: duplicate localization adapters detected; refusing startup."
-  exit 3
-elif [[ "${ADAPTER_COUNT:-0}" -eq 1 ]]; then
-  START_ADAPTER=false
-  echo "Reusing the existing Lite localization adapter."
-else
-  START_ADAPTER=true
-  echo "No adapter found; source the installed Lite runtime before starting its adapter."
-  if [[ ! -r /opt/slam3d_release/setup_runtime.sh ]]; then
-    echo "ERROR: /opt/slam3d_release/setup_runtime.sh is unavailable."
-    exit 3
-  fi
-  set +u
-  source /opt/slam3d_release/setup_runtime.sh
-  source "$ROOT/install/setup.bash"
-  set -u
-  ros2 interface show hivecore_slam3d_lite_localization/msg/LocStatus >/dev/null
-  echo "PASS: Lite LocStatus interface is available."
-fi
-
-echo
-echo "===== 5. BUILD ====="
+# Adapter ownership and optional startup are handled by the unified lifecycle entrypoint.\n\necho\necho "===== 5. BUILD ====="
 if ! colcon build --symlink-install \
     --packages-up-to n01_live_navigation scan_planner n01_static_map \
     --event-handlers console_direct+ 2>&1 | tee "$BUILD_LOG"; then
