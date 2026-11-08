@@ -5,8 +5,76 @@ The operator must explicitly assert that the supplied PCD belongs to the active
 vendor map coordinate frame before enabling the static PCD layer.
 """
 import os
+import fcntl
+import subprocess
+from collections import Counter
 
 from ament_index_python.packages import get_package_share_directory
+
+# Keep the descriptor alive for the lifetime of this launch process. flock is
+# released automatically if ros2 launch exits or is killed.
+_LIVE_SCAN_LOCK_FD = None
+
+_MANAGED_NODE_NAMES = (
+    "/n01_static_map",
+    "/n01_live_scan_bridge",
+    "/n01_live_runtime_supervisor",
+    "/n01_live_safety_supervisor",
+    "/n01_live_dynamic_obstacle_tracker",
+    "/n01_hive2_trajectory_monitor",
+    "/n01_live_scan_goal_gate",
+    "/scan_planner_node",
+    "/n01_live_navigation_rviz",
+)
+
+
+def _guard_single_live_stack(start_adapter, start_rviz):
+    """Refuse a second live stack before creating any ROS nodes."""
+    global _LIVE_SCAN_LOCK_FD
+    domain = os.environ.get("ROS_DOMAIN_ID", "0")
+    lock_path = f"/tmp/n01_live_scan_launch_domain_{domain}.lock"
+    _LIVE_SCAN_LOCK_FD = open(lock_path, "a", encoding="utf-8")
+    try:
+        fcntl.flock(_LIVE_SCAN_LOCK_FD.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError as exc:
+        raise RuntimeError(
+            f"Another N-01 live SCAN launch owns {lock_path}; refusing duplicate startup."
+        ) from exc
+
+    try:
+        result = subprocess.run(
+            ["ros2", "node", "list"],
+            check=True, capture_output=True, text=True, timeout=6.0,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(
+            f"Cannot inspect ROS graph for single-instance protection: {exc}"
+        ) from exc
+
+    names = [line.strip() for line in result.stdout.splitlines() if line.strip().startswith("/")]
+    counts = Counter(names)
+    managed = list(_MANAGED_NODE_NAMES)
+    if not start_rviz:
+        managed.remove("/n01_live_navigation_rviz")
+    if start_adapter:
+        managed.append("/n01_localization_adapter")
+
+    duplicates = {name: counts[name] for name in managed if counts[name] > 1}
+    already_running = [name for name in managed if counts[name] == 1]
+    if duplicates or already_running:
+        details = []
+        if duplicates:
+            details.append("duplicate managed nodes: " + ", ".join(
+                f"{name} x{count}" for name, count in sorted(duplicates.items())))
+        if already_running:
+            details.append("managed nodes already running: " + ", ".join(sorted(already_running)))
+        raise RuntimeError(
+            "Refusing to start a second N-01 live navigation stack; "
+            + "; ".join(details)
+            + ". Stop the existing N-01 live_scan.launch.py process first. "
+              "Lite SLAM and the independently managed localization adapter are not stopped."
+        )
+
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.conditions import IfCondition
@@ -31,6 +99,9 @@ def _nodes(context):
     planner_config = os.path.join(
         get_package_share_directory("scan_planner"), "config", "planner.yaml")
     rviz_config = LaunchConfiguration("rviz_config").perform(context)
+    start_adapter = LaunchConfiguration("start_localization_adapter").perform(context).lower() == "true"
+    start_rviz = LaunchConfiguration("rviz").perform(context).lower() == "true"
+    _guard_single_live_stack(start_adapter, start_rviz)
     return [
         # The adapter may already be running as an independently supervised process.
         # Default false prevents duplicate publishers on /n01/localization/pose.
