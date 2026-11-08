@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Stop only N-01 live navigation launch/node processes; preserve SLAM and sensors.
+"""Stop one N-01 live navigation process group and any narrowly matched orphans.
 
-This is intentionally process-scoped rather than ROS-domain-scoped. It never
-matches or signals the independent n01_localization_adapter, vendor SLAM,
-Livox, IMU, robot drivers, or arbitrary ROS nodes.
+The live launch is started under setsid, so its PID is also its private process
+group/session ID. Group signalling is the primary lifecycle mechanism; exact
+executable matching is a fallback for legacy launches whose parent was killed.
 """
+import argparse
 import os
 import signal
 import sys
@@ -28,9 +29,20 @@ RVIZ_CONFIG = "n01_live_navigation.rviz"
 def process_cmdline(pid):
     try:
         raw = Path(f"/proc/{pid}/cmdline").read_bytes()
-        return [part.decode(errors="replace") for part in raw.split(b"\0") if part]
+        return [part.decode(errors="replace") for part in raw.split(b"\\0") if part]
     except (OSError, ProcessLookupError):
         return []
+
+
+def proc_stat(pid):
+    try:
+        raw = Path(f"/proc/{pid}/stat").read_text()
+        # comm may contain spaces or parentheses; fields after the final ')'
+        # start with state, ppid, pgrp, session.
+        tail = raw[raw.rfind(")") + 2:].split()
+        return {"state": tail[0], "pgrp": int(tail[2]), "session": int(tail[3])}
+    except (OSError, ValueError, IndexError):
+        return None
 
 
 def is_managed_process(pid):
@@ -60,75 +72,140 @@ def discover():
     return sorted(found)
 
 
-def wait_gone(pids, timeout_s):
+def group_members(pgid):
+    members = []
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        pid = int(entry.name)
+        stat = proc_stat(pid)
+        if stat and stat["pgrp"] == pgid and stat["state"] != "Z":
+            members.append(pid)
+    return members
+
+
+def signal_group(pgid, sig, label):
+    members = group_members(pgid)
+    if not members:
+        return []
+    try:
+        os.killpg(pgid, sig)
+        print(f"{label}: process group {pgid}, PIDs {members}")
+    except ProcessLookupError:
+        return []
+    except PermissionError:
+        print(f"ERROR: permission denied signalling process group {pgid}", file=sys.stderr)
+        return members
+    return members
+
+
+def wait_group_gone(pgid, timeout_s):
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        members = group_members(pgid)
+        if not members:
+            return []
+        time.sleep(0.2)
+    return group_members(pgid)
+
+
+def wait_pids_gone(pids, timeout_s):
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         alive = []
         for pid in pids:
-            try:
-                os.kill(pid, 0)
-                # Treat zombies as exited: they no longer own ROS resources.
-                stat = Path(f"/proc/{pid}/stat").read_text().split()
-                if len(stat) > 2 and stat[2] == "Z":
-                    continue
-                alive.append(pid)
-            except ProcessLookupError:
-                pass
-            except (PermissionError, OSError):
+            stat = proc_stat(pid)
+            if stat and stat["state"] != "Z":
                 alive.append(pid)
         if not alive:
             return []
         time.sleep(0.2)
-    return alive
+    return [pid for pid in pids if (proc_stat(pid) or {}).get("state") != "Z"]
 
 
-def signal_stage(processes, sig, label):
-    alive = []
-    for pid, role, _ in processes:
-        try:
-            os.kill(pid, sig)
-            print(f"{label}: PID {pid} ({role})")
-            alive.append(pid)
-        except ProcessLookupError:
-            pass
-        except PermissionError:
-            print(f"ERROR: no permission to signal PID {pid} ({role})", file=sys.stderr)
-            alive.append(pid)
-    return alive
+def stop_group(launch_pid):
+    stat = proc_stat(launch_pid)
+    if not stat:
+        print(f"Recorded launch PID {launch_pid} is already absent.")
+        return []
+    pgid = stat["pgrp"]
+    # setsid launch contract: the launch PID must own a private process group.
+    if pgid != launch_pid:
+        raise RuntimeError(
+            f"PID {launch_pid} is not its own process-group leader (PGID={pgid}); "
+            "refusing to signal an unrelated process group."
+        )
+    signal_group(pgid, signal.SIGINT, "SIGINT")
+    remaining = wait_group_gone(pgid, 8.0)
+    if remaining:
+        signal_group(pgid, signal.SIGTERM, "SIGTERM")
+        remaining = wait_group_gone(pgid, 3.0)
+    if remaining:
+        signal_group(pgid, signal.SIGKILL, "SIGKILL (isolated N-01 process group only)")
+        remaining = wait_group_gone(pgid, 2.0)
+    return remaining
+
+
+def stop_legacy_orphans():
+    targets = discover()
+    if not targets:
+        print("No legacy N-01 navigation orphan processes found.")
+        return []
+    print("Legacy N-01 processes outside the managed launch group:")
+    for pid, role, argv in targets:
+        print(f"  PID {pid}: {role}: {' '.join(argv)[:220]}")
+    pids = [item[0] for item in targets]
+    for sig, label, wait_s in (
+        (signal.SIGINT, "SIGINT", 5.0),
+        (signal.SIGTERM, "SIGTERM", 2.0),
+        (signal.SIGKILL, "SIGKILL (exact N-01 executable match only)", 2.0),
+    ):
+        current = [item for item in discover() if item[0] in pids]
+        for pid, role, _ in current:
+            try:
+                os.kill(pid, sig)
+                print(f"{label}: PID {pid} ({role})")
+            except ProcessLookupError:
+                pass
+            except PermissionError:
+                print(f"ERROR: permission denied for PID {pid}", file=sys.stderr)
+        pids = wait_pids_gone(pids, wait_s)
+        if not pids:
+            break
+    return pids
 
 
 def main():
-    print("===== N-01 scoped process cleanup =====")
-    print("Protected: Lite SLAM, localization adapter, Livox, IMU and robot drivers.")
-    targets = discover()
-    if not targets:
-        print("No matching N-01 live navigation processes found.")
-        return 0
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--launch-pid", type=int,
+                        help="PID returned by setsid ros2 launch; its PGID must equal PID")
+    args = parser.parse_args()
 
-    print("Matched processes:")
-    for pid, role, argv in targets:
-        print(f"  PID {pid}: {role}: {' '.join(argv)[:260]}")
+    print("===== N-01 navigation lifecycle cleanup =====")
+    print("Protected: independently managed Lite SLAM, localization adapter, Livox, IMU and robot drivers.")
+    remaining = []
+    if args.launch_pid:
+        remaining = stop_group(args.launch_pid)
+        if remaining:
+            print("ERROR: managed launch process group remains: " +
+                  ", ".join(map(str, remaining)), file=sys.stderr)
+            return 2
 
-    pids = [item[0] for item in targets]
-    signal_stage(targets, signal.SIGINT, "SIGINT")
-    remaining = wait_gone(pids, 8.0)
-    if remaining:
-        current = [item for item in discover() if item[0] in remaining]
-        signal_stage(current, signal.SIGTERM, "SIGTERM")
-        remaining = wait_gone(remaining, 3.0)
-    if remaining:
-        current = [item for item in discover() if item[0] in remaining]
-        if current:
-            signal_stage(current, signal.SIGKILL, "SIGKILL (N-01 managed processes only)")
-        remaining = wait_gone(remaining, 2.0)
-
-    if remaining:
-        print("ERROR: these N-01 processes could not be stopped: " +
-              ", ".join(map(str, remaining)), file=sys.stderr)
+    # Compatibility path for launch parents killed before the process-group
+    # lifecycle was installed. The independent adapter is deliberately excluded.
+    orphans = stop_legacy_orphans()
+    if orphans:
+        print("ERROR: N-01 navigation processes remain: " +
+              ", ".join(map(str, orphans)), file=sys.stderr)
         return 2
-    print("PASS: all matched N-01 live navigation processes exited.")
+
+    print("PASS: N-01 navigation process group and legacy orphans are stopped.")
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except RuntimeError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        raise SystemExit(3)
