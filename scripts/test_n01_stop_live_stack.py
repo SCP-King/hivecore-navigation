@@ -36,6 +36,19 @@ class ScopedN01CleanupTests(unittest.TestCase):
         ]):
             self.assertEqual(MODULE.is_managed_process(1234), (False, None))
 
+
+    def test_process_cmdline_splits_procfs_nul_delimiters(self):
+        with patch.object(MODULE.Path, "read_bytes", return_value=b"/usr/bin/demo\\x00--flag\\x00"):
+            self.assertEqual(MODULE.process_cmdline(1234), ["/usr/bin/demo", "--flag"])
+
+    def test_proc_stat_extracts_process_group(self):
+        stat_line = "123 (ros2 launch) S 1 123 123 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 0"
+        with patch.object(MODULE.Path, "read_text", return_value=stat_line):
+            parsed = MODULE.proc_stat(123)
+        self.assertEqual(parsed["state"], "S")
+        self.assertEqual(parsed["pgrp"], 123)
+        self.assertEqual(parsed["session"], 123)
+
     def test_matches_only_n01_rviz_config(self):
         with patch.object(MODULE, "process_cmdline", return_value=[
             "/opt/ros/humble/lib/rviz2/rviz2", "-d",
