@@ -46,7 +46,7 @@ class DynamicObstacleTracker(Node):
         self.max_cloud_age = float(get("max_cloud_age_s"))
         self.last_cloud_stamp_ns = 0
         self.rejected_cloud_stamp_count = 0
-        if (
+        if not (
             self.map_frame == "map" and math.isfinite(self.ground_z)
             and 0.5 <= self.body_height <= 1.5
             and 0.1 <= self.voxel <= 1.0
