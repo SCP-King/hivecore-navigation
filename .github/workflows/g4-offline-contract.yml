@@ -20,6 +20,8 @@ on:
       - 'src/scan_planner/plan_env/**'
       - 'scripts/n01_live_planning_ros_probe.py'
       - 'scripts/n01_live_stack_preflight.py'
+      - 'scripts/run_n01_planning_acceptance.sh'
+      - 'docs/n01_live_planning_acceptance.md'
       - 'scripts/README.md'
       - 'docs/n01_planning_readiness_audit.md'
       - 'scripts/n01_g4_bag_start_preflight.py'
