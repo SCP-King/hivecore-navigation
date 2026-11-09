@@ -11,6 +11,9 @@
 **/.ros_home/
 **/output_occupancy_voxel_centers.txt
 **/__pycache__/
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
 *.py[cod]
 *.egg-info/
 *.bag
@@ -19,6 +22,9 @@
 *.pcd
 *.npy
 *.log
+*.log.*
+*.out
+*.err
 *.tmp
 *.swp
 *.swo
@@ -28,8 +34,11 @@
 .vscode/
 .idea/
 
-# Documentation and local datasets are kept outside this source-only repository
-/docs/
+# Generated root-level frame graph exports
+/frames_*.gv
+/frames_*.pdf
+
+# Runtime datasets and reports stay outside source control
 /n01_runtime/
 
 # Pinned third-party source checkouts are imported at build time, not vendored
