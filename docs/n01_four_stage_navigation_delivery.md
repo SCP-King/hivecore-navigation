@@ -7,8 +7,9 @@
 ## A. 定位、时间同步和目标入口
 
 - `/cloud` 与 `/sensor_pose` 仍使用原始 Livox 扫描时间戳，供 native SCAN 的 ExactTime 同步器使用。
-- `/n01/live_navigation/scan_body_pose` 保留每帧扫描时刻的机体位姿。
-- `/body_pose` 改为高频当前机体位姿：以带时间戳的 `/robot_pose` 全局锚点为基准，使用 `/odom` 在锚点与目标时刻的插值结果传播；目标发布周期 50 ms。针对现场已观测到的 SLAM 位姿时间戳落后（约 1.1 s 扫描锚点偏差、约 1.3 s 最新位姿年龄），当前配置采用明确的有界补偿预算：`max_pose_stamp_age_s=1.5`、扫描锚点最大偏差 `1.25 s`、当前机体位姿锚点最大偏差 `1.4 s`。每次传播仍必须有新鲜的定位状态、新鲜的 `/odom`、两端严格插值且相邻里程计样本间隔不超过 80 ms；任一条件不满足就停止发布并保持 readiness 关闭。这是有界的时间戳里程计传播，不是 latest TF 替代、无界外推或伪造位姿。若后续现场验收发现该预算仍不能满足误差要求，应修复上游 SLAM 位姿发布链路，而不是继续放宽阈值。
+- `/n01/live_navigation/scan_body_pose` 保留每帧扫描时刻的 `map→base_footprint` 位姿（点云/扫描参考帧）。
+- `/body_pose` 改为高频当前机体位姿，**输出 `map→base_link`**：以带时间戳的 `/robot_pose`（`map→base_footprint`）为锚点，经 `base_footprint→base_link=0.90` 合成，再用 `/odom` 在锚点与目标时刻插值传播；`base_footprint` 只作为 SLAM 跟踪帧，不是地面。目标发布周期 50 ms。针对现场已观测到的 SLAM 位姿时间戳落后（约 1.1 s 扫描锚点偏差、约 1.3 s 最新位姿年龄），当前配置采用明确的有界补偿预算：`max_pose_stamp_age_s=1.5`、扫描锚点最大偏差 `1.25 s`、当前机体位姿锚点最大偏差 `1.4 s`。每次传播仍必须有新鲜的定位状态、新鲜的 `/odom`、两端严格插值且相邻里程计样本间隔不超过 80 ms；任一条件不满足就停止发布并保持 readiness 关闭。这是有界的时间戳里程计传播，不是 latest TF 替代、无界外推或伪造位姿。若后续现场验收发现该预算仍不能满足误差要求，应修复上游 SLAM 位姿发布链路，而不是继续放宽阈值。
+- 局部地面按 `ground_z = body_pose.z - body_to_ground` 计算；当前腿高/轮心 0.683 m、轮半径 0.095 m，`body_to_ground=0.778 m`，当前 map 地面约 0.139 m。动态障碍 z 带与 SCAN `grid_map.ground_height` 都使用这个地面，不再使用历史 `-0.55 m`。
 - `/robot_pose` 和 `/tf` 的发布端点数量单独审计：同一 ROS 节点名下出现多个 publisher endpoint 不等同于启动了多个进程。预检会分别报告重复节点名、同节点多发布端点及端点 GID；相同时间戳但位姿明显冲突的 `/robot_pose` 样本会被剔除并记录，不允许后到消息覆盖先到消息。
 - 最新输入扫描与最近完成输出之间允许最多 450 ms 的有界处理滞后；输出和输入各自仍必须满足 600 ms 最大年龄。超过任一门限时 readiness 关闭。
 - `navigation_ready` 仅表示可以向原生规划器提交目标，不表示可以驱动底盘。
@@ -88,7 +89,7 @@ source /home/demo/lyy/hivecore-navigation/install/setup.bash
 ros2 launch n01_live_navigation live_scan.launch.py \
   pcd_path:=/home/demo/lyy/slam_data/maps/cloud_map_20261027_225549.pcd \
   pcd_map_frame_asserted:=true \
-  ground_z_map_m:=-0.55 \
+  ground_z_map_m:=0.139 \
   body_height_m:=0.90 \
   rviz:=true
 ```

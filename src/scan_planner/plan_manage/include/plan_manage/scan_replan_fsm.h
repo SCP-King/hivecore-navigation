@@ -94,6 +94,7 @@ namespace scan_planner
     rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr path_sub_;
     rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr go2_execution_frozen_sub_;
     rclcpp::Publisher<scan_planner_msgs::msg::Bspline>::SharedPtr bspline_pub_;
+    rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr global_path_pub_;
     rclcpp::Publisher<scan_planner_msgs::msg::DataDisp>::SharedPtr data_disp_pub_;
     rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr self_inflation_pub_;
 
@@ -114,6 +115,7 @@ namespace scan_planner
     bool isWaypointSequenceMode() const;
     bool adjustGlobalTargetIfOccupied();
     void getLocalTarget();
+    void publishGlobalPath();
     void finishProcess();
     void publishSelfInflationMarker();
     double getOdomYaw() const;

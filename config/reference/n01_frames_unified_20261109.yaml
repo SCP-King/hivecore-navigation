@@ -1,0 +1,48 @@
+# N-01 unified frame contract (decided 2026-11-09)
+# Authority: Hive2 motion RSP. The existing map/PCD is not re-built by this change.
+schema: n01.frames.unified.v1
+decided: "2026-11-09"
+
+map:
+  frame: map
+  origin: "initial base_link at mapping start"
+  gravity_aligned_once: true
+  pcd_frame: map
+
+tracking:
+  frame: base_footprint
+  parent: map
+  role: "vendor SLAM tracking frame; input child of /robot_pose"
+  is_ground: false
+  to_body_m: 0.90
+
+body:
+  frame: base_link
+  parent: base_footprint
+  role: "physical body; /body_pose child frame; SCAN odom_pos_ frame"
+  to_lidar_xyz_m: [0.295, 0.0, 0.0]
+
+ground:
+  definition: "body_pose.z - body_to_ground"
+  body_to_ground_m: 0.778
+  leg_foot_drop_m: 0.683
+  wheel_radius_m: 0.095
+  current_ground_z_map_m: 0.139
+  note: "0.139 is the current local value; re-measure per map/floor/leg pose"
+
+sensors:
+  lidar_link:
+    parent: base_link
+    xyz_m: [0.295, 0.0, 0.0]
+  imu_link:
+    parent: lidar_link
+    xyz_m: [0.0, 0.0, 0.0]
+    rpy_deg: [-0.849409, 9.642423, 0.0]
+  livox_frame:
+    parent: imu_link
+    xyz_m: [0.0, 0.0, 0.0]
+    rpy_deg: [0.0, 0.0, 0.0]
+
+historical:
+  mapping_tracking_offset_m: 0.30
+  role: "replay/compatibility only; not live navigation"

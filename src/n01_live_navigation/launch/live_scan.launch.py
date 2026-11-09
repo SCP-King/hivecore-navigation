@@ -93,7 +93,9 @@ def _nodes(context):
         raise RuntimeError("pcd_path must be an absolute path to the original PCD")
     ground_z = float(LaunchConfiguration("ground_z_map_m").perform(context))
     body_height = float(LaunchConfiguration("body_height_m").perform(context))
-    if not (-1.5 <= ground_z <= 0.5 and 0.5 <= body_height <= 1.5):
+    body_to_ground = float(LaunchConfiguration("body_to_ground_m").perform(context))
+    if not (-1.5 <= ground_z <= 0.5 and 0.5 <= body_height <= 1.5
+            and 0.4 <= body_to_ground <= 1.2):
         raise RuntimeError("ground/body height outside bounded research interval")
 
     planner_config = os.path.join(
@@ -138,6 +140,7 @@ def _nodes(context):
                 "odom_child_frame": "base_link",
                 "expected_cloud_frame": "lidar_link",
                 "map_frame": "map", "body_frame": "base_footprint",
+                "planner_body_frame": "base_link",
                 "max_status_age_s": 1.0, "max_pose_rx_age_s": 0.7,
                 "max_pose_stamp_age_s": 1.5,
                 "max_pose_anchor_delta_s": 1.25,
@@ -178,6 +181,8 @@ def _nodes(context):
                 "cloud_topic": "/cloud",
                 "static_topic": "/grid_map/static_occupancy",
                 "map_frame": "map",
+                "body_pose_topic": "/body_pose",
+                "body_to_ground_m": body_to_ground,
                 "ground_z_map_m": ground_z,
                 "body_height_m": body_height,
                 "voxel_size_m": 0.30,
@@ -221,7 +226,7 @@ def _nodes(context):
                 "fsm.navi_mode": 1,
                 "fsm.thresh_replan": 1.0,
                 "fsm.thresh_no_replan": 0.1,
-                "fsm.planning_horizon": 7.5,
+                "fsm.planning_horizon": 10.0,
                 "fsm.emergency_time": 1.0,
                 "fsm.fail_safe": True,
                 "fsm.max_replan_fail_count": 1000,
@@ -262,7 +267,7 @@ def _nodes(context):
                 "manager.max_jerk": 1.0,
                 "manager.control_points_distance": 0.2,
                 "manager.feasibility_tolerance": 0.5,
-                "manager.planning_horizon": 7.5,
+                "manager.planning_horizon": 10.0,
                 "optimization.lambda_smooth": 1.0,
                 "optimization.lambda_collision": 1.0,
                 "optimization.lambda_feasibility": 0.1,
@@ -285,8 +290,12 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "start_localization_adapter", default_value="false",
             description="Start adapter only when no independent adapter is already running"),
-        DeclareLaunchArgument("ground_z_map_m", default_value="-0.55"),
+        # Current local ground in the active map (base_link z - 0.778 at Home).
+        # The dynamic tracker refines this from /body_pose; this is the fallback
+        # and the SCAN sliding-map origin for this session.
+        DeclareLaunchArgument("ground_z_map_m", default_value="0.139"),
         DeclareLaunchArgument("body_height_m", default_value="0.90"),
+        DeclareLaunchArgument("body_to_ground_m", default_value="0.778"),
         DeclareLaunchArgument("rviz", default_value="false"),
         DeclareLaunchArgument(
             "rviz_config",

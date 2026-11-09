@@ -1,0 +1,48 @@
+# N-01 override for hivecore_cloud_preprocessor/static_tf_publisher_node.
+# Purpose: publish lidar_link->imu_link->livox_frame from YAML at startup,
+# without waiting for /imu/rpy/filtered auto-calibration.
+# Values match /opt/slam3d_release/.../static_tf_publisher_params.yaml
+# (2026-11-09 snapshot). Do not use auto-calibration for the live N-01 chain.
+static_tf_publisher_node:
+  ros__parameters:
+    lidar_imu:
+      parent_frame: "lidar_link"
+      child_frame: "imu_link"
+      translation_x: 0.0
+      translation_y: 0.0
+      translation_z: 0.0
+      use_rpy: true
+      orientation_in_degrees: true
+      roll: -0.849409
+      pitch: 9.642423
+      yaw: -0.000000
+      rotation_x: 0.0
+      rotation_y: 0.0
+      rotation_z: 0.0
+      rotation_w: 1.0
+
+    imu_livox:
+      parent_frame: "imu_link"
+      child_frame: "livox_frame"
+      translation_x: 0.0
+      translation_y: 0.0
+      translation_z: 0.0
+      use_rpy: true
+      orientation_in_degrees: true
+      roll: 0.0
+      pitch: 0.0
+      yaw: 0.0
+      rotation_x: 0.0
+      rotation_y: 0.0
+      rotation_z: 0.0
+      rotation_w: 1.0
+
+    orientation_topic: "/imu/rpy/filtered"
+    enable_publish: true
+    # Do not block /tf_static on a live IMU orientation stream.
+    auto_calibrate_from_topic: false
+    calibration_threshold_deg: 2.5
+    calibration_min_interval_sec: 30.0
+    calibration_stable_samples: 10
+    orientation_timeout_sec: 3.0
+    exit_on_orientation_timeout: false

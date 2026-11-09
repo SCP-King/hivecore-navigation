@@ -1,5 +1,6 @@
 // #include <fstream>
 #include <plan_manage/planner_manager.h>
+#include <path_searching/dyn_a_star.h>
 #include <chrono>
 #include <thread>
 
@@ -413,35 +414,35 @@ namespace scan_planner
                                          const Eigen::Vector3d &end_pos, const Eigen::Vector3d &end_vel, const Eigen::Vector3d &end_acc)
   {
 
-    // generate global reference trajectory
-
-    vector<Eigen::Vector3d> points;
-    points.push_back(start_pos);
-    points.push_back(end_pos);
-
-    // insert intermediate points if too far
-    vector<Eigen::Vector3d> inter_points;
-    const double dist_thresh = 4.0;
-
-    for (size_t i = 0; i < points.size() - 1; ++i)
+    // Global path: A* on the inflated static grid. The previous implementation
+    // was only a straight-line interpolation + min-snap polynomial reference,
+    // which could cross obstacles.
+    std::vector<Eigen::Vector3d> inter_points;
+    if (grid_map_)
     {
-      inter_points.push_back(points.at(i));
-      double dist = (points.at(i + 1) - points.at(i)).norm();
-
-      if (dist > dist_thresh)
+      AStar astar;
+      astar.initGridMap(grid_map_, Eigen::Vector3i(100, 100, 100));
+      ASTAR_RET ret = astar.AstarSearch(grid_map_->getResolution(), start_pos, end_pos);
+      if (ret == ASTAR_RET::SUCCESS)
       {
-        int id_num = floor(dist / dist_thresh) + 1;
-
-        for (int j = 1; j < id_num; ++j)
-        {
-          Eigen::Vector3d inter_pt =
-              points.at(i) * (1.0 - double(j) / id_num) + points.at(i + 1) * double(j) / id_num;
-          inter_points.push_back(inter_pt);
-        }
+        inter_points = astar.getPath();
       }
+      if (inter_points.size() < 2)
+      {
+        RCLCPP_ERROR(node_->get_logger(),
+                     "Global A* failed or returned fewer than 2 points: start=(%.2f,%.2f,%.2f) goal=(%.2f,%.2f,%.2f)",
+                     start_pos.x(), start_pos.y(), start_pos.z(),
+                     end_pos.x(), end_pos.y(), end_pos.z());
+        return false;
+      }
+      inter_points.front() = start_pos;
+      inter_points.back() = end_pos;
     }
-
-    inter_points.push_back(points.back());
+    else
+    {
+      RCLCPP_ERROR(node_->get_logger(), "Global A* unavailable: grid map is null");
+      return false;
+    }
 
     // write position matrix
     int pt_num = inter_points.size();

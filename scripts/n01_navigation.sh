@@ -4,11 +4,17 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+source "$ROOT/scripts/lib/ros_env.sh"
 RUNTIME_ROOT="${N01_RUNTIME_ROOT:-$HOME/lyy/n01_runtime}"
 RUN_DIR="$RUNTIME_ROOT/runs/navigation"
 LOG_DIR="$RUNTIME_ROOT/logs"
 PID_FILE="$RUN_DIR/live_scan_launch.pid"
-PCD="/opt/slam3d_release/resource/mapping_lite.pcd"
+DEFAULT_PCD="/opt/slam3d_release/resource/mapping_lite.pcd"
+PCD="${N01_NAV_PCD:-$DEFAULT_PCD}"
+NAV_GROUND_Z="${N01_NAV_GROUND_Z:-0.139}"
+# RViz needs a real X display. Headless/remote GUI uses Foxglove or the GUI's
+# standalone RViz button; do not let launch kill a dead rviz2 process.
+NAV_RVIZ="${N01_NAV_RVIZ:-false}"
 SLAM_CONFIG="/opt/slam3d_release/install/hivecore_slam3d_lite_localization/share/hivecore_slam3d_lite_localization/config/localization_lite.yaml"
 mkdir -p "$RUN_DIR" "$LOG_DIR"
 
@@ -17,14 +23,15 @@ usage() {
 }
 
 source_ros() {
-  source /opt/ros/humble/setup.bash
+  # ROS/colcon setup files read optional variables, so they must not be sourced
+  # under nounset (set -u). n01_source_setup temporarily disables only nounset
+  # and restores the caller's setting.
+  n01_source_setup /opt/ros/humble/setup.bash || return $?
   if [[ ! -r "$ROOT/install/setup.bash" ]]; then
-    echo "ERROR: $ROOT/install/setup.bash is missing; build the workspace first."
+    echo "ERROR: $ROOT/install/setup.bash is missing; build the workspace first." >&2
     return 2
   fi
-  set +u
-  source "$ROOT/install/setup.bash"
-  set -u
+  n01_source_setup "$ROOT/install/setup.bash" || return $?
 }
 
 managed_nodes_absent() {
@@ -89,10 +96,20 @@ start_stack() {
   source_ros
   cd "$ROOT"
 
-  if [[ ! -r "$PCD" || ! -r "$SLAM_CONFIG" ]] || ! grep -Fq "map_path: $PCD" "$SLAM_CONFIG"; then
+  if [[ ! -r "$PCD" ]]; then
+    echo "ERROR: navigation PCD is not readable: $PCD"
+    return 2
+  fi
+  if [[ -z "${N01_NAV_PCD:-}" ]] && { [[ ! -r "$SLAM_CONFIG" ]] || ! grep -Fq "map_path: $PCD" "$SLAM_CONFIG"; }; then
     echo "ERROR: active Lite localization config does not confirm $PCD."
     return 2
   fi
+  if [[ -n "${N01_NAV_PCD:-}" ]] && ! grep -Fq "map_path: $PCD" "$SLAM_CONFIG" 2>/dev/null; then
+    echo "WARN: explicit N01_NAV_PCD differs from the static Lite YAML; using explicit PCD."
+  fi
+  echo "navigation PCD: $PCD"
+  echo "navigation ground_z_map_m: $NAV_GROUND_Z"
+  echo "navigation rviz: $NAV_RVIZ"
 
   # Idempotent start: first close any previous managed run and legacy orphans.
   stop_stack
@@ -125,7 +142,8 @@ start_stack() {
     pcd_path:="$PCD" \
     pcd_map_frame_asserted:=true \
     start_localization_adapter:="$start_adapter" \
-    rviz:=true \
+    ground_z_map_m:="$NAV_GROUND_Z" \
+    rviz:="$NAV_RVIZ" \
     >"$launch_log" 2>&1 </dev/null &
   launch_pid=$!
   echo "$launch_pid" > "$PID_FILE"

@@ -56,7 +56,7 @@ source install/setup.bash
 ros2 launch n01_live_navigation live_scan.launch.py \
   pcd_path:=/home/demo/lyy/slam_data/maps/cloud_map_20261027_225549.pcd \
   pcd_map_frame_asserted:=true \
-  ground_z_map_m:=-0.55 body_height_m:=0.90
+  ground_z_map_m:=0.139 body_height_m:=0.90
 ```
 
 `pcd_map_frame_asserted:=true` 是显式操作员断言：PCD 与当前甲方定位 map 是同一个坐标系。它不是自动配准证明。若定位当前加载的地图不是该 PCD 对应的 map，不能启用静态层。

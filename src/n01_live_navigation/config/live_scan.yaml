@@ -13,7 +13,10 @@ n01_live_scan_bridge:
     odom_child_frame: base_link
     expected_cloud_frame: lidar_link
     map_frame: map
+    # /robot_pose input stays map<-base_footprint (vendor SLAM contract).
     body_frame: base_footprint
+    # /body_pose output for SCAN/tracker is the physical body frame.
+    planner_body_frame: base_link
     max_status_age_s: 1.0
     max_pose_rx_age_s: 0.7
     max_pose_stamp_age_s: 1.5

@@ -8,13 +8,14 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import (
     QoSProfile, ReliabilityPolicy, DurabilityPolicy, qos_profile_sensor_data)
+from nav_msgs.msg import Odometry
 from sensor_msgs.msg import PointCloud2, PointField
 from std_msgs.msg import String
 from visualization_msgs.msg import Marker, MarkerArray
 
 from .core import (
     decode_pointcloud_xyz, cluster_xy_points, estimate_velocity,
-    sensor_cloud_stamp_gate,
+    ground_z_from_body_pose, sensor_cloud_stamp_gate,
 )
 
 
@@ -24,8 +25,12 @@ class DynamicObstacleTracker(Node):
         self.declare_parameter("cloud_topic", "/cloud")
         self.declare_parameter("static_topic", "/grid_map/static_occupancy")
         self.declare_parameter("map_frame", "map")
-        self.declare_parameter("ground_z_map_m", -0.55)
+        # Fallback local ground in the active map; /body_pose refines it.
+        self.declare_parameter("ground_z_map_m", 0.139)
         self.declare_parameter("body_height_m", 0.90)
+        self.declare_parameter("body_to_ground_m", 0.778)
+        self.declare_parameter("body_pose_topic", "/body_pose")
+        self.declare_parameter("body_pose_timeout_s", 0.5)
         self.declare_parameter("voxel_size_m", 0.30)
         self.declare_parameter("cluster_cell_m", 0.35)
         self.declare_parameter("min_cluster_points", 6)
@@ -35,8 +40,15 @@ class DynamicObstacleTracker(Node):
         self.declare_parameter("max_cloud_age_s", 0.9)
         get = lambda name: self.get_parameter(name).value
         self.map_frame = str(get("map_frame"))
-        self.ground_z = float(get("ground_z_map_m"))
+        self.ground_z_fallback = float(get("ground_z_map_m"))
+        self.ground_z = self.ground_z_fallback
+        self.ground_z_body_pose = None
+        self.ground_z_source = "fallback_param"
         self.body_height = float(get("body_height_m"))
+        self.body_to_ground = float(get("body_to_ground_m"))
+        self.body_pose_topic = str(get("body_pose_topic"))
+        self.body_pose_timeout = float(get("body_pose_timeout_s"))
+        self.last_body_pose_monotonic = 0.0
         self.voxel = float(get("voxel_size_m"))
         self.cluster_cell = float(get("cluster_cell_m"))
         self.min_points = int(get("min_cluster_points"))
@@ -47,8 +59,10 @@ class DynamicObstacleTracker(Node):
         self.last_cloud_stamp_ns = 0
         self.rejected_cloud_stamp_count = 0
         if not (
-            self.map_frame == "map" and math.isfinite(self.ground_z)
+            self.map_frame == "map" and math.isfinite(self.ground_z_fallback)
             and 0.5 <= self.body_height <= 1.5
+            and 0.4 <= self.body_to_ground <= 1.2
+            and 0.1 <= self.body_pose_timeout <= 2.0
             and 0.1 <= self.voxel <= 1.0
             and 0.1 <= self.cluster_cell <= 1.0
             and 3 <= self.min_points <= 100
@@ -74,6 +88,8 @@ class DynamicObstacleTracker(Node):
             durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.create_subscription(
             PointCloud2, str(get("static_topic")), self.on_static, static_qos)
+        self.create_subscription(
+            Odometry, self.body_pose_topic, self.on_body_pose, qos_profile_sensor_data)
         self.create_subscription(
             PointCloud2, str(get("cloud_topic")), self.on_cloud, qos_profile_sensor_data)
         self.candidate_pub = self.create_publisher(
@@ -262,6 +278,28 @@ class DynamicObstacleTracker(Node):
             "safety_authorization": "NEVER",
         }, sort_keys=True)))
 
+    def on_body_pose(self, msg):
+        """Track the physical local ground from map<-base_link and the leg height."""
+        if str(msg.header.frame_id).lstrip("/") != self.map_frame:
+            return
+        ground_z = ground_z_from_body_pose(
+            msg.pose.pose.position.z, self.body_to_ground)
+        if ground_z is None:
+            return
+        self.ground_z_body_pose = ground_z
+        self.last_body_pose_monotonic = time.monotonic()
+
+    def _active_ground_z(self):
+        now = time.monotonic()
+        if (self.ground_z_body_pose is not None
+                and now - self.last_body_pose_monotonic <= self.body_pose_timeout):
+            self.ground_z = self.ground_z_body_pose
+            self.ground_z_source = "body_pose"
+        else:
+            self.ground_z = self.ground_z_fallback
+            self.ground_z_source = "fallback_param"
+        return self.ground_z
+
     def on_cloud(self, msg):
         self.cloud_count += 1
         if msg.header.frame_id.lstrip("/") != self.map_frame:
@@ -331,8 +369,9 @@ class DynamicObstacleTracker(Node):
                 "safety_authorization": "NEVER",
             }, sort_keys=True)))
             return
-        z_min = self.ground_z + 0.08
-        z_max = self.ground_z + self.body_height + 0.30
+        ground_z = self._active_ground_z()
+        z_min = ground_z + 0.08
+        z_max = ground_z + self.body_height + 0.30
         band = points[(points[:, 2] >= z_min) & (points[:, 2] <= z_max)]
         keys = self._voxel_keys(band)
         unmatched_mask = np.fromiter(
@@ -359,6 +398,9 @@ class DynamicObstacleTracker(Node):
             "max_cloud_age_s": self.max_cloud_age,
             "rejected_cloud_stamp_count": self.rejected_cloud_stamp_count,
             "z_band_map_m": [z_min, z_max],
+            "ground_z_map_m": ground_z,
+            "ground_z_source": self.ground_z_source,
+            "body_to_ground_m": self.body_to_ground,
             "static_voxel_size_m": self.voxel,
             "candidate_voxel_match": "exact_coarse_voxel_match",
             "static_matched_points": self.last_static_match_count,

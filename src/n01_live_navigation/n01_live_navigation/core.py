@@ -612,6 +612,19 @@ def stamped_data_is_fresh(stamp_ns, now_ns, max_age_s, future_tolerance_s=0.2):
     return bool(-future_tolerance <= age_s <= max_age), float(age_s)
 
 
+def ground_z_from_body_pose(body_z, body_to_ground):
+    """Derive the local ground z from map<-base_link z and the leg/wheel offset."""
+    try:
+        body = float(body_z)
+        offset = float(body_to_ground)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not math.isfinite(body) or not math.isfinite(offset) or offset <= 0.0:
+        return None
+    ground = body - offset
+    return float(ground) if math.isfinite(ground) else None
+
+
 def evaluate_safety_gate(*, health_fresh, navigation_ready,
                          feasibility_fresh, feasibility_status,
                          candidate_review_ready, operator_hold,

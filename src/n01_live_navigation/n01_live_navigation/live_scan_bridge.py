@@ -52,7 +52,11 @@ class LiveScanBridge(Node):
             "odom_child_frame": "base_link",
             "expected_cloud_frame": "lidar_link",
             "map_frame": "map",
+            # Input /robot_pose contract stays map -> base_footprint (vendor SLAM).
             "body_frame": "base_footprint",
+            # /body_pose output consumed by SCAN/tracker is the physical body,
+            # base_footprint -> base_link +0.90 is composed once here.
+            "planner_body_frame": "base_link",
             "max_status_age_s": 1.0,
             "max_pose_rx_age_s": 0.7,
             "max_pose_stamp_age_s": 1.5,
@@ -86,6 +90,7 @@ class LiveScanBridge(Node):
         self.cloud_frame = str(get("expected_cloud_frame")).lstrip("/")
         self.map_frame = str(get("map_frame")).lstrip("/")
         self.body_frame = str(get("body_frame")).lstrip("/")
+        self.planner_body_frame = str(get("planner_body_frame")).lstrip("/")
         self.max_status_age = float(get("max_status_age_s"))
         self.max_pose_rx_age = float(get("max_pose_rx_age_s"))
         self.max_pose_stamp_age = float(get("max_pose_stamp_age_s"))
@@ -127,7 +132,8 @@ class LiveScanBridge(Node):
             and 1 <= self.max_pending_clouds <= 32
             and 100 <= self.max_points <= 300000
             and 1.0 <= self.max_range <= 50.0
-            and self.map_frame and self.body_frame and self.cloud_frame
+            and self.map_frame and self.body_frame and self.planner_body_frame
+            and self.cloud_frame
             and self.odom_frame and self.odom_child_frame
         ):
             raise ValueError("live bridge parameters outside bounded limits")
@@ -566,15 +572,35 @@ class LiveScanBridge(Node):
         except ValueError as exc:
             self.last_live_body_pose_error = "motion_compensation_invalid: %s" % exc
             return
+        # The published planner body is the physical base_link, while the
+        # /robot_pose input remains map<-base_footprint. Compose the fixed
+        # base_footprint->base_link transform exactly once here.
+        if self.planner_body_frame == self.body_frame:
+            map_planner = map_body
+        else:
+            try:
+                body_to_planner = self.tf_buffer.lookup_transform(
+                    self.body_frame, self.planner_body_frame,
+                    Time(nanoseconds=stamp_ns), timeout=Duration(seconds=0.05))
+                body_to_planner_translation, body_to_planner_quaternion = \
+                    self._transform_values(body_to_planner)
+                map_planner = compose_transform(
+                    map_body[0], map_body[1],
+                    body_to_planner_translation, body_to_planner_quaternion)
+            except (TransformException, ValueError) as exc:
+                self.last_live_body_pose_error = (
+                    "planner_body_tf_unavailable: %s" % exc)
+                return
         velocity, velocity_valid = estimate_velocity(
-            self.last_live_body, (map_body[0], stamp_ns / 1e9))
+            self.last_live_body, (map_planner[0], stamp_ns / 1e9))
         if not velocity_valid:
             velocity = (0.0, 0.0, 0.0)
         body_msg = self._odom(
-            Time(nanoseconds=stamp_ns).to_msg(), self.map_frame, self.body_frame,
-            map_body[0], map_body[1], velocity)
+            Time(nanoseconds=stamp_ns).to_msg(), self.map_frame,
+            self.planner_body_frame,
+            map_planner[0], map_planner[1], velocity)
         self.body_pose_pub.publish(body_msg)
-        self.last_live_body = (map_body[0], stamp_ns / 1e9)
+        self.last_live_body = (map_planner[0], stamp_ns / 1e9)
         self.last_live_body_pose_stamp_ns = stamp_ns
         self.last_live_body_pose_monotonic = now_mono
         self.last_live_body_pose_anchor_stamp_ns = int(anchor[0])

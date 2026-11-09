@@ -86,16 +86,19 @@ MANAGED=(
   /n01_live_navigation_rviz
 )
 LEFTOVERS=()
-for node in "\${MANAGED[@]}"; do
+for node in "${MANAGED[@]}"; do
   if grep -Fxq "$node" <<<"$NODES"; then LEFTOVERS+=("$node"); fi
 done
-if (("\${#LEFTOVERS[@]}" > 0)); then
+if (("${#LEFTOVERS[@]}" > 0)); then
   echo "ERROR: managed N-01 graph entries remain after lifecycle stop:"
-  printf '  %s\n' "\${LEFTOVERS[@]}"
+  printf '  %s\n' "${LEFTOVERS[@]}"
   exit 3
 fi
 
-# Adapter ownership and optional startup are handled by the unified lifecycle entrypoint.\n\necho\necho "===== 5. BUILD ====="
+# Adapter ownership and optional startup are handled by the unified lifecycle entrypoint.
+
+echo
+echo "===== 5. BUILD ====="
 if ! colcon build --symlink-install \
     --packages-up-to n01_live_navigation scan_planner n01_static_map \
     --event-handlers console_direct+ 2>&1 | tee "$BUILD_LOG"; then

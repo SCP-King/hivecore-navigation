@@ -105,7 +105,7 @@ ros2 launch n01_live_navigation live_scan.launch.py \
   pcd_path:=/opt/slam3d_release/resource/mapping_lite.pcd \
   pcd_map_frame_asserted:=true \
   start_localization_adapter:=false \
-  ground_z_map_m:=-0.55 \
+  ground_z_map_m:=0.139 \
   body_height_m:=0.90 \
   rviz:=true
 ```

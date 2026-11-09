@@ -67,6 +67,11 @@ class Hive2TrajectoryMonitor(Node):
         self.last_error = ""
         self.last_bspline_rx = None
         self.last_watchdog_status = None
+        # Keep the last feasible candidate Path and re-publish it while its
+        # B-spline is active. The GUI/RViz may subscribe after the one-shot
+        # on_bspline callback; without replay they would see no path.
+        self.last_path = None
+        self.last_path_active = False
 
         self.path_pub = self.create_publisher(
             Path, "/n01/live_navigation/hive2_candidate_path", 10)
@@ -92,6 +97,8 @@ class Hive2TrajectoryMonitor(Node):
         self.wheel_marker_pub.publish(markers)
 
     def _clear_candidate_visualization(self):
+        self.last_path = None
+        self.last_path_active = False
         stamp = self.get_clock().now().to_msg()
         path = Path()
         path.header.frame_id = self.frame
@@ -104,6 +111,10 @@ class Hive2TrajectoryMonitor(Node):
         if self.last_bspline_rx is not None:
             receive_age = max(0.0, now_mono - self.last_bspline_rx)
             if receive_age <= self.max_bspline_receive_age:
+                # Replay the active candidate path so a GUI/RViz subscriber
+                # that joined after the B-spline callback still receives it.
+                if self.last_path is not None and self.last_path_active:
+                    self.path_pub.publish(self.last_path)
                 return
             status = "STALE_BSPLINE"
             reason = "bspline_receive_timeout"
@@ -258,10 +269,14 @@ class Hive2TrajectoryMonitor(Node):
         trajectory_active, trajectory_start_age_s = trajectory_window_is_active(
             trajectory_start_ns, now_ns, trajectory_duration_s)
         if trajectory_active:
+            self.last_path = path
+            self.last_path_active = True
             self.path_pub.publish(path)
             self._publish_wheel_markers(path.header.stamp, screen)
             self.last_watchdog_status = None
         else:
+            self.last_path = None
+            self.last_path_active = False
             self._clear_candidate_visualization()
             self.last_watchdog_status = "TRAJECTORY_NOT_ACTIVE_OR_STALE"
         body_stamp_age = (

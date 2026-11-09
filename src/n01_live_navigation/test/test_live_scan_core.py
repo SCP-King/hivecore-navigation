@@ -25,6 +25,7 @@ from n01_live_navigation.core import (
     select_latest_tf_stamp,
     pose_samples_equivalent,
     sensor_cloud_stamp_gate,
+    ground_z_from_body_pose,
 )
 
 
@@ -359,6 +360,13 @@ class LiveScanCoreTests(unittest.TestCase):
         self.assertFalse(result["execution_authorized"])
         self.assertEqual(result["actuator_output"], "DISABLED")
         self.assertEqual(result["safety_authorization"], "NEVER")
+
+    def test_ground_z_from_body_pose_uses_leg_offset(self):
+        self.assertAlmostEqual(ground_z_from_body_pose(0.917, 0.778), 0.139, places=6)
+        self.assertAlmostEqual(ground_z_from_body_pose(0.0, 0.778), -0.778, places=6)
+        self.assertIsNone(ground_z_from_body_pose(float("nan"), 0.778))
+        self.assertIsNone(ground_z_from_body_pose(0.917, 0.0))
+        self.assertIsNone(ground_z_from_body_pose(None, 0.778))
 
     def test_velocity_requires_valid_timestamp_delta(self):
         v, ok = estimate_velocity(((0, 0, 0), 1.0), ((.1, 0, 0), 1.1))

@@ -16,7 +16,7 @@ source "$WS_ROOT/scripts/lib/ros_env.sh"
 source "$WS_ROOT/scripts/lib/colcon_build_guard.sh"
 PCD_PATH="$HOME/lyy/slam_data/maps/cloud_map_20261027_225549.pcd"
 PCD_ASSERTED="true"
-GROUND_Z="-0.55"
+GROUND_Z="0.139"  # current local ground in the active map; verify per site
 BODY_HEIGHT="0.90"
 RVIZ="true"
 RVIZ_CONFIG=""

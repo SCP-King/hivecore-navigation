@@ -79,6 +79,8 @@ namespace scan_planner
         std::bind(&SCANReplanFSM::go2ExecutionFrozenCallback, this, std::placeholders::_1));
 
     bspline_pub_ = node_->create_publisher<scan_planner_msgs::msg::Bspline>("planning/bspline", 10);
+    global_path_pub_ = node_->create_publisher<nav_msgs::msg::Path>(
+        "planning/global_path", rclcpp::QoS(1).reliable().transient_local());
     data_disp_pub_ = node_->create_publisher<scan_planner_msgs::msg::DataDisp>("planning/data_display", 100);
     self_inflation_pub_ = node_->create_publisher<visualization_msgs::msg::Marker>(
         "self_inflation", rclcpp::QoS(1).reliable().transient_local());
@@ -177,6 +179,7 @@ namespace scan_planner
       end_vel_.setZero();
       have_target_ = true;
       have_new_target_ = true;
+      publishGlobalPath();
 
       /*** FSM ***/
       if (exec_state_ == WAIT_TARGET)
@@ -236,6 +239,7 @@ namespace scan_planner
     end_vel_.setZero();
     have_target_ = true;
     have_new_target_ = true;
+    publishGlobalPath();
     visualization_->displayGlobalPathList(gloabl_traj, 0.1, 0);
     visualization_->displayGoalPoint(end_pt_, Eigen::Vector4d(0, 0.5, 0.5, 1), 0.3, static_cast<int>(waypoints.size()) - 1);
 
@@ -282,6 +286,7 @@ namespace scan_planner
     end_vel_.setZero();
     have_target_ = true;
     have_new_target_ = true;
+    publishGlobalPath();
     visualization_->displayGlobalPathList(gloabl_traj, 0.1, 0);
     visualization_->displayGoalPoint(end_pt_, Eigen::Vector4d(0, 0.5, 0.5, 1), 0.3, current_wp_);
     RCLCPP_INFO(node_->get_logger(), "[navi_mode=%d] Planning to waypoint %d/%zu: [%.2f, %.2f, %.2f]",
@@ -924,6 +929,33 @@ namespace scan_planner
     bspline_pub_->publish(bspline);
 
     return true;
+  }
+
+  void SCANReplanFSM::publishGlobalPath()
+  {
+    auto &gd = planner_manager_->global_data_;
+    const double duration = gd.global_traj_.getTimeSum();
+    if (!(duration > 1e-3)) return;
+    nav_msgs::msg::Path path;
+    path.header.frame_id = "map";
+    path.header.stamp = node_->now();
+    const int samples = std::max(20, std::min(2000, static_cast<int>(duration / 0.05)));
+    const double dt = duration / static_cast<double>(samples);
+    for (int i = 0; i <= samples; ++i) {
+      const double t = std::min(duration, dt * static_cast<double>(i));
+      const Eigen::Vector3d p = gd.global_traj_.evaluate(t);
+      const Eigen::Vector3d p_next = gd.global_traj_.evaluate(std::min(duration, t + dt));
+      const double yaw = std::atan2(p_next.y() - p.y(), p_next.x() - p.x());
+      geometry_msgs::msg::PoseStamped pose;
+      pose.header = path.header;
+      pose.pose.position.x = p.x();
+      pose.pose.position.y = p.y();
+      pose.pose.position.z = p.z();
+      pose.pose.orientation.z = std::sin(yaw * 0.5);
+      pose.pose.orientation.w = std::cos(yaw * 0.5);
+      path.poses.push_back(pose);
+    }
+    global_path_pub_->publish(path);
   }
 
   void SCANReplanFSM::getLocalTarget()

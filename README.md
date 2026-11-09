@@ -21,11 +21,14 @@ git status --short --branch
 ## 文档
 
 - [项目总览](docs/N01_PROJECT_GUIDE.md)
+- [当前统一坐标系统（2026-11-09）](docs/n01_tf_frames_current_20261109.md)
 - [定位后端解耦接口契约](docs/n01_localization_backend_contract.md)
 - [实时导航全栈](docs/n01_live_navigation_full_stack.md)
 - [实时 SCAN 集成](docs/n01_live_scan_integration.md)
 - [四阶段导航交付](docs/n01_four_stage_navigation_delivery.md)
 - [脚本与分支治理](docs/n01_repository_structure_and_script_policy.md)
+
+当前坐标系统一约定：`base_footprint` 是厂商 SLAM 的虚拟跟踪帧（`base_link` 下方 0.90 m），不是地面；N-01 `/body_pose` 使用 `base_link`；局部地面按 `body_pose.z - body_to_ground`（当前 0.778 m）计算。历史 `0.30 m` 建图约定只用于回放。
 
 ## 安全边界
 
