@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Canonical command router for N-01 repository workflows.
-# Keep implementation in focused scripts; this file is the stable user-facing entrypoint.
+# Stable operator interface; focused scripts retain their own safety checks.
 set -Eeuo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
@@ -14,42 +14,57 @@ N-01 workflow command router
 Usage:
   bash scripts/n01 <command> [arguments...]
 
-FAST-LIO2 (isolated optional backend):
-  fast-lio-import       Fetch pinned upstream FAST-LIO2 source and apply local patch
-  fast-lio-build        Build n01_fast_lio against ROS 2 Humble and Livox
-  fast-lio-bag BAG [PCD]
-                        Replay raw Livox Bag in isolated domain and save private map
+Environment and read-only diagnostics:
+  environment-preflight  Host, ROS, workspace and data-path check
+  planning-audit         Collect planning readiness blockers
+  live-preflight [SEC]   Read-only live ROS graph/freshness audit
+  robot-pose-audit       Audit /robot_pose publisher endpoints and timing
 
-Offline validation (ROS_DOMAIN_ID=88 / localhost-only):
-  g1-smoke              Short G1 isolated smoke test
-  g1-acceptance         Full G1 multi-scenario offline acceptance
-  bag-functional        Historical Bag read-only functional replay
-  offline-framework     Isolated N-01 framework pipeline
-  g4-research           G4 historical-map research preflight/full chain
+Live planning lifecycle:
+  navigation start|status|stop
+  deploy                 Build and safely deploy N-01 live planning stack
+  planning-smoke [ARGS]  READY-gated one-shot planning smoke test
+  planning-acceptance    Goal-aware live planning acceptance; auto-stop stack
 
-Demo and evidence:
-  demo-replay           Historical Bag -> read-only RViz demo and media export
+Offline validation (isolated ROS domain):
+  g1-smoke               Short isolated G1 smoke test
+  g1-acceptance          Full four-scenario G1 offline acceptance
+  bag-functional         Historical Bag read-only functional replay
+  offline-framework      Isolated N-01 framework pipeline
+  g4-research            PCD/Bag free-space research workflow
+
+Optional FAST-LIO2:
+  fast-lio-import        Fetch pinned upstream source and apply local patch
+  fast-lio-build         Build isolated FAST-LIO2 backend
+  fast-lio-bag BAG [PCD]  Replay raw Livox Bag in private namespace
+
+Demo and package-local research:
+  demo-replay
   record-demo OUTPUT.mp4 [RVIZ_PID]
-                        Record only the RViz window (X11 required)
-
-Package-local research workflows:
-  fusion-min-loop       Phase-5 static-map/fusion/A* simulated closed loop
-  fusion-phase-c        Phase-5C simulated obstacle-injection closed loop
-  fusion-bag-replay     Isolated Bag + static-map/fusion/A* replay
-  static-map-bag-replay Isolated perception/SCAN Bag replay
+  fusion-min-loop
+  fusion-phase-c
+  fusion-bag-replay
+  static-map-bag-replay
 
 General:
-  help                  Show this help
+  help                   Show this help
 
-The router does not source robot/SLAM overlays or start hardware by itself.
-Each target script retains its own preflight and safety checks. Read
-scripts/README.md before running any command; never infer real-robot safety
-from an offline test result.
+The router itself does not source vendor overlays or start hardware.
+Read the repository README.md before operation. Offline PASS never authorizes
+physical movement. All commands retain their own preflight and safety checks.
 EOF
 }
 
 case "$COMMAND" in
   help|-h|--help) usage ;;
+  environment-preflight) exec bash "$ROOT/scripts/n01_environment_preflight.sh" "$@" ;;
+  planning-audit) exec bash "$ROOT/scripts/n01_collect_planning_readiness_audit.sh" "$@" ;;
+  live-preflight) exec bash "$ROOT/scripts/run_n01_live_stack_preflight.sh" "$@" ;;
+  robot-pose-audit) exec bash "$ROOT/scripts/run_n01_robot_pose_source_audit.sh" "$@" ;;
+  navigation) exec bash "$ROOT/scripts/n01_navigation.sh" "$@" ;;
+  deploy) exec bash "$ROOT/scripts/deploy_n01_planning_fixes.sh" "$@" ;;
+  planning-smoke) exec bash "$ROOT/scripts/run_n01_planning_smoke_test.sh" "$@" ;;
+  planning-acceptance) exec bash "$ROOT/scripts/run_n01_planning_acceptance.sh" "$@" ;;
   fast-lio-import) exec bash "$ROOT/scripts/import_n01_fast_lio2.sh" "$@" ;;
   fast-lio-build) exec bash "$ROOT/scripts/build_n01_fast_lio2.sh" "$@" ;;
   fast-lio-bag) exec bash "$ROOT/scripts/run_n01_fast_lio2_bag.sh" "$@" ;;
