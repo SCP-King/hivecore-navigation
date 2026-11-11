@@ -4,11 +4,11 @@
     # FAST-LIO2 reads the RAW Livox CustomMsg so per-point timestamps survive.
     # Do not substitute /livox/lidar/geo_filtered (PointCloud2) for this input.
     feature_extract_enable: false
-    point_filter_num: 3
-    max_iteration: 3
-    filter_size_surf: 0.5
+    point_filter_num: 5
+    max_iteration: 2
+    filter_size_surf: 0.7
     filter_size_map: 0.5
-    cube_side_length: 1000.0
+    cube_side_length: 100.0
     runtime_pos_log_enable: false
     map_file_path: /home/demo/lyy/n01_runtime/slam/fast_lio_map.pcd
 
@@ -17,7 +17,7 @@
       imu_topic: /livox/imu
       time_sync_en: false
       # Keep zero until an independent LiDAR/IMU time-offset calibration exists.
-      time_offset_lidar_to_imu: 0.0
+      time_offset_lidar_to_imu: -1.149
       # Private FAST-LIO map frame: it must not be confused with the vendor map.
       map_frame_id: n01_fast_lio_map
       # FAST-LIO state is the Livox IMU body; use the existing Hive2 TF edge.

@@ -1,8 +1,8 @@
-"""External localization -> native SCAN integration; planning outputs only.
+"""Normalized localization -> native SCAN integration; planning outputs only.
 
 This launch does not start a SLAM backend, a controller, or any cmd_vel publisher.
-The operator must explicitly assert that the supplied PCD belongs to the active
-vendor map coordinate frame before enabling the static PCD layer.
+Offline mode requires an asserted PCD in the active map frame. Realtime mode
+disables the static PCD layer and builds SCAN occupancy from the live cloud.
 """
 import os
 import fcntl
@@ -17,11 +17,12 @@ _LIVE_SCAN_LOCK_FD = None
 
 _MANAGED_NODE_NAMES = (
     "/n01_static_map",
-    "/n01_live_scan_bridge",
+    "/n01_navigation_path",
     "/n01_live_runtime_supervisor",
     "/n01_live_safety_supervisor",
     "/n01_live_dynamic_obstacle_tracker",
     "/n01_hive2_trajectory_monitor",
+    "/n01_shadow_path_follower",
     "/n01_live_scan_goal_gate",
     "/scan_planner_node",
     "/n01_live_navigation_rviz",
@@ -78,18 +79,21 @@ def _guard_single_live_stack(start_adapter, start_rviz):
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.conditions import IfCondition
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 
 
 def _nodes(context):
     pcd = LaunchConfiguration("pcd_path").perform(context)
+    map_mode = LaunchConfiguration("map_mode").perform(context).lower()
     asserted = LaunchConfiguration("pcd_map_frame_asserted").perform(context).lower()
-    if asserted != "true":
+    if map_mode not in ("offline", "realtime"):
+        raise RuntimeError("map_mode must be offline or realtime")
+    if map_mode == "offline" and asserted != "true":
         raise RuntimeError(
             "Refusing live SCAN launch: set pcd_map_frame_asserted:=true only after "
             "confirming this PCD is registered in the active vendor map frame")
-    if not pcd.startswith("/"):
+    if map_mode == "offline" and not pcd.startswith("/"):
         raise RuntimeError("pcd_path must be an absolute path to the original PCD")
     ground_z = float(LaunchConfiguration("ground_z_map_m").perform(context))
     body_height = float(LaunchConfiguration("body_height_m").perform(context))
@@ -105,6 +109,8 @@ def _nodes(context):
     start_rviz = LaunchConfiguration("rviz").perform(context).lower() == "true"
     _guard_single_live_stack(start_adapter, start_rviz)
     return [
+        Node(package="n01_live_navigation", executable="n01_navigation_path",
+             name="n01_navigation_path", output="screen"),
         # The adapter may already be running as an independently supervised process.
         # Default false prevents duplicate publishers on /n01/localization/pose.
         Node(
@@ -118,6 +124,9 @@ def _nodes(context):
         Node(
             package="n01_static_map", executable="static_map_node",
             name="n01_static_map",
+            condition=IfCondition(PythonExpression([
+                "'", LaunchConfiguration("map_mode"), "' == 'offline'"
+            ])),
             parameters=[
                 os.path.join(get_package_share_directory("n01_static_map"),
                     "config", "static_map.yaml"),
@@ -132,25 +141,26 @@ def _nodes(context):
         Node(
             package="n01_live_navigation", executable="n01_live_scan_bridge",
             name="n01_live_scan_bridge",
+            condition=IfCondition(LaunchConfiguration("start_scan_bridge")),
             parameters=[{
                 "status_topic": "/n01/localization/status",
-                "cloud_topic": "/livox/lidar/geo_filtered",
+                "cloud_topic": "/cloud_registered_body",
                 "pose_topic": "/n01/localization/pose",
                 "odom_topic": "/odom", "odom_frame": "odom",
                 "odom_child_frame": "base_link",
-                "expected_cloud_frame": "lidar_link",
+                "expected_cloud_frame": "imu_link",
                 "map_frame": "map", "body_frame": "base_footprint",
                 "planner_body_frame": "base_link",
                 "max_status_age_s": 1.0, "max_pose_rx_age_s": 0.7,
-                "max_pose_stamp_age_s": 1.5,
-                "max_pose_anchor_delta_s": 1.25,
-                "max_live_body_pose_anchor_delta_s": 1.4,
+                "max_pose_stamp_age_s": 2.0,
+                "max_pose_anchor_delta_s": 1.5,
+                "max_live_body_pose_anchor_delta_s": 2.0,
                 "pose_cache_size": 64,
                 "max_odom_rx_age_s": 0.2,
                 "max_odom_stamp_age_s": 0.4,
                 "odom_interpolation_max_gap_s": 0.08,
                 "odom_cache_size": 512,
-                "max_cloud_age_s": 0.9,
+                "max_cloud_age_s": 1.6,
                 "max_latest_scan_lag_s": 0.7,
                 "body_pose_publish_period_s": 0.05,
                 "max_live_body_pose_age_s": 0.25,
@@ -189,7 +199,7 @@ def _nodes(context):
                 "cluster_cell_m": 0.35,
                 "min_cluster_points": 6,
                 "max_points": 100000,
-                "max_cloud_age_s": 0.9,
+                "max_cloud_age_s": 1.6,
             }],
             output="screen",
         ),
@@ -198,13 +208,33 @@ def _nodes(context):
             name="n01_hive2_trajectory_monitor",
             parameters=[{
                 "map_frame": "map",
-                "max_speed_mps": 0.25,
-                "max_accel_mps2": 0.25,
+                # Screen the candidate at the speed the slow executor actually
+                # commands (0.05 m/s), not at the planner's 0.25 m/s limit.
+                # At 0.25 m/s the same path needs up to ~5.4 rad/s steering,
+                # which trips the 1.57 rad/s screen and invalidates the path
+                # before the robot can move.
+                "max_speed_mps": 0.05,
+                "max_accel_mps2": 0.04,
                 "wheel_base_x_m": 0.56,
                 "track_y_m": 0.27,
                 "wheel_radius_m": 0.095,
+                "delta_y_m": 0.085,
                 "steering_limit_rad": 1.5708,
                 "max_bspline_receive_age_s": 1.0,
+            }],
+            output="screen",
+        ),
+        Node(
+            package="n01_live_navigation", executable="n01_shadow_path_follower",
+            name="n01_shadow_path_follower",
+            condition=IfCondition(LaunchConfiguration("start_shadow_follower")),
+            parameters=[{
+                "lookahead_m": 0.8,
+                "max_speed_mps": 0.15,
+                "wheel_base_m": 0.56,
+                "path_timeout_s": 0.8,
+                "cbf_safe_radius_m": 0.55,
+                "cbf_decel_mps2": 0.20,
             }],
             output="screen",
         ),
@@ -252,7 +282,7 @@ def _nodes(context):
                 "grid_map.sensor_type": "lidar",
                 "grid_map.cloud_is_world": True,
                 "grid_map.need_extrinsic": False,
-                "grid_map.static_cloud_enabled": True,
+                "grid_map.static_cloud_enabled": map_mode == "offline",
                 "grid_map.static_cloud_topic": "/grid_map/static_occupancy",
                 "grid_map.static_cloud_max_points": 1000000,
                 "grid_map.p_hit": 0.85,
@@ -268,6 +298,7 @@ def _nodes(context):
                 "manager.control_points_distance": 0.2,
                 "manager.feasibility_tolerance": 0.5,
                 "manager.planning_horizon": 10.0,
+                "manager.global_waypoint_spacing": 0.30,
                 "optimization.lambda_smooth": 1.0,
                 "optimization.lambda_collision": 1.0,
                 "optimization.lambda_feasibility": 0.1,
@@ -285,7 +316,8 @@ def _nodes(context):
 
 def generate_launch_description():
     return LaunchDescription([
-        DeclareLaunchArgument("pcd_path"),
+        DeclareLaunchArgument("map_mode", default_value="offline"),
+        DeclareLaunchArgument("pcd_path", default_value=""),
         DeclareLaunchArgument("pcd_map_frame_asserted", default_value="false"),
         DeclareLaunchArgument(
             "start_localization_adapter", default_value="false",
@@ -296,7 +328,13 @@ def generate_launch_description():
         DeclareLaunchArgument("ground_z_map_m", default_value="0.139"),
         DeclareLaunchArgument("body_height_m", default_value="0.90"),
         DeclareLaunchArgument("body_to_ground_m", default_value="0.778"),
+        DeclareLaunchArgument(
+            "start_scan_bridge", default_value="true",
+            description="Start the pose/cloud bridge; disable when the unified localization stack owns it"),
         DeclareLaunchArgument("rviz", default_value="false"),
+        DeclareLaunchArgument(
+            "start_shadow_follower", default_value="true",
+            description="Start the shadow path follower (candidate commands only; no cmd_vel)"),
         DeclareLaunchArgument(
             "rviz_config",
             default_value=os.path.join(

@@ -15,7 +15,17 @@ NAV_GROUND_Z="${N01_NAV_GROUND_Z:-0.139}"
 # RViz needs a real X display. Headless/remote GUI uses Foxglove or the GUI's
 # standalone RViz button; do not let launch kill a dead rviz2 process.
 NAV_RVIZ="${N01_NAV_RVIZ:-false}"
+NAV_MAP_MODE="${N01_NAV_MAP_MODE:-offline}"
 SLAM_CONFIG="/opt/slam3d_release/install/hivecore_slam3d_lite_localization/share/hivecore_slam3d_lite_localization/config/localization_lite.yaml"
+# ROS launch writes ~/.ros/log by default. In this deployment that path can be
+# mounted read-only; fall back to a writable /tmp directory so the stack starts
+# atomically instead of dying after static_map/scan_planner were spawned.
+if [[ ! -w "$HOME/.ros/log" ]]; then
+  export ROS_LOG_DIR="${ROS_LOG_DIR:-/tmp/n01_ros_log}"
+  export ROS_HOME="${ROS_HOME:-/tmp/n01_ros_home}"
+  mkdir -p "$ROS_LOG_DIR" "$ROS_HOME"
+  echo "WARN: $HOME/.ros/log is not writable; using ROS_LOG_DIR=$ROS_LOG_DIR"
+fi
 mkdir -p "$RUN_DIR" "$LOG_DIR"
 
 usage() {
@@ -36,7 +46,7 @@ source_ros() {
 
 managed_nodes_absent() {
   local nodes="$1" node
-  local managed=(/n01_static_map /n01_live_scan_bridge /n01_live_runtime_supervisor
+  local managed=(/n01_navigation_path /n01_static_map /n01_shadow_path_follower /n01_live_runtime_supervisor
     /n01_live_safety_supervisor /n01_live_dynamic_obstacle_tracker
     /n01_hive2_trajectory_monitor /n01_live_scan_goal_gate /scan_planner_node
     /n01_live_navigation_rviz)
@@ -84,7 +94,7 @@ stop_stack() {
   done
   if (( clean == 0 )); then
     echo "ERROR: ROS graph still reports managed N-01 node names after process-group shutdown:"
-    grep -E '^/(n01_static_map|n01_live_scan_bridge|n01_live_runtime_supervisor|n01_live_safety_supervisor|n01_live_dynamic_obstacle_tracker|n01_hive2_trajectory_monitor|n01_live_scan_goal_gate|scan_planner_node|n01_live_navigation_rviz)$' <<<"$nodes" || true
+    grep -E '^/(n01_static_map|n01_shadow_path_follower|n01_live_runtime_supervisor|n01_live_safety_supervisor|n01_live_dynamic_obstacle_tracker|n01_hive2_trajectory_monitor|n01_live_scan_goal_gate|scan_planner_node|n01_live_navigation_rviz)$' <<<"$nodes" || true
     echo "No unrelated ROS nodes were signalled. Inspect these names before restarting."
     return 4
   fi
@@ -96,52 +106,66 @@ start_stack() {
   source_ros
   cd "$ROOT"
 
-  if [[ ! -r "$PCD" ]]; then
-    echo "ERROR: navigation PCD is not readable: $PCD"
+  if [[ "$NAV_MAP_MODE" != "offline" && "$NAV_MAP_MODE" != "realtime" ]]; then
+    echo "ERROR: N01_NAV_MAP_MODE must be offline or realtime"
     return 2
   fi
-  if [[ -z "${N01_NAV_PCD:-}" ]] && { [[ ! -r "$SLAM_CONFIG" ]] || ! grep -Fq "map_path: $PCD" "$SLAM_CONFIG"; }; then
-    echo "ERROR: active Lite localization config does not confirm $PCD."
-    return 2
+  if [[ "$NAV_MAP_MODE" == "offline" ]]; then
+    if [[ ! -r "$PCD" ]]; then
+      echo "ERROR: navigation PCD is not readable: $PCD"
+      return 2
+    fi
+    if [[ -z "${N01_NAV_PCD:-}" ]] && { [[ ! -r "$SLAM_CONFIG" ]] || ! grep -Fq "map_path: $PCD" "$SLAM_CONFIG"; }; then
+      echo "ERROR: active Lite localization config does not confirm $PCD."
+      return 2
+    fi
+    if [[ -n "${N01_NAV_PCD:-}" ]] && ! grep -Fq "map_path: $PCD" "$SLAM_CONFIG" 2>/dev/null; then
+      echo "WARN: explicit N01_NAV_PCD differs from the static Lite YAML; using explicit PCD."
+    fi
+    echo "navigation PCD: $PCD"
+  else
+    echo "navigation map: realtime FAST-LIO2 + SCAN sliding occupancy (no static PCD layer)"
   fi
-  if [[ -n "${N01_NAV_PCD:-}" ]] && ! grep -Fq "map_path: $PCD" "$SLAM_CONFIG" 2>/dev/null; then
-    echo "WARN: explicit N01_NAV_PCD differs from the static Lite YAML; using explicit PCD."
-  fi
-  echo "navigation PCD: $PCD"
+  echo "navigation map mode: $NAV_MAP_MODE"
   echo "navigation ground_z_map_m: $NAV_GROUND_Z"
   echo "navigation rviz: $NAV_RVIZ"
 
   # Idempotent start: first close any previous managed run and legacy orphans.
   stop_stack
 
-  local nodes adapter_count start_adapter launch_log launch_pid ready current missing node
-  nodes="$(ros2 node list 2>/dev/null || true)"
-  adapter_count="$(grep -Fxc "/n01_localization_adapter" <<<"$nodes" || true)"
+  local nodes adapter_count start_adapter launch_log launch_pid ready current missing node attempt
+  # A just-restarted CLI daemon can return a partial graph. Use bounded fresh
+  # DDS discovery before declaring the independently owned adapter missing.
+  for attempt in 1 2 3; do
+    if ! nodes="$(ros2 node list --no-daemon --spin-time 2)"; then
+      echo "ERROR: ROS graph discovery failed; refusing navigation startup."
+      return 3
+    fi
+    adapter_count="$(grep -Fxc "/n01_localization_adapter" <<<"$nodes" || true)"
+    if [[ "${adapter_count:-0}" -ne 0 ]]; then break; fi
+    echo "Waiting for localization adapter discovery ($attempt/3)."
+  done
+
   if [[ "${adapter_count:-0}" -gt 1 ]]; then
     echo "ERROR: duplicate localization adapters; refusing to start."
     return 3
-  elif [[ "${adapter_count:-0}" -eq 1 ]]; then
-    start_adapter=false
-    echo "Reusing independent /n01_localization_adapter."
+  elif [[ "${adapter_count:-0}" -eq 0 ]]; then
+    echo "ERROR: /n01_localization_adapter is missing; start the localization data chain first."
+    echo "Navigation only consumes the localization adapter and scan bridge."
+    return 3
   else
-    start_adapter=true
-    if [[ ! -r /opt/slam3d_release/setup_runtime.sh ]]; then
-      echo "ERROR: Lite runtime setup is unavailable."
-      return 3
-    fi
-    set +u
-    source /opt/slam3d_release/setup_runtime.sh
-    source "$ROOT/install/setup.bash"
-    set -u
-    ros2 interface show hivecore_slam3d_lite_localization/msg/LocStatus >/dev/null
+    start_adapter=false
+    echo "Reusing localization-owned /n01_localization_adapter."
   fi
 
   launch_log="$LOG_DIR/n01_navigation_launch_$(date +%Y%m%d_%H%M%S).log"
   echo "===== N-01 NAVIGATION START ====="
   nohup setsid ros2 launch n01_live_navigation live_scan.launch.py \
+    map_mode:="$NAV_MAP_MODE" \
     pcd_path:="$PCD" \
-    pcd_map_frame_asserted:=true \
+    pcd_map_frame_asserted:="$([[ "$NAV_MAP_MODE" == "offline" ]] && echo true || echo false)" \
     start_localization_adapter:="$start_adapter" \
+    start_scan_bridge:=false \
     ground_z_map_m:="$NAV_GROUND_Z" \
     rviz:="$NAV_RVIZ" \
     >"$launch_log" 2>&1 </dev/null &
@@ -150,9 +174,10 @@ start_stack() {
   echo "launch_pid=$launch_pid"
   echo "launch_log=$launch_log"
 
-  local required=(/n01_static_map /n01_live_scan_bridge /n01_live_runtime_supervisor
+  local required=(/n01_navigation_path /n01_live_scan_bridge /n01_shadow_path_follower /n01_live_runtime_supervisor
     /n01_live_safety_supervisor /n01_live_dynamic_obstacle_tracker
     /n01_hive2_trajectory_monitor /n01_live_scan_goal_gate /scan_planner_node)
+  if [[ "$NAV_MAP_MODE" == "offline" ]]; then required=(/n01_static_map "${required[@]}"); fi
   ready=0
   for _ in $(seq 1 45); do
     if ! kill -0 "$launch_pid" 2>/dev/null; then
@@ -195,7 +220,7 @@ status_stack() {
   else
     echo "No managed launch PID file."
   fi
-  grep -E '^/(n01_static_map|n01_live_scan_bridge|n01_live_runtime_supervisor|n01_live_safety_supervisor|n01_live_dynamic_obstacle_tracker|n01_hive2_trajectory_monitor|n01_live_scan_goal_gate|scan_planner_node|n01_live_navigation_rviz|n01_localization_adapter)$' <<<"$nodes" || true
+  grep -E '^/(n01_static_map|n01_live_scan_bridge|n01_shadow_path_follower|n01_live_runtime_supervisor|n01_live_safety_supervisor|n01_live_dynamic_obstacle_tracker|n01_hive2_trajectory_monitor|n01_live_scan_goal_gate|scan_planner_node|n01_live_navigation_rviz|n01_localization_adapter)$' <<<"$nodes" || true
 }
 
 case "${1:-}" in

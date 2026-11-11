@@ -1,0 +1,26 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>n01_traj_tracker</name>
+  <version>0.1.0</version>
+  <description>
+    N-01 trajectory tracker: ports the upstream SCAN-Planner closed_loop_controller
+    to ROS 2. Converts /planning/bspline into /cmd_vel for the 4WIS Hive2 chassis.
+    Disabled by default; requires explicit enable:=true.
+  </description>
+  <maintainer email="n01@example.com">N-01</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>scan_planner_msgs</depend>
+  <depend>bspline_opt</depend>
+  <depend>eigen</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

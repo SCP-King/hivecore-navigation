@@ -21,6 +21,7 @@ Environment and read-only diagnostics:
   robot-pose-audit       Audit /robot_pose publisher endpoints and timing
 
 Live planning lifecycle:
+  gui [PORT]            Start the integrated SLAM3D Lite + Navigation GUI
   navigation start|status|stop
   deploy                 Build and safely deploy N-01 live planning stack
   planning-smoke [ARGS]  READY-gated one-shot planning smoke test
@@ -61,6 +62,7 @@ case "$COMMAND" in
   planning-audit) exec bash "$ROOT/scripts/n01_collect_planning_readiness_audit.sh" "$@" ;;
   live-preflight) exec bash "$ROOT/scripts/run_n01_live_stack_preflight.sh" "$@" ;;
   robot-pose-audit) exec bash "$ROOT/scripts/run_n01_robot_pose_source_audit.sh" "$@" ;;
+  gui) exec bash "$ROOT/apps/n01_slam_gui/run_slam_lite_gui.sh" "$@" ;;
   navigation) exec bash "$ROOT/scripts/n01_navigation.sh" "$@" ;;
   deploy) exec bash "$ROOT/scripts/deploy_n01_planning_fixes.sh" "$@" ;;
   planning-smoke) exec bash "$ROOT/scripts/run_n01_planning_smoke_test.sh" "$@" ;;

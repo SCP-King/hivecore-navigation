@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 3.8)
 project(scan_planner)
 
+# Optimize production math/grid loops while preserving explicit Debug builds.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+
 if(NOT CMAKE_CXX_STANDARD)
   set(CMAKE_CXX_STANDARD 17)
 endif()

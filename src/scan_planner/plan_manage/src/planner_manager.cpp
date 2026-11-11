@@ -3,6 +3,9 @@
 #include <path_searching/dyn_a_star.h>
 #include <chrono>
 #include <thread>
+#include <queue>
+#include <limits>
+#include <cstdint>
 
 namespace scan_planner
 {
@@ -38,6 +41,184 @@ namespace scan_planner
       points.front()(2) = start_z;
       points.back()(2) = target_z;
     }
+  struct GlobalGridAStarNode
+  {
+    int idx{-1};
+    double f{0.0};
+    bool operator>(const GlobalGridAStarNode &other) const { return f > other.f; }
+  };
+
+  std::vector<Eigen::Vector3d> globalAStar2D(
+      const pcl::PointCloud<pcl::PointXYZ> &cloud,
+      const Eigen::Vector3d &source_min, const Eigen::Vector3d &source_max,
+      double resolution, double inflation,
+      double min_z, double max_z,
+      double waypoint_spacing,
+      const Eigen::Vector3d &start, const Eigen::Vector3d &end)
+  {
+    if (cloud.empty() || resolution <= 1e-6)
+      return {};
+    const double margin = 1.0;
+    const double min_x = source_min.x() - margin;
+    const double min_y = source_min.y() - margin;
+    const double max_x = source_max.x() + margin;
+    const double max_y = source_max.y() + margin;
+    const int width = static_cast<int>(std::ceil((max_x - min_x) / resolution)) + 1;
+    const int height = static_cast<int>(std::ceil((max_y - min_y) / resolution)) + 1;
+    if (width <= 2 || height <= 2 || static_cast<long long>(width) * height > 4000000LL)
+      return {};
+    const auto index = [width, height, min_x, min_y, resolution](double x, double y) {
+      const int ix = static_cast<int>(std::floor((x - min_x) / resolution));
+      const int iy = static_cast<int>(std::floor((y - min_y) / resolution));
+      if (ix < 0 || iy < 0 || ix >= width || iy >= height) return -1;
+      return iy * width + ix;
+    };
+    std::vector<uint8_t> occupied(static_cast<size_t>(width) * height, 0);
+    for (const auto &p : cloud.points)
+    {
+      if (p.z < min_z || p.z > max_z) continue;
+      const int id = index(p.x, p.y);
+      if (id >= 0) occupied[id] = 1;
+    }
+    std::vector<uint8_t> inflated = occupied;
+    const int r = std::max(0, static_cast<int>(std::ceil(inflation / resolution)));
+    for (int iy = 0; iy < height; ++iy)
+    {
+      for (int ix = 0; ix < width; ++ix)
+      {
+        if (!occupied[static_cast<size_t>(iy) * width + ix]) continue;
+        for (int dy = -r; dy <= r; ++dy)
+        {
+          const int yy = iy + dy;
+          if (yy < 0 || yy >= height) continue;
+          for (int dx = -r; dx <= r; ++dx)
+          {
+            const int xx = ix + dx;
+            if (xx < 0 || xx >= width) continue;
+            if (dx * dx + dy * dy > r * r) continue;
+            inflated[static_cast<size_t>(yy) * width + xx] = 1;
+          }
+        }
+      }
+    }
+    const int start_id = index(start.x(), start.y());
+    const int goal_id = index(end.x(), end.y());
+    if (start_id < 0 || goal_id < 0) return {};
+    if (inflated[start_id] || inflated[goal_id])
+    {
+      RCLCPP_ERROR(rclcpp::get_logger("path_searching"),
+                   "Global PCD A* start/goal occupied after 2D inflation: start_occ=%d goal_occ=%d z=[%.2f,%.2f]",
+                   static_cast<int>(inflated[start_id]), static_cast<int>(inflated[goal_id]),
+                   min_z, max_z);
+      return {};
+    }
+    const int gx = goal_id % width, gy = goal_id / width;
+    const auto heuristic = [gx, gy, width](int id) {
+      const int x = id % width, y = id / width;
+      const double dx = std::abs(x - gx), dy = std::abs(y - gy);
+      return std::max(dx, dy) + (std::sqrt(2.0) - 1.0) * std::min(dx, dy);
+    };
+    const double INF = std::numeric_limits<double>::infinity();
+    std::vector<double> g_score(static_cast<size_t>(width) * height, INF);
+    std::vector<int> parent(static_cast<size_t>(width) * height, -1);
+    std::vector<uint8_t> closed(static_cast<size_t>(width) * height, 0);
+    std::priority_queue<GlobalGridAStarNode, std::vector<GlobalGridAStarNode>,
+                        std::greater<GlobalGridAStarNode>> open;
+    g_score[start_id] = 0.0;
+    open.push({start_id, heuristic(start_id)});
+    const int dirs[8][2] = {{1,0},{-1,0},{0,1},{0,-1},{1,1},{1,-1},{-1,1},{-1,-1}};
+    bool found = false;
+    while (!open.empty())
+    {
+      const int current = open.top().idx;
+      open.pop();
+      if (closed[current]) continue;
+      closed[current] = 1;
+      if (current == goal_id) { found = true; break; }
+      const int cx = current % width, cy = current / width;
+      for (const auto &d : dirs)
+      {
+        const int nx = cx + d[0], ny = cy + d[1];
+        if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+        const int nid = ny * width + nx;
+        if (inflated[nid] || closed[nid]) continue;
+        const double step = (d[0] != 0 && d[1] != 0) ? std::sqrt(2.0) : 1.0;
+        const double tentative = g_score[current] + step;
+        if (tentative + 1e-9 < g_score[nid])
+        {
+          g_score[nid] = tentative;
+          parent[nid] = current;
+          open.push({nid, tentative + heuristic(nid)});
+        }
+      }
+    }
+    if (!found) return {};
+    std::vector<int> ids;
+    for (int cur = goal_id; cur != -1; cur = parent[cur])
+    {
+      ids.push_back(cur);
+      if (cur == start_id) break;
+    }
+    if (ids.empty() || ids.back() != start_id) return {};
+    std::reverse(ids.begin(), ids.end());
+    std::vector<Eigen::Vector3d> path;
+    path.reserve(ids.size());
+    for (size_t i = 0; i < ids.size(); ++i)
+    {
+      const int x = ids[i] % width, y = ids[i] / width;
+      const double px = min_x + (x + 0.5) * resolution;
+      const double py = min_y + (y + 0.5) * resolution;
+      const double t = std::min(1.0, static_cast<double>(i) / std::max<size_t>(1, ids.size() - 1));
+      path.emplace_back(px, py, start.z() + t * (end.z() - start.z()));
+    }
+    path.front() = start;
+    path.back() = end;
+
+    // Collapse the dense one-cell-per-0.05m A* path into collision-free
+    // waypoints spaced up to `waypoint_spacing` apart.  minSnapTraj builds a
+    // dense 6n x 6n system, so this is the difference between ~1 s and a few
+    // milliseconds for a 6 m goal.  Every retained chord is sampled against
+    // the same inflated 2D grid the A* used, so shortcutting cannot cut a
+    // corner through an obstacle.
+    if (waypoint_spacing > resolution * 1.5 && path.size() > 2)
+    {
+      const auto cell_free = [&](double x, double y) {
+        const int id = index(x, y);
+        return id >= 0 && !inflated[id];
+      };
+      const auto segment_free = [&](const Eigen::Vector3d &a, const Eigen::Vector3d &b) {
+        const double d = (b - a).head<2>().norm();
+        const int steps = std::max(2, static_cast<int>(std::ceil(d / (resolution * 0.5))));
+        for (int s = 0; s <= steps; ++s)
+        {
+          const double t = static_cast<double>(s) / static_cast<double>(steps);
+          if (!cell_free(a.x() + t * (b.x() - a.x()), a.y() + t * (b.y() - a.y())))
+            return false;
+        }
+        return true;
+      };
+
+      std::vector<Eigen::Vector3d> reduced;
+      reduced.reserve(path.size());
+      reduced.push_back(path.front());
+      size_t i = 0;
+      while (i + 1 < path.size())
+      {
+        size_t best = i + 1;
+        for (size_t j = i + 2; j < path.size(); ++j)
+        {
+          if ((path[j] - path[i]).head<2>().norm() > waypoint_spacing)
+            break;
+          if (segment_free(path[i], path[j]))
+            best = j;
+        }
+        reduced.push_back(path[best]);
+        i = best;
+      }
+      path.swap(reduced);
+    }
+    return path;
+  }
   } // namespace
 
   // SECTION interfaces for setup and query
@@ -62,6 +243,10 @@ namespace scan_planner
     pp_.feasibility_tolerance_ = get_double("manager.feasibility_tolerance", 0.0);
     pp_.ctrl_pt_dist = get_double("manager.control_points_distance", -1.0);
     pp_.planning_horizon_ = get_double("manager.planning_horizon", 5.0);
+    // The global min-snap QP is O(n^3) in the number of A* waypoints.  The raw
+    // 0.05 m grid path gives ~20 points per metre, which costs ~1 s for a 6 m
+    // goal; collision-free resampling to a few decimetres costs microseconds.
+    pp_.global_waypoint_spacing_ = get_double("manager.global_waypoint_spacing", 0.30);
 
     local_data_.traj_id_ = 0;
     grid_map_.reset(new GridMap);
@@ -414,36 +599,59 @@ namespace scan_planner
                                          const Eigen::Vector3d &end_pos, const Eigen::Vector3d &end_vel, const Eigen::Vector3d &end_acc)
   {
 
-    // Global path: A* on the inflated static grid. The previous implementation
-    // was only a straight-line interpolation + min-snap polynomial reference,
-    // which could cross obstacles.
+    // Global path: A* over the COMPLETE static PCD bounds (not the 10 m
+    // sliding local GridMap and not a hard-coded pool size).
     std::vector<Eigen::Vector3d> inter_points;
-    if (grid_map_)
+    const auto t_global_start = std::chrono::steady_clock::now();
+    if (grid_map_ && grid_map_->hasStaticSource())
     {
-      AStar astar;
-      astar.initGridMap(grid_map_, Eigen::Vector3i(100, 100, 100));
-      ASTAR_RET ret = astar.AstarSearch(grid_map_->getResolution(), start_pos, end_pos);
-      if (ret == ASTAR_RET::SUCCESS)
-      {
-        inter_points = astar.getPath();
-      }
+      inter_points = globalAStar2D(
+          grid_map_->getStaticSourceCloud(),
+          grid_map_->getStaticSourceMin(),
+          grid_map_->getStaticSourceMax(),
+          grid_map_->getResolution(), 0.35,
+          std::min(start_pos.z(), end_pos.z()) - 0.55,
+          std::max(start_pos.z(), end_pos.z()) + 0.55,
+          pp_.global_waypoint_spacing_,
+          start_pos, end_pos);
       if (inter_points.size() < 2)
       {
         RCLCPP_ERROR(node_->get_logger(),
-                     "Global A* failed or returned fewer than 2 points: start=(%.2f,%.2f,%.2f) goal=(%.2f,%.2f,%.2f)",
+                     "Global PCD A* failed: start=(%.2f,%.2f,%.2f) goal=(%.2f,%.2f,%.2f) "
+                     "pcd_bounds=[%.2f,%.2f]x[%.2f,%.2f]",
                      start_pos.x(), start_pos.y(), start_pos.z(),
-                     end_pos.x(), end_pos.y(), end_pos.z());
+                     end_pos.x(), end_pos.y(), end_pos.z(),
+                     grid_map_->getStaticSourceMin().x(), grid_map_->getStaticSourceMax().x(),
+                     grid_map_->getStaticSourceMin().y(), grid_map_->getStaticSourceMax().y());
         return false;
       }
-      inter_points.front() = start_pos;
-      inter_points.back() = end_pos;
+      const auto t_astar_done = std::chrono::steady_clock::now();
+      RCLCPP_INFO(node_->get_logger(),
+                  "Global PCD A*: cloud=%zu path=%zu astar_ms=%.1f bounds=[%.2f,%.2f]x[%.2f,%.2f]",
+                  grid_map_->getStaticSourceCloud().size(), inter_points.size(),
+                  std::chrono::duration<double, std::milli>(t_astar_done - t_global_start).count(),
+                  grid_map_->getStaticSourceMin().x(), grid_map_->getStaticSourceMax().x(),
+                  grid_map_->getStaticSourceMin().y(), grid_map_->getStaticSourceMax().y());
+      constexpr size_t kMaxGlobalWps = 160;
+      if (inter_points.size() > kMaxGlobalWps)
+      {
+        std::vector<Eigen::Vector3d> reduced;
+        const size_t stride = (inter_points.size() + kMaxGlobalWps - 1) / kMaxGlobalWps;
+        for (size_t i = 0; i < inter_points.size(); i += stride)
+          reduced.push_back(inter_points[i]);
+        if (reduced.back() != inter_points.back())
+          reduced.push_back(inter_points.back());
+        inter_points.swap(reduced);
+      }
     }
     else
     {
-      RCLCPP_ERROR(node_->get_logger(), "Global A* unavailable: grid map is null");
+      RCLCPP_ERROR(node_->get_logger(),
+                   "Global PCD A* unavailable: static PCD source is not ready");
       return false;
     }
 
+    const auto t_smooth_start = std::chrono::steady_clock::now();
     // write position matrix
     int pt_num = inter_points.size();
     Eigen::MatrixXd pos(3, pt_num);
@@ -468,6 +676,12 @@ namespace scan_planner
     else
       return false;
 
+    const auto t_smooth_done = std::chrono::steady_clock::now();
+    RCLCPP_INFO(node_->get_logger(),
+                "Global trajectory smooth: pts=%d smooth_ms=%.1f total_ms=%.1f",
+                pt_num,
+                std::chrono::duration<double, std::milli>(t_smooth_done - t_smooth_start).count(),
+                std::chrono::duration<double, std::milli>(t_smooth_done - t_global_start).count());
     auto time_now = node_->now();
     global_data_.setGlobalTraj(gl_traj, time_now);
 

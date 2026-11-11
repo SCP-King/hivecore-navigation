@@ -1,0 +1,29 @@
+/**: 
+  ros__parameters:
+    # --- I/O 契约 ---
+    bspline_topic: "/planning/bspline"
+    body_pose_topic: "/body_pose"
+    cmd_vel_topic: "/cmd_vel"
+    status_topic: "/n01/traj_tracker/status"
+    enable_topic: "/n01/traj_tracker/enable"
+
+    # --- 安全门 ---
+    # 默认关闭。必须由操作员显式置 true 才会向 /cmd_vel 发指令。
+    enable: false
+
+    # --- 跟踪参数（上游 closed_loop_controller 语义）---
+    time_forward: 0.5              # 前视时间，用于估计期望朝向 [s]
+    heading_error_threshold: 0.6   # 超过该朝向误差先原地转；上游默认更小，舵轮易顿挫
+    kp_pos: 1.0                    # 位置误差增益
+    kp_yaw: 1.2                    # 朝向误差增益
+    finish_dist: 0.15              # 到点判定 [m]
+
+    # --- 限幅（Hive2 底盘 max_linear_speed=2.0，首测务必压到 0.3）---
+    max_vx: 0.30
+    max_vy: 0.30
+    max_vyaw: 0.40
+
+    # --- 时基与看门狗 ---
+    cmd_rate_hz: 20.0              # 舵角跟随 steer.speed=1.2rad/s，不宜过高
+    plan_timeout: 0.35             # 超时未收到新 B-spline 即发零速
+    pose_timeout: 0.35             # 超时未收到 /body_pose 即发零速

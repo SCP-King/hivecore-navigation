@@ -6,6 +6,9 @@
   <maintainer email="noreply@example.invalid">N-01 contributors</maintainer>
   <license>Apache-2.0</license>
   <buildtool_depend>ament_python</buildtool_depend>
+  <!-- Native geometric adapter additionally requires the locally installed
+       Hive2 Motion SDK 1.0.0 headers and libmotion_controller.so (see setup.py). -->
+  <build_depend>python3-dev</build_depend>
   <exec_depend>rclpy</exec_depend>
   <exec_depend>diagnostic_msgs</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
@@ -18,6 +21,7 @@
   <exec_depend>scan_planner_msgs</exec_depend>
   <exec_depend>n01_scan_dynacbf_bridge</exec_depend>
   <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
   <exec_depend>rosidl_runtime_py</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>

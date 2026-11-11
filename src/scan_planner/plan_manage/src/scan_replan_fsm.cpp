@@ -640,6 +640,18 @@ namespace scan_planner
       /* && (end_pt_ - pos).norm() < 0.5 */
       if (t_cur > info->duration_ - 1e-2)
       {
+        // A slow/external executor may lag the nominal spline schedule. A
+        // completed time parameter is not evidence of physical goal arrival.
+        if (navi_mode_ == NAVI_MODE::MANUAL_TARGET &&
+            (end_pt_ - odom_pos_).norm() > no_replan_thresh_)
+        {
+          RCLCPP_INFO_THROTTLE(node_->get_logger(), *node_->get_clock(), 2000,
+              "Trajectory window ended before measured arrival (remaining=%.3f m); replanning from odometry",
+              (end_pt_ - odom_pos_).norm());
+          have_new_target_ = true;
+          changeFSMExecState(GEN_NEW_TRAJ, "MEASURED_PROGRESS");
+          return;
+        }
         if (isWaypointSequenceMode() && current_wp_ + 1 < (int)active_waypoints_.size())
         {
           current_wp_++;

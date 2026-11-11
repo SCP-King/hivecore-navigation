@@ -28,6 +28,7 @@ git pull --ff-only origin dev/n01-current
 | `bash scripts/n01 planning-audit` | 规划阻塞项证据汇总 | 只读 |
 | `bash scripts/n01 live-preflight [秒数]` | Live Stack 话题、时间戳、TF 预检 | 只读观察 |
 | `bash scripts/n01 robot-pose-audit` | `/robot_pose` 发布端点与时间序列 | 只读观察 |
+| `bash scripts/n01 gui [端口]` | 启动仓库内 SLAM3D Lite + Navigation Web GUI | 显式按钮管理 GUI 自有进程 |
 | `bash scripts/n01 deploy` | 构建并按门控部署 N-01 规划栈 | 会构建、重启 N-01 栈；保留厂商 SLAM |
 | `bash scripts/n01 navigation start\|status\|stop` | Live Stack 生命周期管理 | 只管理 N-01 自有进程 |
 | `bash scripts/n01 planning-smoke [参数]` | 已运行栈上的 READY 门控单次规划 | 最多发一个规划目标，不发运动命令 |
@@ -96,6 +97,22 @@ N-01 Live Navigation
 | `n01_offline_integration` | Bag 回放、离线证据、集成测试 |
 | `n01_fast_lio` | 可选隔离 FAST-LIO2 与里程计适配 |
 | `scan_planner` | 上游 SCAN Planner；保留上游身份和接口 |
+
+非 ROS 应用统一放在 `apps/`：`apps/n01_slam_gui/` 是 SLAM3D Lite、建图、定位和导航的 Web 操作台。它不参与 `colcon` 包发现，通过 `bash scripts/n01 gui` 启动，并通过仓库相对路径调用导航生命周期脚本。
+
+仓库顶层按职责整理如下：
+
+```text
+hivecore-navigation/
+├── apps/                   # 非 ROS 操作应用（Web GUI）
+├── config/                 # 跨模块机器可读契约与统一参数
+├── docs/                   # 工程说明、现场记录与验收文档
+├── rviz/                   # 统一 RViz 配置
+├── scripts/                # 唯一命令入口及安全生命周期脚本
+├── src/                    # ROS 2 包与固定来源的第三方源码
+├── build/ install/ log/    # colcon 生成物，不纳入版本控制
+└── README.md               # 当前工程唯一维护中的总说明
+```
 
 ROS 包名、节点名、topic、frame、QoS、launch 参数都是集成契约。整理文件不得顺手重命名这些接口。
 
@@ -258,9 +275,9 @@ PCD 路径必须是绝对路径。未确认 map-frame 一致时，不得设置 a
 
 ---
 
-## 7. 可选 FAST-LIO2 后端边界
+## 7. N-01 FAST-LIO2 建图定位后端
 
-FAST-LIO2 是独立研究/建图后端，固定上游版本：
+`n01_fast_lio` 是我们维护和部署的正式建图定位后端；算法上游固定为：
 
 - upstream: `hku-mars/FAST_LIO`
 - branch: `ROS2`
@@ -269,11 +286,16 @@ FAST-LIO2 是独立研究/建图后端，固定上游版本：
 
 约束：
 
+- 离线模式与甲方工作流一致：建图保存 → PCD/ICP 重定位 → tracking → 导航。
+- 实时模式同时运行 FAST-LIO2 建图、标准定位适配和 SCAN 实时点云导航；
+  当前会话原点定义为 `map`，不启用历史 PCD 静态层。
+- 两种模式及甲方 SLAM 互斥；实时会话不能冒充已经配准的甲方/历史地图。
+
 - 输入原始 `/livox/lidar`（CustomMsg）和 `/livox/imu`；不把过滤后的 PointCloud2 当作原始逐点时间数据。
 - 所有输出在 `/n01/fast_lio/*`；私有地图 frame 为 `n01_fast_lio_map`。
 - TF broadcaster 默认禁用，不竞争 vendor `map → base_footprint` 或 Hive2 机体 TF。
-- 不覆盖 Lite SLAM 的状态、位姿、TF，不发布控制命令。
-- FAST-LIO 私有地图尚不能自动视为 vendor map，也不具备已验证的历史地图定位/重定位/坐标自动对齐。
+- 未选择 FAST-LIO2 时不覆盖 Lite SLAM 的状态、位姿、TF；任何模式都不直接发布控制命令。
+- 离线模式通过保存地图 ICP 显式建立 `map` 对齐；实时模式只对本次新会话有效。
 - 上游许可需遵循其原始 GPL-2.0 LICENSE；商业分发需另行处理许可兼容或授权。
 
 ---

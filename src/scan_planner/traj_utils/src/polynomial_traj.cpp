@@ -125,7 +125,10 @@ PolynomialTraj PolynomialTraj::minSnapTraj(const Eigen::MatrixXd &Pos, const Eig
   }
 
   /* ---------- R matrix ---------- */
-  Eigen::MatrixXd R = C * A.transpose().inverse() * Q * A.inverse() * Ct;
+  // A is block diagonal and identical for all three axes; invert it once and
+  // reuse the factorisation for R and for the Px/Py/Pz recovery below.
+  const Eigen::MatrixXd A_inv = A.inverse();
+  Eigen::MatrixXd R = C * A_inv.transpose() * Q * A_inv * Ct;
 
   Eigen::VectorXd Dxf(2 * seg_num + 4), Dyf(2 * seg_num + 4), Dzf(2 * seg_num + 4);
 
@@ -146,17 +149,20 @@ PolynomialTraj PolynomialTraj::minSnapTraj(const Eigen::MatrixXd &Pos, const Eig
   /* ---------- close form solution ---------- */
 
   Eigen::VectorXd Dxp(2 * seg_num - 2), Dyp(2 * seg_num - 2), Dzp(2 * seg_num - 2);
-  Dxp = -(Rpp.inverse() * Rfp.transpose()) * Dxf;
-  Dyp = -(Rpp.inverse() * Rfp.transpose()) * Dyf;
-  Dzp = -(Rpp.inverse() * Rfp.transpose()) * Dzf;
+  // Rpp is also shared by the three axes; factor it once.
+  const Eigen::MatrixXd Rpp_inv_Rfp_T = Rpp.inverse() * Rfp.transpose();
+  Dxp = -Rpp_inv_Rfp_T * Dxf;
+  Dyp = -Rpp_inv_Rfp_T * Dyf;
+  Dzp = -Rpp_inv_Rfp_T * Dzf;
 
   Dx1.segment(2 * seg_num + 4, 2 * seg_num - 2) = Dxp;
   Dy1.segment(2 * seg_num + 4, 2 * seg_num - 2) = Dyp;
   Dz1.segment(2 * seg_num + 4, 2 * seg_num - 2) = Dzp;
 
-  Px = (A.inverse() * Ct) * Dx1;
-  Py = (A.inverse() * Ct) * Dy1;
-  Pz = (A.inverse() * Ct) * Dz1;
+  const Eigen::MatrixXd A_inv_Ct = A_inv * Ct;
+  Px = A_inv_Ct * Dx1;
+  Py = A_inv_Ct * Dy1;
+  Pz = A_inv_Ct * Dz1;
 
   for (int i = 0; i < seg_num; i++)
   {

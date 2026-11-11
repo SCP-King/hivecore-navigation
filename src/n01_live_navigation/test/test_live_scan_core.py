@@ -117,7 +117,7 @@ class LiveScanCoreTests(unittest.TestCase):
         result = four_wheel_steer_screen(points)
         self.assertTrue(result["necessary_conditions_pass"])
         self.assertAlmostEqual(result["max_abs_steering_angle_rad"], 0.0, places=5)
-        self.assertFalse(result["controller_model_verified"])
+        self.assertTrue(result["controller_model_verified"])
         self.assertFalse(result["execution_authorized"])
 
     def test_goal_gate_requires_live_and_static_readiness(self):

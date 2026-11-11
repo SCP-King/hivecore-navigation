@@ -110,8 +110,10 @@ class N01LocalizationAdapter(Node):
             reliability=ReliabilityPolicy.RELIABLE,
             durability=DurabilityPolicy.VOLATILE,
         )
+        # The scan bridge subscribes with BEST_EFFORT; a RELIABLE publisher is
+        # compatible with it and also lets normal CLI/rosbag observers receive.
         self.status_pub = self.create_publisher(
-            DiagnosticArray, self.status_output_topic, qos_profile_sensor_data)
+            DiagnosticArray, self.status_output_topic, 10)
         self.pose_pub = self.create_publisher(
             Odometry, self.pose_output_topic, self.pose_qos)
         self.pose_sub = self.create_subscription(
@@ -125,6 +127,7 @@ class N01LocalizationAdapter(Node):
         }
         self.create_timer(period, self.discover_status_type)
         self.create_timer(pose_stats_period_s, self.report_pose_stats)
+        self.create_timer(pose_stats_period_s, self.report_status_stats)
         self.get_logger().info(
             "N-01 backend adapter: status %s -> %s; pose %s -> %s"
             % (self.status_input_topic, self.status_output_topic,
@@ -232,6 +235,12 @@ class N01LocalizationAdapter(Node):
         # Downstream readiness/temporal guards decide whether a sample is usable.
         self.pose_pub.publish(message)
         self.pose_counts["published"] += 1
+
+    def report_status_stats(self):
+        counts = self.status_counts
+        self.get_logger().info(
+            "status_forward_stats received={received} published={published} "
+            "mapping_errors={mapping_errors}".format(**counts))
 
     def report_pose_stats(self):
         counts = self.pose_counts

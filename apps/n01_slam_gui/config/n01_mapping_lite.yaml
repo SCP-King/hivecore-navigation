@@ -1,0 +1,45 @@
+/**:
+  ros__parameters:
+    tracking_backend: mola
+    input_scan_topic: /livox/lidar/geo_filtered
+    pose_topic: /robot_pose
+    map_topic: /cloud_map
+    # Observe: timer (not per-scan). Pose/TF stay on-scan. Viz leaf ≠ saved PCD.
+    enable_publish_cloud_map: true
+    map_publish_period: 2.0
+    map_publish_voxel_leaf_size: 0.2
+    mapping_status_topic: /mapping_status
+    imu_topic: /imu/data
+    tracking_frame: base_footprint
+    # MOLA LO vehicle frame (mount root) — product slam3d uses base_link
+    mola_vehicle_frame: base_link
+    map_frame: map
+    scan_frame: lidar_link
+    imu_frame: imu_link
+    # Timestamped PCDs under this dir; keep newest N (deactivate + ~/save_map)
+    save_dir: /home/demo/lyy/slam_data/maps
+    save_keep: 3
+    use_sim_time: false
+    # Enter Mapping on spawn (leaf + desk + *_sim share this YAML)
+    auto_activate_mapping: true
+    # Mapping: steady-clock WARN if no scan/IMU callback for this many seconds
+    sensor_stale_sec: 3.0
+    # Operator stdout: scan stats / ICP quality / cloud_map AABB (throttled)
+    debug: true
+    debug_log_period_sec: 1.0
+    enable_imu_fusion: true
+    # Product map → tracking_frame TF (odom /robot_pose always publishes)
+    enable_tf_publish: true
+    # YAML seed by default; one-shot TF adopt (INFO) when available; silent if missing
+    enable_extrinsic_tf_override: true
+    # Geo-filtered Mid-360 desk default (1.0 m min radius). Empty string would
+    # fall back to ament mola_lidar_odometry pipelines/lidar3d-default.yaml (5.0 m).
+    mola_pipeline_yaml: config/mola/lidar3d_livox_geo_filtered.yaml
+    mola_state_estimator_yaml: ""
+    lidar_imu_params_file: ""
+    # vehicle (base_link) ← scan — matches hivecore_robot.urdf.xacro lidar defaults
+    vehicle_to_scan_xyz: [0.295, 0.0, 0.0]
+    vehicle_to_scan_rpy: [0.0, 0.0, 0.0]
+    # tracking (base_footprint) ← vehicle (base_link) — URDF footprint_xyz
+    tracking_to_vehicle_xyz: [0.0, 0.0, 0.9]
+    tracking_to_vehicle_rpy: [0.0, 0.0, 0.0]

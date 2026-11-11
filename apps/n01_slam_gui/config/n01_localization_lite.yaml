@@ -1,0 +1,62 @@
+/**:
+  ros__parameters:
+    tracking_backend: mola
+    input_scan_topic: /livox/lidar/geo_filtered
+    pose_topic: /robot_pose
+    localization_map_topic: /localization_map
+    # Observe: timer (not per-scan). Pose/TF stay on-scan.
+    enable_publish_localization_map: true
+    map_publish_period: 2.0
+    map_publish_voxel_leaf_size: 0.2
+    loc_status_topic: /loc_status
+    initial_pose_topic: /initialpose
+    imu_topic: /imu/data
+    tracking_frame: base_footprint
+    map_frame: map
+    scan_frame: lidar_link
+    imu_frame: imu_link
+    mola_vehicle_frame: base_link
+    # SSOT for prior PCD; ~/load_map re-reads this param. Launch map_path:= overrides only if non-empty.
+    map_path: /home/demo/lyy/slam_data/maps/mapping_lite_20261109_140536_087.pcd
+    auto_activate_localization: true
+    enable_imu_fusion: true
+    # false: keep YAML vehicle_to_scan_* / IMU mounts; true: one-shot TF adopt
+    enable_extrinsic_tf_override: false
+    # Resolved via hivecore_slam3d_lite_mapping share (same cookbook as mapping lite)
+    mola_pipeline_yaml: config/mola/lidar3d_livox_geo_filtered.yaml
+    mola_state_estimator_yaml: ""
+    lidar_imu_params_file: ""
+    vehicle_to_scan_xyz: [0.295, 0.0, 0.0]
+    vehicle_to_scan_rpy: [0.0, 0.0, 0.0]
+    # Unified with the Hive2 motion RSP: base_footprint is 0.90 below base_link.
+    tracking_to_vehicle_xyz: [0.0, 0.0, 0.9]
+    tracking_to_vehicle_rpy: [0.0, 0.0, 0.0]
+    # Tracking milestone scan-to-map refine (slam3d loc defaults)
+    milestone_linear_m: 2.0
+    milestone_angular_deg: 15.0
+    # Reloc scan-to-map (slam3d-equivalent defaults)
+    reloc_method: icp
+    reloc_voxel_leaf_size: 0.2
+    reloc_crop_half_x: 12.0
+    reloc_crop_half_y: 12.0
+    reloc_crop_half_z: 5.0
+    reloc_icp_max_iterations: 90
+    reloc_icp_max_correspondence_distance: 1.0
+    reloc_icp_transformation_epsilon: 1.0e-6
+    reloc_icp_euclidean_fitness_epsilon: 0.01
+    reloc_ndt_resolution: 1.0
+    reloc_ndt_max_iterations: 35
+    reloc_ndt_step_size: 0.1
+    reloc_ndt_transformation_epsilon: 1.0e-6
+    reloc_fitness_score_threshold: 0.045
+    # FE Δ watchdogs (Reloc LO-Δ guess + Tracking FE_Δ); slam3d-heritage defaults
+    fe_max_delta_trans_m: 10.0
+    fe_max_delta_rot_deg: 120.0
+    # Tracking gate reject: hold | constant_velocity
+    tracking_gate_reject_policy: hold
+    # Tracking inter-scan pose coast (CV from last FE Δ). Reloc stays on-scan.
+    # Off by default until desk-proven; enable for ~pose_coast_rate_hz product ticks.
+    pose_coast_enable: false
+    pose_coast_rate_hz: 30.0
+    pose_coast_cov_scale: 10.0
+    use_sim_time: false

@@ -13,8 +13,9 @@ import time
 from pathlib import Path
 
 MANAGED_EXECUTABLES = {
+    "n01_navigation_path",
     "static_map_node",
-    "n01_live_scan_bridge",
+    "n01_shadow_path_follower",
     "n01_live_runtime_supervisor",
     "n01_live_safety_supervisor",
     "n01_live_dynamic_obstacle_tracker",
@@ -130,17 +131,18 @@ def stop_group(launch_pid):
         return []
     matched, role = is_managed_process(launch_pid)
     if not matched or role != "n01 live launch parent":
-        raise RuntimeError(
-            f"Recorded PID {launch_pid} is not the expected N-01 ros2 launch process; "
-            "refusing to signal a possibly reused PID."
-        )
+        # The launch exited and the OS reused the PID.  Never signal a reused
+        # PID; treat the stale record as already stopped so the caller can
+        # clear the PID file and proceed with legacy-orphan cleanup.
+        print(f"Recorded PID {launch_pid} is stale/reused (not an N-01 launch); "
+              "clearing stale PID record, not signalling it.")
+        return []
     pgid = stat["pgrp"]
     # setsid launch contract: the launch PID must own a private process group.
     if pgid != launch_pid:
-        raise RuntimeError(
-            f"PID {launch_pid} is not its own process-group leader (PGID={pgid}); "
-            "refusing to signal an unrelated process group."
-        )
+        print(f"Recorded PID {launch_pid} has PGID={pgid}, not its own group; "
+              "clearing stale PID record, not signalling it.")
+        return []
     signal_group(pgid, signal.SIGINT, "SIGINT")
     remaining = wait_group_gone(pgid, 8.0)
     if remaining:

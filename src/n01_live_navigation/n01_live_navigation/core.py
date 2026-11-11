@@ -406,8 +406,14 @@ def cluster_xy_points(points, cell_size=0.30, min_points=6, max_clusters=64):
 
 def four_wheel_steer_screen(path_xyz, max_speed=0.25, max_accel=0.25,
                             wheel_base_x=0.56, track_y=0.27,
-                            wheel_radius=0.095, steering_limit=1.5708):
-    """Necessary-condition screen using nominal hip-pivot geometry, never a controller model."""
+                            wheel_radius=0.095, steering_limit=1.5708,
+                            delta_y=0.085, initial_steering=None):
+    """Necessary-condition screen using native controller IK, never actuator output.
+
+    Tangent-heading, vy=0 path timing remains a screening assumption. Native IK
+    does not certify the URDF geometry, controller dynamics or collision envelope.
+    """
+    from .hive2_kinematics import controller_geometry, inverse, contact_points, MODEL_ID
     pts = np.asarray(path_xyz, dtype=np.float64)
     if pts.ndim != 2 or pts.shape[1] != 3 or pts.shape[0] < 3:
         raise ValueError("path_requires_at_least_three_xyz_points")
@@ -442,43 +448,58 @@ def four_wheel_steer_screen(path_xyz, max_speed=0.25, max_accel=0.25,
 
     accel = np.abs(np.diff(speed * speed) / np.maximum(2.0 * ds, 1e-9))
     yaw_rate = speed * curvature
-    wheel_positions = {
-        "fl": (wheel_base_x / 2.0, track_y / 2.0),
-        "fr": (wheel_base_x / 2.0, -track_y / 2.0),
-        "rl": (-wheel_base_x / 2.0, track_y / 2.0),
-        "rr": (-wheel_base_x / 2.0, -track_y / 2.0),
-    }
-    steering = {}
-    wheel_linear = {}
-    wheel_angular = {}
-    for name, (wx, wy) in wheel_positions.items():
-        vx = speed - yaw_rate * wy
-        vy = yaw_rate * wx
-        magnitude = np.hypot(vx, vy)
-        angle = np.arctan2(vy, vx)
-        # A wheel may reverse drive direction to keep its steering target inside
-        # the URDF's +/-90 degree joint interval.
-        reverse = angle > math.pi / 2.0
-        angle = np.where(reverse, angle - math.pi, angle)
-        reverse = angle < -math.pi / 2.0
-        angle = np.where(reverse, angle + math.pi, angle)
-        steering[name] = angle
-        wheel_linear[name] = magnitude
-        wheel_angular[name] = magnitude / float(wheel_radius)
-
-    max_steer = max(float(np.max(np.abs(v))) for v in steering.values())
-    max_wheel_linear = max(float(np.max(v)) for v in wheel_linear.values())
-    max_wheel_angular = max(float(np.max(v)) for v in wheel_angular.values())
+    geometry = controller_geometry()
+    if not np.allclose((wheel_radius,wheel_base_x,track_y,delta_y),
+                       (geometry.wheel_radius,geometry.wheel_base_x,geometry.wheel_base_y,geometry.delta_y),
+                       rtol=0.,atol=1e-9):
+        raise ValueError('navigation_geometry_mismatches_installed_chassis_controller')
+    q = np.zeros(4) if initial_steering is None else np.asarray(initial_steering,dtype=float)
+    angles, wheel_rates, steer_rates = [], [], []
+    initial_alignment = 0.0
+    for i in range(len(speed)):
+        twist = (float(speed[i]),0.,float(yaw_rate[i]))
+        target,_ = inverse(twist,q,geometry=geometry)
+        if i == 0:
+            rate = np.zeros(4)
+        else:
+            dt = 2.*ds[i-1]/max(speed[i-1]+speed[i],1e-9)
+            rate = (target-q)/dt
+            if i == 1:
+                initial_alignment = float(np.max(np.abs(target-q)))
+        # Evaluate the ideal aligned trajectory, including its steering motion.
+        _,drive = inverse(twist,target,rate,geometry)
+        angles.append(target); wheel_rates.append(drive); steer_rates.append(rate)
+        q = target
+    angles=np.asarray(angles); wheel_rates=np.asarray(wheel_rates)
+    max_steer = float(np.max(np.abs(angles)))
+    max_wheel_angular = float(np.max(np.abs(wheel_rates)))
+    max_wheel_linear = max_wheel_angular*float(wheel_radius)
+    # Initial wheel alignment is a separate stop-and-align phase; include its
+    # required angle but do not invent its duration from a spatial-only path.
+    max_steer_rate = float(np.max(np.abs(np.asarray(steer_rates)[2:]))) if len(speed)>2 else 0.
     max_path_accel = float(np.max(accel)) if accel.size else 0.0
     first_idx = next((i for i, v in enumerate(speed) if v >= 0.03), min(1, len(speed)-1))
-    first_angles = {name: float(values[first_idx]) for name, values in steering.items()}
+    names = ('fl','fr','rl','rr')
+    first_angles = dict(zip(names,map(float,angles[first_idx])))
+    wheel_positions = dict(zip(names,contact_points(angles[first_idx],geometry)))
     return {
         "necessary_conditions_pass": bool(
             max_steer <= float(steering_limit) + 1e-6
+            and max_wheel_angular <= 20.0 + 1e-6
+            and max_steer_rate <= 1.57 + 1e-6
+            and float(np.max(np.abs(yaw_rate))) <= geometry.max_angular_speed + 1e-6
             and float(np.max(speed)) <= float(max_speed) + 1e-6
             and max_path_accel <= float(max_accel) + 1e-3
         ),
-        "geometry_basis": "nominal_hip_pivot_proxy_not_measured_wheel_contact_geometry",
+        "geometry_basis": "native_controller_contact_point_with_delta_y",
+        "kinematics_model": MODEL_ID,
+        "steering_limit_conflict": bool(steering_limit < geometry.controller_steering_limit),
+        "controller_steering_limit_rad": geometry.controller_steering_limit,
+        "physical_steering_screen_limit_rad": float(steering_limit),
+        "initial_alignment_required_rad": initial_alignment,
+        "max_abs_steering_rate_radps": max_steer_rate,
+        "max_abs_yaw_rate_radps": float(np.max(np.abs(yaw_rate))),
+        "path_timing_basis": "retimed_tangent_heading_necessary_condition_only",
         "max_path_speed_mps": float(np.max(speed)),
         "max_path_acceleration_mps2": max_path_accel,
         "max_abs_steering_angle_rad": max_steer,
@@ -486,7 +507,8 @@ def four_wheel_steer_screen(path_xyz, max_speed=0.25, max_accel=0.25,
         "max_wheel_angular_speed_radps": max_wheel_angular,
         "wheel_steering_angles_rad": first_angles,
         "wheel_positions_m": {k: [float(v[0]), float(v[1])] for k, v in wheel_positions.items()},
-        "controller_model_verified": False,
+        "controller_model_verified": True,
+        "controller_dynamics_verified": False,
         "wheel_contact_geometry_verified": False,
         "collision_envelope_verified": False,
         "execution_authorized": False,

@@ -39,7 +39,7 @@ def generate_launch_description():
                     LaunchConfiguration("use_sim_time"), value_type=bool),
                 "map_file_path": LaunchConfiguration("map_file_path"),
                 "common.publish_tf": False,
-                "common.map_frame_id": "n01_fast_lio_map",
+                "common.map_frame_id": LaunchConfiguration("map_frame_id"),
                 "common.imu_frame_id": "imu_link",
             },
         ],
@@ -72,6 +72,9 @@ def generate_launch_description():
             "map_file_path",
             default_value="/home/demo/lyy/n01_runtime/slam/fast_lio_map.pcd",
             description="Absolute output path used by /n01/fast_lio/map_save."),
+        DeclareLaunchArgument(
+            "map_frame_id", default_value="n01_fast_lio_map",
+            description="FastLIO map frame; use map for independent N-01 localization."),
         DeclareLaunchArgument(
             "rviz", default_value="false",
             description="Start the optional FAST-LIO private-frame RViz view."),

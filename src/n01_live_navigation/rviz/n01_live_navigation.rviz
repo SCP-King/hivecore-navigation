@@ -102,7 +102,7 @@ Visualization Manager:
       Enabled: true
       Name: Native SCAN B-spline Candidate
       Topic:
-        Value: /n01/live_navigation/hive2_candidate_path
+        Value: /n01/navigation/path
         Reliability Policy: Reliable
         Durability Policy: Volatile
         History Policy: Keep Last

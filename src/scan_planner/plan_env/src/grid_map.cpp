@@ -205,7 +205,13 @@ void GridMap::initMap(rclcpp::Node *node)
 
   occ_timer_ = node_->create_wall_timer(std::chrono::milliseconds(50),
                                         std::bind(&GridMap::updateOccupancyCallback, this));
-  vis_timer_ = node_->create_wall_timer(std::chrono::milliseconds(50),
+  // Visualization shares the executor with collision/map updates and the FSM.
+  // Keep the control/map update rates intact; only decimate display exports.
+  double vis_period_s = 0.2;
+  load_parameter(node_, "grid_map.visualization_period_s", vis_period_s, 0.2);
+  if (!std::isfinite(vis_period_s) || vis_period_s < 0.05 || vis_period_s > 2.0)
+    throw std::runtime_error("grid_map.visualization_period_s must be in [0.05, 2.0]");
+  vis_timer_ = node_->create_wall_timer(std::chrono::duration<double>(vis_period_s),
                                         std::bind(&GridMap::visCallback, this));
 
   map_pub_ = node_->create_publisher<sensor_msgs::msg::PointCloud2>("grid_map/occupancy", rclcpp::SensorDataQoS());
@@ -781,18 +787,23 @@ Eigen::Vector3d GridMap::closetPointInMap(const Eigen::Vector3d &pt, const Eigen
 
 void GridMap::visCallback()
 {
-
+  const auto started = std::chrono::steady_clock::now();
   publishMap();
   publishMapInflate(true);
   publishSlidingMapFrame();
   publishSlidingMapBBox();
   publishDepthCloud();
+  const double elapsed_ms = std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - started).count();
+  RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 5000,
+      "[GridMap performance] visualization_ms=%.3f", elapsed_ms);
 }
 
 void GridMap::updateOccupancyCallback()
 {
   if (!md_.occ_need_update_)
     return;
+  const auto started = std::chrono::steady_clock::now();
 
   /* update occupancy */
   // ros::Time t1, t2, t3, t4;
@@ -802,6 +813,11 @@ void GridMap::updateOccupancyCallback()
     projectDepthImage();
   // t2 = ros::Time::now();
   raycastProcess();
+  const double elapsed_ms = std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - started).count();
+  RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 5000,
+      "[GridMap performance] occupancy_ms=%.3f points=%d", elapsed_ms,
+      md_.proj_points_cnt);
   // t3 = ros::Time::now();
 
   // t4 = ros::Time::now();

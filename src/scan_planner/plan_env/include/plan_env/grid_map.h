@@ -182,6 +182,12 @@ public:
 
   void initMap(rclcpp::Node* node);
 
+  // Complete static PCD source (map frame), not the sliding-window copy.
+  bool hasStaticSource() const { return static_source_valid_; }
+  const pcl::PointCloud<pcl::PointXYZ>& getStaticSourceCloud() const { return static_source_decoded_; }
+  Eigen::Vector3d getStaticSourceMin() const { return static_source_min_; }
+  Eigen::Vector3d getStaticSourceMax() const { return static_source_max_; }
+
   void publishMap();
   void publishMapInflate(bool all_info = false);
 

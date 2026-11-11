@@ -4,23 +4,23 @@ Panels:
 Visualization Manager:
   Class: ""
   Global Options:
-    Fixed Frame: n01_fast_lio_map
+    Fixed Frame: map
     Background Color: 48; 48; 48
   Displays:
     - Class: rviz_default_plugins/TF
       Enabled: true
       Name: TF
     - Class: rviz_default_plugins/PointCloud2
-      Enabled: true
-      Name: Registered Cloud
+      Enabled: false
+      Name: Registered Cloud (private frame)
       Topic:
         Value: /n01/fast_lio/cloud_registered
       Size (Pixels): 2
     - Class: rviz_default_plugins/PointCloud2
       Enabled: true
-      Name: Accumulated Map
+      Name: Saved Reference Map
       Topic:
-        Value: /n01/fast_lio/map
+        Value: /n01/fast_lio/reference_map
       Size (Pixels): 2
     - Class: rviz_default_plugins/Path
       Enabled: true
@@ -30,6 +30,12 @@ Visualization Manager:
   Tools:
     - Class: rviz_default_plugins/Interact
     - Class: rviz_default_plugins/Measure
+    - Class: rviz_default_plugins/SetInitialPose
+      Topic:
+        Value: /initialpose
+      Covariance x: 0.25
+      Covariance y: 0.25
+      Covariance yaw: 0.06853891945200942
   Views:
     Current:
       Class: rviz_default_plugins/Orbit

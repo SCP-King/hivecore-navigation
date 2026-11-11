@@ -124,9 +124,10 @@ class LiveStackContractTests(unittest.TestCase):
         self.assertIn("Value: /move_base_simple/goal", rviz)
         self.assertIn('PoseStamped, "/move_base_simple/goal"', gate)
 
-    def test_native_scan_is_configured_for_static_map_overlay(self):
+    def test_native_scan_supports_offline_overlay_and_realtime_mapping(self):
         launch = (ROOT / "src/n01_live_navigation/launch/live_scan.launch.py").read_text()
-        self.assertIn('"grid_map.static_cloud_enabled": True', launch)
+        self.assertIn('"grid_map.static_cloud_enabled": map_mode == "offline"', launch)
+        self.assertIn('map_mode not in ("offline", "realtime")', launch)
         self.assertIn('"/grid_map/static_occupancy"', launch)
         self.assertIn('n01_live_dynamic_obstacle_tracker', launch)
         self.assertIn('n01_live_safety_supervisor', launch)

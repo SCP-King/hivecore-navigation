@@ -36,6 +36,7 @@ class Hive2TrajectoryMonitor(Node):
             "wheel_base_x_m": 0.56,
             "track_y_m": 0.27,
             "wheel_radius_m": 0.095,
+            "delta_y_m": 0.085,
             "steering_limit_rad": 1.5708,
             "pitch1_home_reference_rad": 0.7853981633974483,
             "pitch2_home_reference_rad": -1.3089969389957472,
@@ -51,6 +52,7 @@ class Hive2TrajectoryMonitor(Node):
         self.wheel_base_x = float(get("wheel_base_x_m"))
         self.track_y = float(get("track_y_m"))
         self.wheel_radius = float(get("wheel_radius_m"))
+        self.delta_y = float(get("delta_y_m"))
         self.steering_limit = float(get("steering_limit_rad"))
         self.pitch1_ref = float(get("pitch1_home_reference_rad"))
         self.pitch2_ref = float(get("pitch2_home_reference_rad"))
@@ -66,6 +68,8 @@ class Hive2TrajectoryMonitor(Node):
         self.joint_stamp_ns = None
         self.last_error = ""
         self.last_bspline_rx = None
+        self.last_bspline = None
+        self.last_trajectory_window = None
         self.last_watchdog_status = None
         # Keep the last feasible candidate Path and re-publish it while its
         # B-spline is active. The GUI/RViz may subscribe after the one-shot
@@ -108,6 +112,16 @@ class Hive2TrajectoryMonitor(Node):
 
     def publish_missing_or_stale_status(self):
         now_mono = time.monotonic()
+        # Bspline is an event, not a heartbeat. Revalidate the original time
+        # window and current feedback; never extend its start/duration on replay.
+        if self.last_path_active and self.last_bspline is not None and self.last_trajectory_window:
+            start_ns, duration_s = self.last_trajectory_window
+            active, _ = trajectory_window_is_active(
+                start_ns, self.get_clock().now().nanoseconds, duration_s)
+            if active:
+                self.on_bspline(self.last_bspline, replay=True)
+                return
+            self._clear_candidate_visualization()
         if self.last_bspline_rx is not None:
             receive_age = max(0.0, now_mono - self.last_bspline_rx)
             if receive_age <= self.max_bspline_receive_age:
@@ -213,8 +227,10 @@ class Hive2TrajectoryMonitor(Node):
             array.markers.append(marker)
         self.wheel_marker_pub.publish(array)
 
-    def on_bspline(self, msg):
-        self.last_bspline_rx = time.monotonic()
+    def on_bspline(self, msg, replay=False):
+        if not replay:
+            self.last_bspline_rx = time.monotonic()
+            self.last_bspline = msg
         try:
             # scan_planner_msgs/Bspline has no Header; its coordinate frame is
             # supplied by the live launch contract (map), not inferred from a field.
@@ -234,8 +250,11 @@ class Hive2TrajectoryMonitor(Node):
                 track_y=self.track_y,
                 wheel_radius=self.wheel_radius,
                 steering_limit=self.steering_limit,
+                delta_y=self.delta_y,
+                initial_steering=[self.joint_positions[f'{leg}_ankle_yaw']
+                                  for leg in ('fl','fr','rl','rr')],
             )
-        except (CurveError, ValueError, TypeError, OverflowError) as exc:
+        except (CurveError, ValueError, TypeError, OverflowError, KeyError) as exc:
             self.last_error = str(exc)
             self._clear_candidate_visualization()
             self.diag_pub.publish(String(data=json.dumps({
@@ -268,6 +287,7 @@ class Hive2TrajectoryMonitor(Node):
         now_ns = self.get_clock().now().nanoseconds
         trajectory_active, trajectory_start_age_s = trajectory_window_is_active(
             trajectory_start_ns, now_ns, trajectory_duration_s)
+        self.last_trajectory_window = (trajectory_start_ns, trajectory_duration_s)
         if trajectory_active:
             self.last_path = path
             self.last_path_active = True
