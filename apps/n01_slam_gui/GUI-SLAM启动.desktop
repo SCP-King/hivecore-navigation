@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=GUI-SLAM启动
+Comment=仅启动N-01界面和系统监控；建图、定位、导航手动启动；底盘独立管理
+Exec=/bin/bash /home/demo/lyy/hivecore-navigation/apps/n01_slam_gui/run_slam_lite_gui.sh
+Icon=applications-science
+Terminal=true
+Categories=Development;
+StartupNotify=false

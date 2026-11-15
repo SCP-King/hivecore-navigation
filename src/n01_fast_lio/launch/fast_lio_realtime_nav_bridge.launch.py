@@ -31,7 +31,7 @@ def generate_launch_description():
             "input_topic": "/n01/fast_lio/odometry",
             "pose_topic": "/robot_pose", "status_topic": "/loc_status",
             "map_frame": "map", "fastlio_map_frame": "n01_fast_lio_map",
-            "base_frame": "base_footprint", "imu_frame": "imu_link",
+            "base_frame": "base_link", "imu_frame": "imu_link",
             "require_alignment": False, "publish_tf": True,
         }],
     )
@@ -44,7 +44,7 @@ def generate_launch_description():
             "pose_input_topic": "/robot_pose",
             "pose_output_topic": "/n01/localization/pose",
             "expected_pose_frame": "map",
-            "expected_pose_child_frame": "base_footprint",
+            "expected_pose_child_frame": "base_link",
         }],
     )
     bridge = Node(
@@ -57,10 +57,18 @@ def generate_launch_description():
             "expected_cloud_frame": "imu_link",
             "odom_topic": "/odom", "odom_frame": "odom",
             "odom_child_frame": "base_link", "map_frame": "map",
-            "body_frame": "base_footprint", "planner_body_frame": "base_link",
+            "body_frame": "base_link", "planner_body_frame": "base_link",
         }],
     )
+    ground = Node(package="n01_live_navigation", executable="n01_ground_reference",
+                  name="n01_ground_reference", output="screen",
+                  parameters=[{"map_topics": ["/cloud"],
+                               "fit_radius_m": 6.0,
+                               "latched_map_topics": ["/n01/fast_lio/reference_map"]}])
+    wheels = Node(package='n01_live_navigation', executable='n01_wheel_joint_state',
+                  name='n01_wheel_joint_state', output='screen')
     return LaunchDescription([
+        wheels,
         DeclareLaunchArgument("use_sim_time", default_value="false"),
         DeclareLaunchArgument(
             "map_file_path",
@@ -68,5 +76,5 @@ def generate_launch_description():
         LogInfo(msg=(
             "[N-01 FAST-LIO2 realtime] live session origin is map; mapping, "
             "normalized pose/status and SCAN cloud bridge are active together.")),
-        mapping, pose_adapter, adapter, bridge,
+        mapping, pose_adapter, adapter, bridge, ground,
     ])

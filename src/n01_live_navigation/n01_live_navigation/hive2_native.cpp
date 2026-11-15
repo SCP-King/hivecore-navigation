@@ -39,3 +39,21 @@ extern "C" int hive2_forward(const double* p, const double* q, const double* qd,
     return 0;
   } catch (...) { return -1; }
 }
+
+extern "C" int hive2_screen(const double* p, const double* twists, const double* dt,
+    const double* initial, int n, double* angles, double* drives, double* rates) {
+  try {
+    auto k=model(p); WheelArray q{};
+    for(int j=0;j<4;++j) q[j]=initial[j];
+    for(int i=0;i<n;++i){
+      auto t=k.ComputeSteerTargets(twists[3*i],twists[3*i+1],twists[3*i+2],q);
+      WheelArray rate{};
+      for(int j=0;j<4;++j) rate[j]=i==0?0.:(t[j]-q[j])/dt[i];
+      auto d=k.ComputeDriveFromSteer(twists[3*i],twists[3*i+1],twists[3*i+2],t);
+      k.AddSteerRateDriveComp(rate,t,t,1.,&d,false);
+      for(int j=0;j<4;++j){angles[4*i+j]=t[j];drives[4*i+j]=d[j];rates[4*i+j]=rate[j];}
+      q=t;
+    }
+    return 0;
+  } catch (...) { return -1; }
+}

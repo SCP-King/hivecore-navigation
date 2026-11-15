@@ -14,8 +14,8 @@ checks = {
     "clean environment launch": 'exec env -i "${clean_env[@]}" bash "$0" "$@"' in launcher,
     "old prefixes not inherited": "AMENT_PREFIX_PATH" not in launcher.split("clean_env=(", 1)[1].split(")", 1)[0],
     "lite prefix verified": 'ros2 pkg prefix hivecore_slam3d_lite_localization' in launcher,
-    "preflight invoked before GUI": 'python3 "${DIR}/tools/startup_preflight.py"' in launcher,
-    "one global lifecycle orchestrator": "class GlobalLifecycleManager" in source and "LIFECYCLE = GlobalLifecycleManager(PROCS)" in source,
+    "GUI startup does not run mutating preflight": 'python3 "${DIR}/tools/startup_preflight.py"' not in launcher,
+    "one process-wide lifecycle orchestrator": "class GlobalLifecycleManager" in source and "LIFECYCLE = _lifecycle_registry['manager']" in source,
     "GUI shutdown preserves externally started navigation": "if owned_navigation:" in source and "独立导航实例保持不变" in source,
     "desk passes N-01 static TF override": 'static_tf_params_file:={STATIC_TF_PARAMS}' in source and 'n01_static_tf_params.yaml' in source,
 }

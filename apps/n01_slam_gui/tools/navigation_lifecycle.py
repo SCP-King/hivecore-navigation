@@ -34,19 +34,14 @@ def main() -> int:
 
     try:
         if args.action == "start":
-            # Stop only the N-01 stack owned by the navigation lifecycle manager.
-            rc = invoke("stop", 45)
-            if rc:
-                print(f"ERROR: pre-start managed cleanup failed ({rc}); refusing duplicate start.")
-                return rc
-            rc = invoke("status", 20)
-            if rc:
-                print(f"ERROR: post-cleanup status check failed ({rc}); refusing start.")
-                return rc
+            # GUI ownership is checked before this helper is called. Opening
+            # or starting a module must never clean up an external instance.
             return invoke("start", 90)
         return invoke(args.action, 45 if args.action == "stop" else 20)
     except subprocess.TimeoutExpired as exc:
         print(f"ERROR: lifecycle command timed out: {exc}", file=sys.stderr)
+        if args.action=='status':
+            return 124
         # subprocess.run 只杀直接子进程；bash n01_navigation.sh 可能仍在启动
         # ros2 launch（其子进程已在独立会话）。用仓库自己的 stop 兜底清理，
         # 避免超时后留下半启动的导航栈。

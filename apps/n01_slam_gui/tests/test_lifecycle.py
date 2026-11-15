@@ -92,7 +92,13 @@ check("proc starttime available", g._proc_start_ticks(os.getpid()) is not None)
 mgr = g.ProcManager()
 spawned = []
 mgr._spawn = lambda *a, **k: spawned.append(a) or True
+g.STATE.body_root_model_ready = False
+check("old fixed ground model blocks vendor SLAM",
+      mgr.start_desk('mapping', skip_rsp=True) is False and not spawned)
+check("old fixed ground model blocks FAST-LIO",
+      mgr.start_fast_lio('loc', '/tmp/unused.pcd') is False and not spawned)
 with g.STATE.lock:
+    g.STATE.body_root_model_ready = True
     g.STATE.loc_node_up = g.STATE.map_node_up = False
     g.STATE.census_at = time.monotonic()
     g.STATE.node_rows = [{"name": "/complementary_filter_gain_node", "count": 1,
@@ -105,6 +111,7 @@ check("residue log says 拒绝", any("拒绝启动" in x for x in logs), logs)
 
 # 8. skip_rsp=True 时，图里的地盘 RSP 不算残留
 with g.STATE.lock:
+    g.STATE.body_root_model_ready = True
     g.STATE.loc_node_up = g.STATE.map_node_up = False
     g.STATE.census_at = time.monotonic()
     g.STATE.node_rows = [{"name": "/robot_state_publisher", "count": 1,
@@ -114,8 +121,9 @@ spawned.clear()
 ok = mgr.start_desk("loc", skip_rsp=True)
 check("chassis RSP allowed", ok is True and len(spawned) == 1, (ok, spawned))
 
-# 9. skip_rsp=False 时同一张图 → 拒绝（TF 冲突）
+# 9. 旧调用者传 skip_rsp=False 也不得重复启动底盘RSP。
 with g.STATE.lock:
+    g.STATE.body_root_model_ready = True
     g.STATE.loc_node_up = g.STATE.map_node_up = False
     g.STATE.census_at = time.monotonic()
     g.STATE.node_rows = [{"name": "/robot_state_publisher", "count": 1,
@@ -124,11 +132,23 @@ drain()
 spawned.clear()
 ok = mgr.start_desk("loc", skip_rsp=False)
 logs = drain()
-check("RSP conflict blocked", ok is False and not spawned
-      and any("robot_state_publisher" in x for x in logs), (ok, spawned, logs))
+check("chassis RSP remains external even for legacy caller", ok is True and len(spawned)==1
+      and "launch_robot_state_publisher:=false" in spawned[0][1], (ok, spawned, logs))
+
+# An explicitly restored external RSP may have PPID 1; it is still the expected
+# sole model authority, whereas orphaned preprocessing nodes remain blockers.
+with g.STATE.lock:
+    g.STATE.node_rows = [{"name":"/robot_state_publisher","count":1,"state":"孤儿","killable":False}]
+spawned.clear()
+check("restored external RSP is reused",mgr.start_desk('loc',skip_rsp=True)and len(spawned)==1)
+with g.STATE.lock:
+    g.STATE.node_rows = [{"name":"/complementary_filter_gain_node","count":1,"state":"孤儿","killable":True}]
+spawned.clear()
+check("orphan preprocessing still blocks",not mgr.start_desk('loc',skip_rsp=True)and not spawned)
 
 # 10. 普查过期 → 拒绝（看不到图里已有的 desk 时不能起）
 with g.STATE.lock:
+    g.STATE.body_root_model_ready = True
     g.STATE.loc_node_up = g.STATE.map_node_up = False
     g.STATE.census_at = 0.0
     g.STATE.node_rows = []
@@ -179,6 +199,7 @@ check("FAST-LIO realtime uses live navigation bridge",
       (ok, realtime_cmd))
 
 with g.STATE.lock:
+    g.STATE.body_root_model_ready = True
     g.STATE.loc_node_up = g.STATE.map_node_up = False
     g.STATE.census_at = time.monotonic()
     g.STATE.node_rows = []

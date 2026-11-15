@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Contract checks for the 2026-11-09 single-page grid console."""
+import ast
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 source = (ROOT / "slam_lite_gui.py").read_text()
-fast_lio_helper = (ROOT.parents[1] / "scripts" / "start_fast_lio_gui_backend.sh").read_text()
+fast_lio_helper = (ROOT.parents[1] / "scripts" / "runtime" / "start_fast_lio_gui_backend.sh").read_text()
 loc_cfg = (ROOT / "config" / "n01_localization_lite.yaml").read_text()
 map_cfg = (ROOT / "config" / "n01_mapping_lite.yaml").read_text()
 nav_repo = ROOT.parents[1]
@@ -28,14 +29,21 @@ checks = {
                             and "srv_click" in source,
     "runtime map path load": "ros2\", \"param\", \"set\"" in source
                              and "apply_map_path" in source,
-    "localization uses 0.90": "tracking_to_vehicle_xyz: [0.0, 0.0, 0.9]" in loc_cfg,
-    "mapping uses 0.90": "tracking_to_vehicle_xyz: [0.0, 0.0, 0.9]" in map_cfg,
+    "localization frame matches solver": "mola_vehicle_frame: lidar_link" in loc_cfg and "vehicle_to_scan_xyz: [0.0, 0.0, 0.0]" in loc_cfg,
+    "mapping frame matches solver": "mola_vehicle_frame: lidar_link" in map_cfg and "vehicle_to_scan_xyz: [0.0, 0.0, 0.0]" in map_cfg,
     "desk passes unified params": "static_tf_params_file:={STATIC_TF_PARAMS}" in source
                                   and "LOCALIZATION_PARAMS" in source
                                   and "MAPPING_PARAMS" in source,
     "static TF YAML present": static_cfg.is_file()
-                               and "auto_calibrate_from_topic: false" in static_cfg.read_text(),
-    "no actuator publisher": '"/cmd_vel"' not in source and "'/cmd_vel'" not in source,
+                               and "auto_calibrate_from_topic: true" in static_cfg.read_text(),
+    "no actuator publisher": all(
+        (ast.unparse(call.args[0]) in ('PoseWithCovarianceStamped', 'PoseStamped')
+         or (ast.unparse(call.args[0])=='Bool' and len(call.args)>1
+             and isinstance(call.args[1],ast.Constant)
+             and call.args[1].value=='/n01/slow_motion/enable'))
+        for call in ast.walk(ast.parse(source))
+        if isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+        and call.func.attr == 'create_publisher' and call.args),
     "worker grid/target callbacks exist": all(
         f"def {name}(" in source for name in (
             "_on_nav_static", "_on_nav_dynamic", "_on_nav_ready",
@@ -47,9 +55,10 @@ checks = {
                                        and "Node not found" in source,
     "modular page sections": all(x in source for x in (
         "整体项目生命周期", "共享地图视图", "① 建图模块",
-        "② 定位模块", "③ 导航模块")),
-    "global lifecycle controls": "启动建图定位" in source
-                                  and "停止全部（保存建图）" in source,
+        "位姿与离线地图定位", "③ 导航模块")),
+    "global lifecycle controls": all(x in source for x in (
+        '① 启动建图', '② 启动定位', '① 启动实时SLAM', '停止SLAM / 定位',
+        '停止全部 GUI 托管模块', 'offline_slam_actions', 'realtime_slam_actions')),
     "dual localization backends": all(x in source for x in (
         'BACKEND_VENDOR = "甲方 SLAM3D Lite"',
         'BACKEND_FAST_LIO = "自部署 FAST-LIO2"',
@@ -58,7 +67,7 @@ checks = {
         and "fast_lio_mapping.launch.py" in fast_lio_helper
         and "fast_lio_realtime_nav_bridge.launch.py" in fast_lio_helper,
     "FAST-LIO offline and realtime modes": all(x in source for x in (
-        'FAST_MODE_OFFLINE = "离线（保存地图后定位导航）"',
+        'FAST_MODE_OFFLINE = "离线地图（建图 / 加载 PCD 定位）"',
         'FAST_MODE_REALTIME = "实时（边建图边导航）"',
         '"N01_NAV_MAP_MODE": "realtime" if realtime else "offline"')),
     "backend aware RViz restored": all(x in source for x in (
@@ -102,7 +111,7 @@ checks = {
                                    and "规划器反馈" in source
                                    and "Goal Gate 拒绝" in source,
     "goal endpoint tolerance": "N01_PATH_GOAL_TOL_M" in source
-                               and "路径终点偏差" in source,
+                               and "g_distance > tol" in source,
     "failed goal marker": "goal_failed" in source
                           and 'GRID_COLORS["goal_failed"' in source,
     "global path is separate from local": all(x in source for x in (

@@ -1,9 +1,11 @@
 #ifndef _SCAN_REPLAN_FSM_H_
 #define _SCAN_REPLAN_FSM_H_
 
+#include <chrono>
 #include <Eigen/Eigen>
 #include <algorithm>
 #include <geometry_msgs/msg/pose_stamped.hpp>
+#include <geometry_msgs/msg/point_stamped.hpp>
 #include <iostream>
 #include <nav_msgs/msg/odometry.hpp>
 #include <nav_msgs/msg/path.hpp>
@@ -53,6 +55,8 @@ namespace scan_planner
     /* parameters */
     int navi_mode_; // 1 manual select, 2 hard code
     double no_replan_thresh_, replan_thresh_;
+    double max_replan_interval_s_{0.5};
+    std::chrono::steady_clock::time_point last_replan_attempt_{};
     std::vector<Eigen::Vector3d> preset_waypoints_;
     int waypoint_num_;
     double planning_horizon_;
@@ -60,6 +64,7 @@ namespace scan_planner
     double rviz_goal_height_;
     double self_inflation_z_up_, self_inflation_z_down_;
     double self_double_cylinder_radius_, self_double_cylinder_offset_;
+    std::vector<double> self_footprint_centers_x_;
     double body_height_;
     std::string self_inflation_frame_id_;
 
@@ -93,6 +98,7 @@ namespace scan_planner
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
     rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr path_sub_;
     rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr go2_execution_frozen_sub_;
+    rclcpp::Subscription<geometry_msgs::msg::PointStamped>::SharedPtr goal_reached_sub_;
     rclcpp::Publisher<scan_planner_msgs::msg::Bspline>::SharedPtr bspline_pub_;
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr global_path_pub_;
     rclcpp::Publisher<scan_planner_msgs::msg::DataDisp>::SharedPtr data_disp_pub_;

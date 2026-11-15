@@ -1,8 +1,9 @@
 """Backend-neutral localization + LiDAR bridge for native SCAN.
 
 Global robot pose comes from a timestamped /robot_pose Odometry contract.
-The bridge interpolates that pose at the original LiDAR stamp and composes it
-with the robot-description sensor extrinsic (body_frame <- lidar_frame).
+The bridge propagates delayed anchors with measured local velocity and smooth
+SLAM corrections, evaluated at the original LiDAR and live odometry timestamps.
+It composes the robot-description extrinsic (body_frame <- lidar_frame).
 It never substitutes latest pose/TF or rewrites the scan timestamp.
 """
 import json
@@ -24,6 +25,11 @@ from sensor_msgs.msg import PointCloud2, PointField
 from std_msgs.msg import String
 from diagnostic_msgs.msg import DiagnosticArray
 
+from .delayed_pose import DelayedPoseFusion
+from .twist_odometry import TwistOdometry
+from .held_pose import HeldPoseGuard
+
+from .pose_policy import control_pose_fresh, tracking_mode
 from .core import (
     localization_is_tracking,
     estimate_velocity,
@@ -32,7 +38,6 @@ from .core import (
     normalize_quaternion,
     compose_transform,
     interpolate_pose,
-    motion_compensated_pose,
     scan_output_is_fresh,
     select_pose_anchor,
     select_latest_tf_stamp,
@@ -52,17 +57,24 @@ class LiveScanBridge(Node):
             "odom_child_frame": "base_link",
             "expected_cloud_frame": "lidar_link",
             "map_frame": "map",
-            # Input /robot_pose contract stays map -> base_footprint (vendor SLAM).
-            "body_frame": "base_footprint",
+            # Canonical pose is map -> base_link for every SLAM backend.
+            "body_frame": "base_link",
             # /body_pose output consumed by SCAN/tracker is the physical body,
-            # base_footprint -> base_link +0.90 is composed once here.
+            # Ground projection is separate; no nominal leg height is composed.
             "planner_body_frame": "base_link",
             "max_status_age_s": 1.0,
             "max_pose_rx_age_s": 0.7,
-            "max_pose_stamp_age_s": 1.5,
-            "max_pose_anchor_delta_s": 1.25,
-            "max_live_body_pose_anchor_delta_s": 1.4,
+            "max_pose_stamp_age_s": 5.0,
+            "max_pose_anchor_delta_s": 5.0,
+            "max_live_body_pose_anchor_delta_s": 5.0,
             "pose_cache_size": 64,
+            "prediction_max_distance_m": .12,
+            "prediction_max_turn_rad": .20,
+            "pose_correction_time_s": .8,
+            "pose_correction_speed_mps": .04,
+            "pose_correction_yaw_rate_radps": .08,
+            "pose_correction_jump_m": .15,
+            "pose_correction_jump_rad": .17,
             "max_odom_rx_age_s": 0.2,
             "max_odom_stamp_age_s": 0.4,
             "odom_interpolation_max_gap_s": 0.08,
@@ -70,7 +82,7 @@ class LiveScanBridge(Node):
             "max_cloud_age_s": 0.9,
             "max_latest_scan_lag_s": 0.7,
             "body_pose_publish_period_s": 0.05,
-            "max_live_body_pose_age_s": 0.25,
+            "max_live_body_pose_age_s": 0.4,
             "max_live_tf_lag_s": 0.15,
             "max_tf_wait_s": 0.55,
             "tf_retry_period_s": 0.02,
@@ -97,10 +109,20 @@ class LiveScanBridge(Node):
         self.max_pose_anchor_delta = float(get("max_pose_anchor_delta_s"))
         self.max_live_body_pose_anchor_delta = float(get("max_live_body_pose_anchor_delta_s"))
         self.pose_cache_size = int(get("pose_cache_size"))
+        self.pose_fusion = DelayedPoseFusion(
+            horizon=self.max_pose_stamp_age,
+            travel_limit=float(get("prediction_max_distance_m")),
+            turn_limit=float(get("prediction_max_turn_rad")),
+            correction_time=float(get("pose_correction_time_s")),
+            correction_speed=float(get("pose_correction_speed_mps")),
+            correction_yaw_rate=float(get("pose_correction_yaw_rate_radps")),
+            jump_distance=float(get("pose_correction_jump_m")),
+            jump_angle=float(get("pose_correction_jump_rad")))
         self.max_odom_rx_age = float(get("max_odom_rx_age_s"))
         self.max_odom_stamp_age = float(get("max_odom_stamp_age_s"))
         self.odom_interpolation_max_gap = float(get("odom_interpolation_max_gap_s"))
         self.odom_cache_size = int(get("odom_cache_size"))
+        self.twist_odometry=TwistOdometry(self.odom_interpolation_max_gap)
         self.max_cloud_age = float(get("max_cloud_age_s"))
         self.max_latest_scan_lag = float(get("max_latest_scan_lag_s"))
         self.body_pose_publish_period = float(get("body_pose_publish_period_s"))
@@ -114,8 +136,8 @@ class LiveScanBridge(Node):
         if not (
             0.1 <= self.max_status_age <= 3.0
             and 0.1 <= self.max_pose_rx_age <= 2.0
-            and 0.1 <= self.max_pose_stamp_age <= 2.0
-            and 0.1 <= self.max_pose_anchor_delta <= 1.5
+            and 0.1 <= self.max_pose_stamp_age <= 5.0
+            and 0.1 <= self.max_pose_anchor_delta <= self.max_pose_stamp_age
             and 0.1 <= self.max_live_body_pose_anchor_delta <= self.max_pose_stamp_age
             and 2 <= self.pose_cache_size <= 256
             and 0.05 <= self.max_odom_rx_age <= 1.0
@@ -138,6 +160,8 @@ class LiveScanBridge(Node):
         ):
             raise ValueError("live bridge parameters outside bounded limits")
 
+        self.held_pose_guard=HeldPoseGuard()
+        self.held_pose_rejections=0
         self.status_ok = False
         self.status_reason = "waiting_localization_status"
         self.status_rx_monotonic = 0.0
@@ -251,6 +275,9 @@ class LiveScanBridge(Node):
                 break
         ok, reason = localization_is_tracking(normalized)
         self.status_ok = ok
+        if not ok:
+            self.pose_fusion.reset()
+            self.held_pose_guard=HeldPoseGuard()
         self.status_reason = reason
         self.status_rx_monotonic = time.monotonic()
         self.status_stamp_ns = self._stamp_ns(msg.header.stamp)
@@ -266,27 +293,38 @@ class LiveScanBridge(Node):
             self.status_fitness = float("nan")
 
     def _status_is_fresh(self):
-        if not (
-            self.status_ok and self.status_rx_monotonic > 0.0
-            and time.monotonic() - self.status_rx_monotonic <= self.max_status_age
-            and self.status_stamp_ns > 0
-        ):
+        # An explicit failure is immediate. Silence may be bridged only while
+        # the last successful global anchor and measured odometry remain valid.
+        if not (self.status_ok and self.status_rx_monotonic>0 and self.status_stamp_ns>0):
             return False
-        self.status_stamp_age_s = (
-            self.get_clock().now().nanoseconds - self.status_stamp_ns) / 1e9
-        return -0.2 <= self.status_stamp_age_s <= self.max_status_age
+        budget=self.max_status_age
+        if (self.pose_fusion.anchor is not None and not self.pose_fusion.fault
+                and self._odom_rx_is_fresh() and self.pose_samples
+                and self.pose_samples[-1][0]>=self.twist_odometry.segment_start):
+            source_age=(self.get_clock().now().nanoseconds-self.pose_samples[-1][0])/1e9
+            if -.2<=source_age<=self.max_pose_stamp_age:
+                budget=self.max_pose_stamp_age
+        self.status_stamp_age_s=(self.get_clock().now().nanoseconds-self.status_stamp_ns)/1e9
+        return (0<=time.monotonic()-self.status_rx_monotonic<=budget
+                and -.2<=self.status_stamp_age_s<=budget)
 
     def _pose_rx_is_fresh(self):
         if not (
             self.pose_rx_monotonic > 0.0
-            and time.monotonic() - self.pose_rx_monotonic <= self.max_pose_rx_age
             and self.pose_samples
         ):
             return False
         latest_pose_stamp_ns = self.pose_samples[-1][0]
         self.pose_stamp_age_s = (
             self.get_clock().now().nanoseconds - latest_pose_stamp_ns) / 1e9
-        return -0.2 <= self.pose_stamp_age_s <= self.max_pose_stamp_age
+        rx_age=time.monotonic()-self.pose_rx_monotonic
+        # Raw age stays visible; only measured, fresh odometry may bridge a
+        # delayed global anchor. Repeated delivery cannot extend this horizon.
+        return (0<=rx_age<=self.max_pose_stamp_age
+                and -.2<=self.pose_stamp_age_s<=self.max_pose_stamp_age
+                and self._status_is_fresh() and self._odom_rx_is_fresh()
+                and latest_pose_stamp_ns>=self.twist_odometry.segment_start
+                and not self.pose_fusion.fault)
 
     def _odom_rx_is_fresh(self):
         if not (
@@ -332,15 +370,16 @@ class LiveScanBridge(Node):
             self.odom_contract_error = "odom_position_nonfinite"
             return
 
-        stamps = [sample[0] for sample in self.odom_samples]
-        index = bisect_left(stamps, stamp_ns)
-        if self.odom_samples and stamp_ns < self.odom_samples[-1][0]:
-            self.counts["odom_reordered"] += 1
-        sample = (stamp_ns, position, orientation)
-        if index < len(self.odom_samples) and self.odom_samples[index][0] == stamp_ns:
-            self.odom_samples[index] = sample
-        else:
-            self.odom_samples.insert(index, sample)
+        v=msg.twist.twist.linear
+        w=msg.twist.twist.angular
+        try:
+            position,orientation=self.twist_odometry.update(
+                stamp_ns,position,orientation,(v.x,v.y,v.z),(w.x,w.y,w.z))
+        except ValueError as exc:
+            self.counts['odom_reordered']+=1
+            self.odom_contract_error=str(exc)
+            return
+        self.odom_samples.append((stamp_ns,position,orientation))
         if len(self.odom_samples) > self.odom_cache_size:
             del self.odom_samples[:len(self.odom_samples) - self.odom_cache_size]
         self.odom_rx_monotonic = time.monotonic()
@@ -417,6 +456,12 @@ class LiveScanBridge(Node):
                 self.pose_rx_monotonic = 0.0
             return
 
+        if (not self.pose_samples or stamp_ns>self.pose_samples[-1][0]):
+            odom_reference=self._odom_body_pose_at(stamp_ns)
+            if not self.held_pose_guard.accept(stamp_ns,position,orientation,odom_reference):
+                self.held_pose_rejections+=1
+                self.last_pose_error='held_slam_pose_despite_measured_odometry_motion'
+                return
         is_newest_stamp = not self.pose_samples or stamp_ns > self.pose_samples[-1][0]
         if not is_newest_stamp:
             self.counts["pose_out_of_order"] += 1
@@ -531,6 +576,25 @@ class LiveScanBridge(Node):
             self.last_odom_error = "live_body_tf_latest_unavailable: %s" % exc
             return None
 
+    def _update_pose_fusion(self):
+        if not self.pose_samples or not self.odom_samples:
+            raise ValueError('prediction_waiting_samples')
+        source=self.pose_samples[-1]
+        if source[0]<self.twist_odometry.segment_start:
+            raise ValueError('prediction_waiting_anchor_after_odom_gap')
+        if (self.pose_fusion.anchor is not None and
+                self.pose_fusion.last_source<self.twist_odometry.segment_start):
+            self.pose_fusion.reset()
+        if source[0]<=self.pose_fusion.last_source:return
+        odom_anchor=self._odom_body_pose_at(source[0])
+        effective_stamp=int(self.odom_samples[-1][0])
+        odom_effective=self._odom_body_pose_at(effective_stamp)
+        if odom_anchor is None or odom_effective is None:
+            if self.pose_fusion.anchor is not None:return
+            raise ValueError(self.last_odom_error or 'prediction_anchor_odom_unavailable')
+        self.pose_fusion.accept(source[0],(source[1],source[2]),odom_anchor,
+                                effective_stamp,odom_effective)
+
     def _publish_live_body_pose(self):
         """Publish current map<-body from a bounded SLAM anchor and timestamped odometry."""
         now_mono = time.monotonic()
@@ -540,7 +604,7 @@ class LiveScanBridge(Node):
             self.last_live_body_pose_error = "waiting_robot_pose_or_odom_samples"
             return
         if not self._pose_rx_is_fresh():
-            self.last_live_body_pose_error = "robot_pose_receive_or_stamp_stale"
+            self.last_live_body_pose_error = self.pose_fusion.fault or "robot_pose_receive_or_stamp_stale"
             return
         if not self._odom_rx_is_fresh():
             self.last_live_body_pose_error = "odom_receive_or_stamp_stale"
@@ -557,24 +621,16 @@ class LiveScanBridge(Node):
         # future odometry stamp. A bounded 150 ms lag accommodates real TF
         # publication latency while preserving the transform's true timestamp.
         # Scan-time deskew remains exact and is not relaxed by this fallback.
-        anchor = self._pose_anchor_at(
-            stamp_ns, self.max_live_body_pose_anchor_delta)
-        if anchor is None:
-            self.last_live_body_pose_error = "robot_pose_anchor_outside_live_body_delta"
-            return
-        odom_anchor = self._odom_body_pose_at(anchor[0])
-        if odom_anchor is None:
-            self.last_live_body_pose_error = self.last_odom_error or "odom_anchor_unavailable"
-            return
         try:
-            map_body = motion_compensated_pose(
-                (anchor[1], anchor[2]), odom_anchor, odom_current)
+            self._update_pose_fusion()
+            map_body = self.pose_fusion.pose(stamp_ns, odom_current)
         except ValueError as exc:
-            self.last_live_body_pose_error = "motion_compensation_invalid: %s" % exc
+            self.last_live_body_pose_error = str(exc)
             return
+        anchor_stamp = self.pose_fusion.last_source
         # The published planner body is the physical base_link, while the
-        # /robot_pose input remains map<-base_footprint. Compose the fixed
-        # base_footprint->base_link transform exactly once here.
+        # Canonical input and output are both the physical body. The generic
+        # child conversion below remains available for explicit other profiles.
         if self.planner_body_frame == self.body_frame:
             map_planner = map_body
         else:
@@ -599,19 +655,23 @@ class LiveScanBridge(Node):
             Time(nanoseconds=stamp_ns).to_msg(), self.map_frame,
             self.planner_body_frame,
             map_planner[0], map_planner[1], velocity)
+        anchor_age=max(0.,(stamp_ns-anchor_stamp)/1e9)
+        sigma=.02+.04*anchor_age+self.pose_fusion.innovation_m
+        for axis in (0,7,14):body_msg.pose.covariance[axis]=sigma*sigma
+        for axis in (21,28,35):body_msg.pose.covariance[axis]=(.01+.03*anchor_age)**2
         self.body_pose_pub.publish(body_msg)
         self.last_live_body = (map_planner[0], stamp_ns / 1e9)
         self.last_live_body_pose_stamp_ns = stamp_ns
         self.last_live_body_pose_monotonic = now_mono
-        self.last_live_body_pose_anchor_stamp_ns = int(anchor[0])
-        self.last_live_body_pose_anchor_delta_s = abs(stamp_ns - int(anchor[0])) / 1e9
+        self.last_live_body_pose_anchor_stamp_ns = anchor_stamp
+        self.last_live_body_pose_anchor_delta_s = abs(stamp_ns - anchor_stamp) / 1e9
         self.last_live_body_pose_error = ""
         self.last_live_body_velocity_valid = velocity_valid
         self.counts["body_pose_live_out"] += 1
 
     def _pose_at(self, stamp_ns):
         if not self._pose_rx_is_fresh():
-            self.last_pose_error = "robot_pose_receive_or_stamp_stale"
+            self.last_pose_error = self.pose_fusion.fault or "robot_pose_receive_or_stamp_stale"
             self.last_motion_compensation_error = self.last_pose_error
             self.motion_compensation_ready = False
             return None
@@ -621,42 +681,26 @@ class LiveScanBridge(Node):
             self.motion_compensation_ready = False
             return None
 
-        anchor = self._pose_anchor_at(stamp_ns)
-        if anchor is None:
-            self.last_pose_error = "robot_pose_anchor_outside_allowed_time_delta"
-            self.last_motion_compensation_error = self.last_pose_error
-            self.motion_compensation_ready = False
-            return None
-
-        odom_anchor = self._odom_body_pose_at(anchor[0])
-        if odom_anchor is None:
-            self.last_pose_error = self.last_odom_error
-            self.last_motion_compensation_error = self.last_pose_error
-            self.motion_compensation_ready = False
-            return None
-        odom_scan = self._odom_body_pose_at(stamp_ns)
-        if odom_scan is None:
-            self.last_pose_error = self.last_odom_error
-            self.last_motion_compensation_error = self.last_pose_error
-            self.motion_compensation_ready = False
-            return None
-
         try:
-            pose = motion_compensated_pose(
-                (anchor[1], anchor[2]), odom_anchor, odom_scan)
+            self._update_pose_fusion()
+            odom_scan = self._odom_body_pose_at(stamp_ns)
+            if odom_scan is None:
+                raise ValueError(self.last_odom_error)
+            pose = self.pose_fusion.pose(stamp_ns, odom_scan)
         except ValueError as exc:
-            self.last_pose_error = "motion_compensation_invalid: %s" % exc
+            self.last_pose_error = str(exc)
             self.last_motion_compensation_error = self.last_pose_error
             self.motion_compensation_ready = False
             return None
+        anchor_stamp = self.pose_fusion.last_source
 
         self.last_pose_error = ""
         self.last_motion_compensation_error = ""
         self.last_motion_compensation = {
             "scan_stamp_ns": int(stamp_ns),
-            "anchor_stamp_ns": int(anchor[0]),
-            "anchor_delta_s": (int(stamp_ns) - int(anchor[0])) / 1e9,
-            "anchor_abs_delta_s": abs(int(stamp_ns) - int(anchor[0])) / 1e9,
+            "anchor_stamp_ns": anchor_stamp,
+            "anchor_delta_s": (int(stamp_ns) - anchor_stamp) / 1e9,
+            "anchor_abs_delta_s": abs(int(stamp_ns) - anchor_stamp) / 1e9,
         }
         self.motion_compensation_ready = True
         return pose
@@ -944,9 +988,7 @@ class LiveScanBridge(Node):
             self.last_live_body_pose_anchor_delta_s is not None
             and self.last_live_body_pose_anchor_delta_s <= self.max_live_body_pose_anchor_delta)
         live_body_pose_fresh = (
-            live_body_pose_age is not None and live_body_pose_rx_age is not None
-            and -0.2 <= live_body_pose_age <= self.max_live_body_pose_age
-            and 0.0 <= live_body_pose_rx_age <= self.max_live_body_pose_age * 1.5
+            control_pose_fresh(live_body_pose_age, live_body_pose_rx_age,self.max_live_body_pose_age)
             and live_body_anchor_fresh)
         scan_output_current, latest_scan_lag_s = scan_output_is_fresh(
             self.last_processed_scan_stamp_ns or None,
@@ -972,14 +1014,19 @@ class LiveScanBridge(Node):
             and bool(compensation_for_processed_scan)
         )
         data = {
-            "schema": "n01.live_scan_readiness.v6",
+            "schema": "n01.live_scan_readiness.v7",
             "status": "LIVE_SCAN_INPUTS_READY" if ready else "WAITING_OR_BLOCKED",
             "localization_status": self.status_reason,
             "localization_status_fresh": bool(status_fresh),
             "localization_status_stamp_age_s": self.status_stamp_age_s,
             "robot_pose_topic": self.pose_topic,
-            "robot_pose_contract": self.pose_contract_error or "map_to_base_footprint",
+            "robot_pose_contract": self.pose_contract_error or "map_to_base_link",
             "robot_pose_receive_fresh": bool(pose_fresh),
+            "robot_pose_raw_receive_fresh": bool(self.pose_rx_monotonic>0 and
+                now_mono-self.pose_rx_monotonic<=self.max_pose_rx_age),
+            "robot_pose_continuity_mode": ('ODOMETRY_PREDICTED' if pose_fresh and
+                (self.pose_stamp_age_s>.25 or now_mono-self.pose_rx_monotonic>self.max_pose_rx_age) else
+                'LIVE_LOCALIZATION' if pose_fresh else 'STALE'),
             "robot_pose_receive_age_s": (
                 now_mono - self.pose_rx_monotonic if self.pose_rx_monotonic > 0.0 else None),
             "robot_pose_stamp_progress_age_s": pose_stamp_progress_age,
@@ -1012,7 +1059,25 @@ class LiveScanBridge(Node):
             "odom_scan_skew_s": odom_scan_skew,
             "odom_scan_bracket_gap_s": odom_scan_bracket_gap,
             "odom_scan_bracket_available": odom_scan_bracket_available,
-            "motion_compensation_method": "slam_anchor_plus_odom_relative_motion",
+            "motion_compensation_method": "bounded_odom_prediction_smooth_slam_correction",
+            "pose_prediction": {
+                "horizon_s": self.pose_fusion.horizon,
+                "distance_limit_m": self.pose_fusion.travel_limit,
+                "turn_limit_rad": self.pose_fusion.turn_limit,
+                "correction_innovation_m": self.pose_fusion.innovation_m,
+                "correction_innovation_rad": self.pose_fusion.innovation_rad,
+                "fault": self.pose_fusion.fault,
+                "raw_stamp_preserved": True,
+                "held_board_rejections": self.held_pose_rejections,
+                "source_stamp_ns": self.pose_fusion.last_source,
+                "source_pose": ({"x": self.pose_samples[-1][1][0],
+                    "y": self.pose_samples[-1][1][1],
+                    "quaternion": list(self.pose_samples[-1][2])}
+                    if self.pose_samples and self.pose_samples[-1][0]==self.pose_fusion.last_source else None),
+                "odom_translation_source": "measured_body_twist_trapezoid",
+                "odom_heading_source": "measured_body_angular_twist_trapezoid",
+                "odom_segment_start_ns": self.twist_odometry.segment_start,
+            },
             "motion_compensation_ready": bool(
                 self.motion_compensation_ready and bool(compensation_for_processed_scan)),
             "motion_compensation_error": self.last_motion_compensation_error or self.last_pose_error,
@@ -1071,17 +1136,28 @@ class LiveScanBridge(Node):
             "safety_authorization": "NEVER",
             **self.counts,
         }
+        data["tracking_mode"]=tracking_mode(data)
         self.diag_pub.publish(String(data=json.dumps(data, sort_keys=True)))
 
 
 def main(args=None):
-    rclpy.init(args=args)
+    # Keep the context alive until the dedicated TF executor has stopped.
+    # rclpy's default SIGINT handler shuts it down before Python cleanup runs.
+    from rclpy.signals import SignalHandlerOptions
+    rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
     node = LiveScanBridge()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
     finally:
+        import signal
+        # A process-group interrupt followed by launch's forwarded interrupt
+        # must not interrupt destruction halfway through.
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        listener = node.tf_listener
+        listener.executor.shutdown(timeout_sec=2.0)
+        listener.dedicated_listener_thread.join(timeout=2.0)
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()

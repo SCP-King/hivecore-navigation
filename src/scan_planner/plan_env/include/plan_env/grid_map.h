@@ -7,6 +7,8 @@
 #include <cv_bridge/cv_bridge.h>
 #include <cmath>
 #include <geometry_msgs/msg/pose_stamped.hpp>
+#include <geometry_msgs/msg/polygon_stamped.hpp>
+#include <plan_env/polygon_footprint.h>
 #include <iostream>
 #include <random>
 #include <nav_msgs/msg/odometry.hpp>
@@ -33,6 +35,7 @@
 
 #include <plan_env/raycast.h>
 #include <plan_env/static_inflation.hpp>
+#include <plan_env/static_free_evidence.h>
 
 #define logit(x) (log((x) / (1 - (x))))
 
@@ -63,7 +66,12 @@ struct MappingParameters {
   Eigen::Vector3d local_update_range_;
   double resolution_, resolution_inv_;
   double obstacles_inflation_z_up, obstacles_inflation_z_down;
+  double ground_clearance_;
+  double ground_slope_x_, ground_slope_y_;
   double double_cylinder_radius_, double_cylinder_offset_;
+  double environment_margin_{0.0};
+  std::vector<double> footprint_centers_x_;
+  bool fixed_body_heading_{false};
   bool map_sliding_en_;
   double map_sliding_thresh_;
   int map_sliding_thresh_vox_;
@@ -114,6 +122,7 @@ struct MappingData {
   Eigen::Vector3d ray_pos_;
   Eigen::Quaterniond ray_q_;
   Eigen::Vector3d sliding_map_frame_pos_;
+  double body_yaw_{0.0};
 
   // depth image data
 
@@ -184,9 +193,27 @@ public:
 
   // Complete static PCD source (map frame), not the sliding-window copy.
   bool hasStaticSource() const { return static_source_valid_; }
-  const pcl::PointCloud<pcl::PointXYZ>& getStaticSourceCloud() const { return static_source_decoded_; }
+  const pcl::PointCloud<pcl::PointXYZ>& getStaticSourceCloud() {
+    refreshStaticObservations(true);
+    return static_observation_refresh_ ? effective_static_source_ : static_source_decoded_;
+  }
   Eigen::Vector3d getStaticSourceMin() const { return static_source_min_; }
   Eigen::Vector3d getStaticSourceMax() const { return static_source_max_; }
+  bool usesFixedBodyHeading() const { return mp_.fixed_body_heading_; }
+  bool usesStaticReferenceCost() const { return static_prior_as_cost_; }
+  Eigen::Vector3d getLocalMinimum() const { return mp_.map_min_boundary_; }
+  Eigen::Vector3d getLocalMaximum() const { return mp_.map_max_boundary_; }
+  std::vector<Eigen::Vector3d> getLiveObstaclePoints() const {
+    std::vector<Eigen::Vector3d> points;
+    points.reserve(md_.proj_points_cnt);
+    for (int i=0; i<md_.proj_points_cnt; ++i) {
+      const auto &p=md_.proj_points_[i];
+      // Beyond-range returns only clear truncated rays, not observed obstacles.
+      if ((p-md_.ray_pos_).squaredNorm() <= mp_.max_ray_length_*mp_.max_ray_length_)
+        points.push_back(p);
+    }
+    return points;
+  }
 
   void publishMap();
   void publishMapInflate(bool all_info = false);
@@ -201,6 +228,34 @@ public:
   bool odomValid();
   void getRegion(Eigen::Vector3d& ori, Eigen::Vector3d& size);
   inline double getResolution();
+  double getFootprintRadius() const { return urdf_footprint_enabled_ ? mp_.environment_margin_ : mp_.double_cylinder_radius_ + mp_.environment_margin_; }
+  bool footprintReady() const {
+    return !urdf_footprint_enabled_ || (footprint_valid_ &&
+      (node_->now().nanoseconds()-footprint_stamp_ns_)*1e-9 >= -.1 &&
+      (node_->now().nanoseconds()-footprint_stamp_ns_)*1e-9 <= 1.);
+  }
+  std::vector<Eigen::Vector2d> footprintPolygon(double yaw) const {
+    std::vector<Eigen::Vector2d> p;
+    const Eigen::Rotation2Dd r(yaw);
+    for(const auto &v:footprint_polygon_)p.push_back(r*v);
+    return p;
+  }
+  std::vector<Eigen::Vector2d> getFootprintPolygon() const {return urdf_footprint_enabled_ ? footprintPolygon(md_.body_yaw_) : std::vector<Eigen::Vector2d>();}
+  double getBodyDown() const { return mp_.obstacles_inflation_z_up; }
+  double getBodyUp() const { return mp_.obstacles_inflation_z_down; }
+  double getObstacleGroundCutoff(double x=0.0, double y=0.0) const {
+    return mp_.ground_height_ + mp_.ground_slope_x_*x + mp_.ground_slope_y_*y + mp_.ground_clearance_;
+  }
+  Eigen::Vector3d getGroundCutoffPlane() const {
+    return Eigen::Vector3d(mp_.ground_slope_x_, mp_.ground_slope_y_, mp_.ground_height_+mp_.ground_clearance_);
+  }
+  std::vector<Eigen::Vector2d> getFootprintCenters() const {
+    if(urdf_footprint_enabled_) return {Eigen::Vector2d::Zero()};
+    std::vector<Eigen::Vector2d> result;
+    for (double x : mp_.footprint_centers_x_)
+      result.emplace_back(x*std::cos(md_.body_yaw_), x*std::sin(md_.body_yaw_));
+    return result;
+  }
   Eigen::Vector3d getOrigin();
   int getVoxelNum();
 
@@ -220,9 +275,10 @@ private:
                          const nav_msgs::msg::Odometry::ConstSharedPtr& pose);
   void slidingMapFrameCallback(const nav_msgs::msg::Odometry::ConstSharedPtr& pose);
   void cloudCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr& img);
-  // Optional static PCD map layer; dynamic raycasting cannot clear static obstacles.
+  // Static prior, locally overridden only by repeated fresh traversed-free rays.
   void staticCloudCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr& cloud);
   void rebuildStaticOverlay();
+  void refreshStaticObservations(bool global_request=false);
   void publishStaticOverlayStatus(bool ready, const std::string& reason);
 
   // update occupancy by raycasting
@@ -267,6 +323,12 @@ private:
       SyncPolicyCloudPose;
   typedef shared_ptr<message_filters::Synchronizer<SyncPolicyCloudPose>> SynchronizerCloudPose;
 
+  bool urdf_footprint_enabled_{false},footprint_valid_{false};
+  int64_t footprint_stamp_ns_{0};
+  std::vector<Eigen::Vector2d> footprint_polygon_;
+  double footprint_cached_yaw_{1e30};
+  std::vector<Eigen::Vector2i> footprint_cached_offsets_;
+  rclcpp::Subscription<geometry_msgs::msg::PolygonStamped>::SharedPtr footprint_sub_;
   rclcpp::Node* node_{nullptr};
   std::shared_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
   shared_ptr<message_filters::Subscriber<sensor_msgs::msg::Image>> depth_sub_;
@@ -282,12 +344,23 @@ private:
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr static_status_pub_;
   sensor_msgs::msg::PointCloud2::ConstSharedPtr static_source_cloud_;
   pcl::PointCloud<pcl::PointXYZ> static_source_decoded_;
+  pcl::PointCloud<pcl::PointXYZ> effective_static_source_;
+  plan_env_detail::StaticFreeEvidence static_free_evidence_;
+  plan_env_detail::StaticFreeEvidence static_free_column_evidence_;
+  std::vector<char> static_prior_mask_;
+  std::vector<char> static_prior_columns_;
+  bool static_observation_refresh_{false}, static_refresh_pending_{false}, static_restore_urgent_{false};
+  bool static_prior_as_cost_{false};
+  bool free_evidence_frame_valid_{false};
+  int64_t free_evidence_stamp_{0}, last_free_evidence_stamp_{0};
+  double last_static_rebuild_s_{0};
   Eigen::Vector3d static_source_min_{Eigen::Vector3d::Zero()};
   Eigen::Vector3d static_source_max_{Eigen::Vector3d::Zero()};
   std::vector<char> static_occupancy_buffer_;
   std::vector<char> static_inflate_buffer_;
   std::vector<plan_env_detail::StaticInflationXYOffset> static_inflate_xy_offsets_;
   bool static_cloud_enabled_{false};
+  bool reference_updates_enabled_{false};
   bool static_source_valid_{false};
   bool static_window_intersects_source_bounds_{false};
   int static_cloud_max_points_{1000000};
@@ -300,6 +373,7 @@ private:
   double static_overlay_rebuild_ms_{0.0};
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr map_pub_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr map_inf_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr environment_inf_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr sliding_map_bbox_pub_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr unknown_pub_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr depth_cloud_pub_;
@@ -378,7 +452,7 @@ inline bool GridMap::isKnownOccupied(const Eigen::Vector3i& id) {
   int adr = toAddress(id1);
 
   return md_.occupancy_buffer_inflate_[adr] == 1 ||
-         (static_cloud_enabled_ && !static_inflate_buffer_.empty() &&
+         (static_cloud_enabled_ && !static_prior_as_cost_ && !static_inflate_buffer_.empty() &&
           static_inflate_buffer_[adr] == 1);
 }
 
@@ -413,25 +487,39 @@ inline int GridMap::getOccupancy(Eigen::Vector3d pos) {
 
   const int addr = toAddress(id);
   return (md_.occupancy_buffer_[addr] > mp_.min_occupancy_log_ ||
-          (static_cloud_enabled_ && !static_occupancy_buffer_.empty() &&
+          (static_cloud_enabled_ && !static_prior_as_cost_ && !static_occupancy_buffer_.empty() &&
            static_occupancy_buffer_[addr] == 1)) ? 1 : 0;
 }
 
 inline int GridMap::getInflateOccupancy(Eigen::Vector3d pos, double yaw) {
-  Eigen::Vector3d heading(std::cos(yaw), std::sin(yaw), 0.0);
-  Eigen::Vector3d front = pos + mp_.double_cylinder_offset_ * heading;
-  Eigen::Vector3d rear = pos - mp_.double_cylinder_offset_ * heading;
-
-  int front_occ = getInflateOccupancyFromBuffer(front, md_.occupancy_buffer_inflate_);
-  if (front_occ != 0) return front_occ;
-  if (static_cloud_enabled_ && !static_inflate_buffer_.empty()) {
-    const int static_front = getInflateOccupancyFromBuffer(front, static_inflate_buffer_);
-    if (static_front != 0) return static_front;
+  if (mp_.fixed_body_heading_) yaw=md_.body_yaw_;
+  if(urdf_footprint_enabled_) {
+    if(!footprintReady())return -1;
+    if(std::abs(yaw-footprint_cached_yaw_)>1e-9 || footprint_cached_offsets_.empty()) {
+      footprint_cached_offsets_=plan_env_detail::polygonOffsets(footprintPolygon(yaw),mp_.environment_margin_,mp_.resolution_);
+      footprint_cached_yaw_=yaw;
+    }
+    for(const auto &offset:footprint_cached_offsets_) {
+      Eigen::Vector3d point=pos+Eigen::Vector3d(offset.x()*mp_.resolution_,offset.y()*mp_.resolution_,0.);
+      int occupied=getInflateOccupancyFromBuffer(point,md_.occupancy_buffer_inflate_);
+      if(occupied!=0)return occupied;
+      if(static_cloud_enabled_ && !static_prior_as_cost_ && !static_inflate_buffer_.empty()) {
+        occupied=getInflateOccupancyFromBuffer(point,static_inflate_buffer_);
+        if(occupied!=0)return occupied;
+      }
+    }
+    return 0;
   }
-  const int rear_occ = getInflateOccupancyFromBuffer(rear, md_.occupancy_buffer_inflate_);
-  if (rear_occ != 0) return rear_occ;
-  if (static_cloud_enabled_ && !static_inflate_buffer_.empty())
-    return getInflateOccupancyFromBuffer(rear, static_inflate_buffer_);
+  Eigen::Vector3d heading(std::cos(yaw), std::sin(yaw), 0.0);
+  for (double x : mp_.footprint_centers_x_) {
+    Eigen::Vector3d center = pos + x*heading;
+    int occupied = getInflateOccupancyFromBuffer(center, md_.occupancy_buffer_inflate_);
+    if (occupied != 0) return occupied;
+    if (static_cloud_enabled_ && !static_prior_as_cost_ && !static_inflate_buffer_.empty()) {
+      occupied = getInflateOccupancyFromBuffer(center, static_inflate_buffer_);
+      if (occupied != 0) return occupied;
+    }
+  }
   return 0;
 }
 
@@ -450,7 +538,7 @@ inline int GridMap::getOccupancy(Eigen::Vector3i id) {
 
   const int addr = toAddress(id);
   return (md_.occupancy_buffer_[addr] > mp_.min_occupancy_log_ ||
-          (static_cloud_enabled_ && !static_occupancy_buffer_.empty() &&
+          (static_cloud_enabled_ && !static_prior_as_cost_ && !static_occupancy_buffer_.empty() &&
            static_occupancy_buffer_[addr] == 1)) ? 1 : 0;
 }
 

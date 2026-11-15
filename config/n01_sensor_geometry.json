@@ -1,0 +1,31 @@
+{
+  "schema": "n01.sensor_geometry.v1",
+  "method": "stationary_floor_plus_four_wheel_contact_kinematics",
+  "captured_utc": "2026-11-12T06:03:39.077212+00:00",
+  "body_frame": "base_link",
+  "lidar_frame": "lidar_link",
+  "body_to_lidar_xyz_m": [
+    0.295,
+    0.0,
+    0.146366
+  ],
+  "body_to_lidar_rpy_rad": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "ground_reference": "dynamic map-plane vertical projection at body XY",
+  "fixed_body_to_ground_m": null,
+  "fit_frames": 32,
+  "mount_height_std_m": 0.005702597304210189,
+  "max_four_wheel_contact_spread_m": 0.0067163766677237335,
+  "source_urdf_sha256": "91c89fd4e145c4a0d83aa18a2da9b9cd29c7c365ca1689f977d5c0420733f538",
+  "assumptions": [
+    "four wheels contact the same locally planar floor",
+    "current URDF leg lengths, wheel radius and encoder zero points are valid",
+    "body and horizontal lidar axes have zero relative roll/pitch",
+    "horizontal lidar offset remains the declared 0.295m; not independently calibrated"
+  ],
+  "independent_mount_measurement": false,
+  "note": "Model-constrained estimate, not an independent physical measurement; floor systematic uncertainty remains."
+}

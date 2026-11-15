@@ -2,21 +2,29 @@
 # Unified lifecycle entry point for the N-01 live SCAN navigation stack.
 # Usage: scripts/n01_navigation.sh start|stop|status
 set -Eeuo pipefail
+export RMW_FASTRTPS_PUBLICATION_MODE="${RMW_FASTRTPS_PUBLICATION_MODE:-ASYNCHRONOUS}"
+export OPENBLAS_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export OMP_NUM_THREADS=1
+export OMP_WAIT_POLICY=PASSIVE
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-source "$ROOT/scripts/lib/ros_env.sh"
+source "$ROOT/scripts/lib/slam_runtime.sh"
 RUNTIME_ROOT="${N01_RUNTIME_ROOT:-$HOME/lyy/n01_runtime}"
 RUN_DIR="$RUNTIME_ROOT/runs/navigation"
 LOG_DIR="$RUNTIME_ROOT/logs"
 PID_FILE="$RUN_DIR/live_scan_launch.pid"
-DEFAULT_PCD="/opt/slam3d_release/resource/mapping_lite.pcd"
+DEFAULT_PCD="/home/demo/lyy/slam_data/maps/mapping_lite_20261109_140536_087.pcd"
 PCD="${N01_NAV_PCD:-$DEFAULT_PCD}"
-NAV_GROUND_Z="${N01_NAV_GROUND_Z:-0.139}"
+NAV_GROUND_Z="${N01_NAV_GROUND_Z:-}"
+NAV_GROUND_A="${N01_NAV_GROUND_A:-0.0}"
+NAV_GROUND_B="${N01_NAV_GROUND_B:-0.0}"
 # RViz needs a real X display. Headless/remote GUI uses Foxglove or the GUI's
 # standalone RViz button; do not let launch kill a dead rviz2 process.
 NAV_RVIZ="${N01_NAV_RVIZ:-false}"
 NAV_MAP_MODE="${N01_NAV_MAP_MODE:-offline}"
-SLAM_CONFIG="/opt/slam3d_release/install/hivecore_slam3d_lite_localization/share/hivecore_slam3d_lite_localization/config/localization_lite.yaml"
+NAV_REFERENCE_TOPIC="${N01_NAV_REALTIME_REFERENCE_TOPIC:-}"
+SLAM_CONFIG="$ROOT/apps/n01_slam_gui/config/n01_localization_lite.yaml"
 # ROS launch writes ~/.ros/log by default. In this deployment that path can be
 # mounted read-only; fall back to a writable /tmp directory so the stack starts
 # atomically instead of dying after static_map/scan_planner were spawned.
@@ -41,12 +49,15 @@ source_ros() {
     echo "ERROR: $ROOT/install/setup.bash is missing; build the workspace first." >&2
     return 2
   fi
-  n01_source_setup "$ROOT/install/setup.bash" || return $?
+  n01_source_slam_runtime || return $?
+  n01_source_setup "$ROOT/install/local_setup.bash" || return $?
+  source "$ROOT/scripts/lib/ros_transport.sh"
+  n01_configure_project_transport || return $?
 }
 
 managed_nodes_absent() {
   local nodes="$1" node
-  local managed=(/n01_navigation_path /n01_static_map /n01_shadow_path_follower /n01_live_runtime_supervisor
+  local managed=(/n01_robot_footprint /n01_navigation_path /n01_static_map /n01_realtime_reference /n01_environment_display /n01_shadow_path_follower /n01_live_runtime_supervisor
     /n01_live_safety_supervisor /n01_live_dynamic_obstacle_tracker
     /n01_hive2_trajectory_monitor /n01_live_scan_goal_gate /scan_planner_node
     /n01_live_navigation_rviz)
@@ -88,13 +99,13 @@ stop_stack() {
   refresh_graph
   local clean=0 nodes
   for _ in $(seq 1 12); do
-    nodes="$(ros2 node list 2>/dev/null || true)"
+    nodes="$(ros2 node list --no-daemon --spin-time 1 2>/dev/null || true)"
     if managed_nodes_absent "$nodes"; then clean=1; break; fi
     sleep 1
   done
   if (( clean == 0 )); then
     echo "ERROR: ROS graph still reports managed N-01 node names after process-group shutdown:"
-    grep -E '^/(n01_static_map|n01_shadow_path_follower|n01_live_runtime_supervisor|n01_live_safety_supervisor|n01_live_dynamic_obstacle_tracker|n01_hive2_trajectory_monitor|n01_live_scan_goal_gate|scan_planner_node|n01_live_navigation_rviz)$' <<<"$nodes" || true
+    grep -E '^/(n01_environment_display|n01_realtime_reference|n01_static_map|n01_shadow_path_follower|n01_live_runtime_supervisor|n01_live_safety_supervisor|n01_live_dynamic_obstacle_tracker|n01_hive2_trajectory_monitor|n01_live_scan_goal_gate|scan_planner_node|n01_live_navigation_rviz)$' <<<"$nodes" || true
     echo "No unrelated ROS nodes were signalled. Inspect these names before restarting."
     return 4
   fi
@@ -124,7 +135,19 @@ start_stack() {
     fi
     echo "navigation PCD: $PCD"
   else
-    echo "navigation map: realtime FAST-LIO2 + SCAN sliding occupancy (no static PCD layer)"
+    echo "navigation map: realtime SLAM + SCAN live occupancy; reference=${NAV_REFERENCE_TOPIC:-none} (no historical PCD)"
+  fi
+  if [[ -z "$NAV_GROUND_Z" ]]; then
+    if [[ "$NAV_MAP_MODE" == "realtime" ]]; then
+      echo "ERROR: realtime mapping requires an explicitly synchronized ground plane; offline map profiles are not reused."
+      return 2
+    fi
+    local saved_ground_values
+    if ! saved_ground_values="$(N01_NAV_REPO="$ROOT" python3 "$ROOT/src/n01_live_navigation/n01_live_navigation/calibration_store.py" "$PCD")"; then
+      echo "ERROR: no matching persisted ground; synchronize ground in GUI or pass explicit ground parameters."
+      return 2
+    fi
+    read -r NAV_GROUND_Z NAV_GROUND_A NAV_GROUND_B <<< "$saved_ground_values"
   fi
   echo "navigation map mode: $NAV_MAP_MODE"
   echo "navigation ground_z_map_m: $NAV_GROUND_Z"
@@ -162,11 +185,15 @@ start_stack() {
   echo "===== N-01 NAVIGATION START ====="
   nohup setsid ros2 launch n01_live_navigation live_scan.launch.py \
     map_mode:="$NAV_MAP_MODE" \
+    realtime_reference_topic:="$NAV_REFERENCE_TOPIC" \
     pcd_path:="$PCD" \
     pcd_map_frame_asserted:="$([[ "$NAV_MAP_MODE" == "offline" ]] && echo true || echo false)" \
     start_localization_adapter:="$start_adapter" \
     start_scan_bridge:=false \
+    navigation_speed_mps:="${N01_NAV_SPEED:-0.05}" \
     ground_z_map_m:="$NAV_GROUND_Z" \
+    ground_slope_x:="$NAV_GROUND_A" \
+    ground_slope_y:="$NAV_GROUND_B" \
     rviz:="$NAV_RVIZ" \
     >"$launch_log" 2>&1 </dev/null &
   launch_pid=$!
@@ -174,29 +201,16 @@ start_stack() {
   echo "launch_pid=$launch_pid"
   echo "launch_log=$launch_log"
 
-  local required=(/n01_navigation_path /n01_live_scan_bridge /n01_shadow_path_follower /n01_live_runtime_supervisor
+  local required=(/n01_robot_footprint /n01_navigation_path /n01_live_scan_bridge /n01_shadow_path_follower /n01_live_runtime_supervisor
     /n01_live_safety_supervisor /n01_live_dynamic_obstacle_tracker
     /n01_hive2_trajectory_monitor /n01_live_scan_goal_gate /scan_planner_node)
   if [[ "$NAV_MAP_MODE" == "offline" ]]; then required=(/n01_static_map "${required[@]}"); fi
-  ready=0
-  for _ in $(seq 1 45); do
-    if ! kill -0 "$launch_pid" 2>/dev/null; then
-      echo "ERROR: launch exited before navigation became ready."
-      tail -100 "$launch_log" || true
-      stop_stack || true
-      return 5
-    fi
-    current="$(ros2 node list 2>/dev/null || true)"
-    missing=0
-    for node in "${required[@]}"; do
-      [[ "$(grep -Fxc "$node" <<<"$current" || true)" -eq 1 ]] || missing=1
-    done
-    if (( missing == 0 )); then ready=1; break; fi
-    sleep 1
-  done
-  if (( ready == 0 )); then
-    echo "ERROR: navigation graph did not become ready within 45 seconds."
-    tail -100 "$launch_log" || true
+  if [[ "$NAV_MAP_MODE" == "realtime" && -n "$NAV_REFERENCE_TOPIC" ]]; then required=(/n01_realtime_reference "${required[@]}"); fi
+  # One persistent DDS participant avoids repeated discovery/teardown. The old
+  # 45 x (node-list discovery + sleep) loop exceeded the helper's 90s budget.
+  if ! python3 "$ROOT/scripts/n01_wait_navigation_nodes.py" --launch-pid "$launch_pid" \
+       --timeout 35 "${required[@]}"; then
+    tail -40 "$launch_log" || true
     stop_stack || true
     return 5
   fi
@@ -207,7 +221,7 @@ start_stack() {
 status_stack() {
   source_ros
   local nodes
-  nodes="$(ros2 node list 2>/dev/null || true)"
+  nodes="$(ros2 node list --no-daemon --spin-time 1 2>/dev/null || true)"
   echo "===== N-01 NAVIGATION STATUS ====="
   if [[ -s "$PID_FILE" ]]; then
     local pid
@@ -220,7 +234,7 @@ status_stack() {
   else
     echo "No managed launch PID file."
   fi
-  grep -E '^/(n01_static_map|n01_live_scan_bridge|n01_shadow_path_follower|n01_live_runtime_supervisor|n01_live_safety_supervisor|n01_live_dynamic_obstacle_tracker|n01_hive2_trajectory_monitor|n01_live_scan_goal_gate|scan_planner_node|n01_live_navigation_rviz|n01_localization_adapter)$' <<<"$nodes" || true
+  grep -E '^/(n01_environment_display|n01_realtime_reference|n01_static_map|n01_live_scan_bridge|n01_shadow_path_follower|n01_live_runtime_supervisor|n01_live_safety_supervisor|n01_live_dynamic_obstacle_tracker|n01_hive2_trajectory_monitor|n01_live_scan_goal_gate|scan_planner_node|n01_live_navigation_rviz|n01_localization_adapter)$' <<<"$nodes" || true
 }
 
 case "${1:-}" in

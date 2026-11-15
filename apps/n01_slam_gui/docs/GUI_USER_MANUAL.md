@@ -5,7 +5,7 @@
 # SLAM3D Lite GUI 用户操作手册
 
 **适用程序：** `n01_slam_gui`  
-**默认部署树：** `/opt/slam3d_release`  
+**默认部署树：** `/home/demo/lyy/slam3d_lite_20261106_test`  
 **默认 Web 地址：** `http://<机器人IP>:8123`  
 **运行方式：** ROS 2 Humble + NiceGUI + rclpy，纯命令行启动 GUI，浏览器操作。
 
@@ -26,19 +26,19 @@
 确认甲方 Lite 综合包存在：
 
 ```bash
-test -f /opt/slam3d_release/setup_runtime.sh && echo "Lite runtime OK"
-test -f /opt/slam3d_release/resource/mapping_lite.pcd && echo "default map exists"
+test -f /home/demo/lyy/slam3d_lite_20261106_test/setup_runtime.sh && echo "Lite runtime OK"
+# 地图由 GUI 显式选择；测试包不要求携带默认 PCD。
 ```
 
 确认 ROS 2 环境和 Lite 包可解析：
 
 ```bash
-source /opt/slam3d_release/setup_runtime.sh
+source /home/demo/lyy/slam3d_lite_20261106_test/setup_runtime.sh
 ros2 pkg prefix hivecore_slam3d_lite_localization
 ros2 pkg prefix hivecore_slam3d_lite_console
 ```
 
-预期 prefix 指向 `/opt/slam3d_release/install/...`。如果不是，先停止操作，避免混用另一棵 SLAM 安装树。
+预期 prefix 指向 `/home/demo/lyy/slam3d_lite_20261106_test/install/...`。如果不是，先停止操作，避免混用另一棵 SLAM 安装树。
 
 确认上游输入（需由现场驱动/预处理工作流提供）：
 
@@ -78,7 +78,7 @@ ssh -L 8123:127.0.0.1:8123 demo@<机器人IP>
 
 然后在本地浏览器打开 `http://localhost:8123`。
 
-启动脚本默认 source `/opt/slam3d_release/setup_runtime.sh`，并设置 GUI 所需的 ROS 日志目录。除非明确要测试另一棵 release 树，否则不要设置 `SLAM_ROSK`。如确实需要指定：
+启动脚本默认 source `/home/demo/lyy/slam3d_lite_20261106_test/setup_runtime.sh`，并设置 GUI 所需的 ROS 日志目录。除非明确要测试另一棵 release 树，否则不要设置 `SLAM_ROSK`。如确实需要指定：
 
 ```bash
 SLAM_ROSK=/path/to/another_release ./run_slam_lite_gui.sh
@@ -238,7 +238,7 @@ RViz2/Foxglove 只观察 ROS 数据，可以与定位或建图并存；它们不
 3. 在独立终端启动定位 desk，或在确认辅助节点未运行后使用 GUI 节点管理启动：
 
    ```bash
-   source /opt/slam3d_release/setup_runtime.sh
+   source /home/demo/lyy/slam3d_lite_20261106_test/setup_runtime.sh
    ros2 launch hivecore_slam3d_lite_console localization_lite_desk.launch.py
    ```
 
@@ -259,7 +259,7 @@ RViz2/Foxglove 只观察 ROS 数据，可以与定位或建图并存；它们不
 3. 启动建图 desk：
 
    ```bash
-   source /opt/slam3d_release/setup_runtime.sh
+   source /home/demo/lyy/slam3d_lite_20261106_test/setup_runtime.sh
    ros2 launch hivecore_slam3d_lite_console mapping_lite_desk.launch.py
    ```
 
@@ -288,7 +288,7 @@ Lite 状态消息提供 `session`、`map_loaded`、`reloc_ok`、`reloc_fitness`�
 |---|---|
 | 页面无法打开 | 检查 GUI 启动终端；`ss -ltnp \| grep 8123`；端口占用时换端口启动 |
 | 顶部显示 ROS 未连接 | 看页面底部日志；确认通过 `run_slam_lite_gui.sh` 启动且脚本 source 了正确 release |
-| Lite 消息类型不可用 | 检查 `/opt/slam3d_release/setup_runtime.sh` 是否存在；确认 package prefix 指向 `/opt/slam3d_release/install` |
+| Lite 消息类型不可用 | 检查 `/home/demo/lyy/slam3d_lite_20261106_test/setup_runtime.sh` 是否存在；确认 package prefix 指向 `/home/demo/lyy/slam3d_lite_20261106_test/install` |
 | `/loc_status` 无数据 | 检查定位节点是否运行、ROS_DOMAIN_ID 是否一致、节点是否正常启动 |
 | 上游输入无数据 | 检查 Livox 驱动、预处理节点和 `/livox/lidar/geo_filtered` |
 | 服务不可用/超时 | 查看“数据源”页服务列表；检查对应定位或建图节点是否运行、服务名是否匹配 |
@@ -314,7 +314,7 @@ Lite 状态消息提供 `session`、`map_loaded`、`reloc_ok`、`reloc_fitness`�
 
 该 GUI 直接观察甲方 Lite 话题并调用甲方 Lite 服务。N-01 导航另由 `hivecore-navigation` 中的 Localization Adapter 对 `/loc_status`、`/robot_pose` 等输入进行接口标准化。GUI 不负责 N-01 适配、不发布 `/n01/localization/*`，也不应通过 GUI 修改导航内部状态。
 
-SLAM 部署树 `/opt/slam3d_release` 与导航仓库应独立升级。不要把甲方 SLAM 动态库、源码或安装目录复制进 `hivecore-navigation`。
+SLAM 部署树 `/home/demo/lyy/slam3d_lite_20261106_test` 与导航仓库应独立升级。不要把甲方 SLAM 动态库、源码或安装目录复制进 `hivecore-navigation`。
 
 ## 统一生命周期页面
 

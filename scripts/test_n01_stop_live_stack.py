@@ -11,12 +11,18 @@ SPEC.loader.exec_module(MODULE)
 
 
 class ScopedN01CleanupTests(unittest.TestCase):
-    def test_matches_navigation_executable(self):
+    def test_preserves_scan_bridge_owned_by_upstream_slam(self):
         with patch.object(MODULE, "process_cmdline", return_value=[
             "/home/demo/lyy/hivecore-navigation/install/n01_live_navigation/lib/"
             "n01_live_navigation/n01_live_scan_bridge"
         ]):
-            self.assertEqual(MODULE.is_managed_process(1234), (True, "n01_live_scan_bridge"))
+            self.assertEqual(MODULE.is_managed_process(1234), (False, None))
+
+    def test_matches_navigation_display_and_reference_executables(self):
+        for name in ('n01_environment_display','n01_realtime_reference'):
+            with self.subTest(name=name), patch.object(MODULE, 'process_cmdline', return_value=[
+                '/home/demo/lyy/hivecore-navigation/install/n01_live_navigation/lib/n01_live_navigation/'+name]):
+                self.assertEqual(MODULE.is_managed_process(1234), (True,name))
 
     def test_matches_scan_planner_but_not_other_planners(self):
         with patch.object(MODULE, "process_cmdline", return_value=[

@@ -29,8 +29,11 @@ NAV_HELPER = ROOT / "tools" / "navigation_lifecycle.py"
 # navigation residual; scripts/n01_navigation.sh's managed_nodes_absent()
 # excludes it for the same reason.
 NAV_MARKERS = {
+    "/n01_robot_footprint",
     "/n01_navigation_path",
     "/n01_static_map",
+    "/n01_realtime_reference",
+    "/n01_environment_display",
     "/n01_live_runtime_supervisor",
     "/n01_live_safety_supervisor",
     "/n01_live_dynamic_obstacle_tracker",
@@ -68,6 +71,7 @@ def classify_scan_bridge(nodes: list[str], active_pid: int | None) -> tuple[str,
         return "upstream", ", ".join(loc)
     return "orphan", "no localization stack node and no managed navigation PID"
 PROTECTED_MARKERS = {
+    "/n01_mapping_scan_sampler",
     "/localization_lite_node",
     "/mapping_lite_node",
     "/n01_localization_adapter",

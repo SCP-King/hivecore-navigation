@@ -15,7 +15,7 @@ from visualization_msgs.msg import Marker, MarkerArray
 
 from .core import (
     decode_pointcloud_xyz, cluster_xy_points, estimate_velocity,
-    ground_z_from_body_pose, sensor_cloud_stamp_gate,
+    ground_z_from_body_pose, sensor_cloud_stamp_gate, ground_plane_height_band,
 )
 
 
@@ -24,9 +24,13 @@ class DynamicObstacleTracker(Node):
         super().__init__("n01_live_dynamic_obstacle_tracker")
         self.declare_parameter("cloud_topic", "/cloud")
         self.declare_parameter("static_topic", "/grid_map/static_occupancy")
+        self.reference_updates_enabled = bool(self.declare_parameter('reference_updates_enabled', False).value)
         self.declare_parameter("map_frame", "map")
         # Fallback local ground in the active map; /body_pose refines it.
         self.declare_parameter("ground_z_map_m", 0.139)
+        self.declare_parameter("use_map_ground_plane", False)
+        self.declare_parameter("ground_slope_x", 0.0)
+        self.declare_parameter("ground_slope_y", 0.0)
         self.declare_parameter("body_height_m", 0.90)
         self.declare_parameter("body_to_ground_m", 0.778)
         self.declare_parameter("body_pose_topic", "/body_pose")
@@ -41,6 +45,9 @@ class DynamicObstacleTracker(Node):
         get = lambda name: self.get_parameter(name).value
         self.map_frame = str(get("map_frame"))
         self.ground_z_fallback = float(get("ground_z_map_m"))
+        self.use_map_ground_plane = bool(get("use_map_ground_plane"))
+        self.ground_slope_x = float(get("ground_slope_x"))
+        self.ground_slope_y = float(get("ground_slope_y"))
         self.ground_z = self.ground_z_fallback
         self.ground_z_body_pose = None
         self.ground_z_source = "fallback_param"
@@ -105,7 +112,7 @@ class DynamicObstacleTracker(Node):
         return [tuple(int(v) for v in row) for row in keys]
 
     def on_static(self, msg):
-        if self.static_ready:
+        if self.static_ready and not self.reference_updates_enabled:
             return
         if msg.header.frame_id.lstrip("/") != self.map_frame:
             self.last_error = "static_map_frame_mismatch"
@@ -290,6 +297,10 @@ class DynamicObstacleTracker(Node):
         self.last_body_pose_monotonic = time.monotonic()
 
     def _active_ground_z(self):
+        if getattr(self, 'use_map_ground_plane', False):
+            self.ground_z = self.ground_z_fallback
+            self.ground_z_source = 'map_plane'
+            return self.ground_z
         now = time.monotonic()
         if (self.ground_z_body_pose is not None
                 and now - self.last_body_pose_monotonic <= self.body_pose_timeout):
@@ -370,9 +381,10 @@ class DynamicObstacleTracker(Node):
             }, sort_keys=True)))
             return
         ground_z = self._active_ground_z()
-        z_min = ground_z + 0.08
-        z_max = ground_z + self.body_height + 0.30
-        band = points[(points[:, 2] >= z_min) & (points[:, 2] <= z_max)]
+        band, z_bounds = ground_plane_height_band(
+            points, ground_z, self.body_height,
+            self.ground_slope_x if self.use_map_ground_plane else 0.0,
+            self.ground_slope_y if self.use_map_ground_plane else 0.0)
         keys = self._voxel_keys(band)
         unmatched_mask = np.fromiter(
             (key not in self.static_voxels for key in keys),
@@ -397,7 +409,8 @@ class DynamicObstacleTracker(Node):
             "cloud_stamp_age_s": stamp_age_s,
             "max_cloud_age_s": self.max_cloud_age,
             "rejected_cloud_stamp_count": self.rejected_cloud_stamp_count,
-            "z_band_map_m": [z_min, z_max],
+            "z_band_map_m": z_bounds,
+            "z_band_semantics": "spatial_bounds_of_local_floor_relative_band",
             "ground_z_map_m": ground_z,
             "ground_z_source": self.ground_z_source,
             "body_to_ground_m": self.body_to_ground,
@@ -410,6 +423,8 @@ class DynamicObstacleTracker(Node):
                 {
                     "id": int(track_id),
                     "centroid_map": track["centroid"].tolist(),
+                    "minimum_map": track["minimum"].tolist(),
+                    "maximum_map": track["maximum"].tolist(),
                     "velocity_map_mps": track["velocity"],
                     "velocity_valid": bool(
                         track.get("velocity_valid", False)

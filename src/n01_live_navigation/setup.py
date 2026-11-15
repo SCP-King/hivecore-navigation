@@ -19,7 +19,7 @@ setup(
         ("share/" + package_name, ["package.xml"]),
         ("share/" + package_name + "/launch", ["launch/live_scan.launch.py",
                                                "launch/n01_localization_stack.launch.py"]),
-        ("share/" + package_name + "/config", ["config/live_scan.yaml", "config/slam3d_lite_adapter.yaml"]),
+        ("share/" + package_name + "/config", ["config/live_scan.yaml", "config/slam3d_lite_adapter.yaml", "config/slam3d_lite_mapping_adapter.yaml", "config/mola_localization_overrides.yaml"]),
         ("share/" + package_name + "/rviz", ["rviz/n01_live_navigation.rviz"]),
     ],
     install_requires=["setuptools"],
@@ -30,6 +30,13 @@ setup(
     license="Apache-2.0",
     entry_points={
         "console_scripts": [
+            "n01_robot_footprint = n01_live_navigation.robot_footprint_node:main",
+            "n01_mapping_scan_sampler = n01_live_navigation.mapping_scan_sampler:main",
+            "n01_environment_display = n01_live_navigation.environment_display:main",
+            "n01_realtime_reference = n01_live_navigation.realtime_reference:main",
+            "n01_wheel_joint_state = n01_live_navigation.wheel_joint_state:main",
+            "n01_mapless_motion = n01_live_navigation.mapless_motion:main",
+            "n01_ground_reference = n01_live_navigation.ground_reference_node:main",
             "n01_localization_adapter = n01_live_navigation.localization_adapter:main",
             "n01_live_scan_bridge = n01_live_navigation.live_scan_bridge:main",
             "n01_live_goal_gate = n01_live_navigation.goal_gate:main",

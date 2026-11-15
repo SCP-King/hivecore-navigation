@@ -3,8 +3,8 @@
 """
 slam_lite_gui — slam3d lite 可视化操作台（Web GUI: nicegui + rclpy）
 
-只读展示 + 显式按钮调用。所有 frame / TF / 话题 / 服务数据都来自甲方
-发布端，本 GUI 不生成任何 frame/TF/话题，也不自动启动 SLAM 节点
+展示 + 显式任务调用。传感器、位姿及模型来自发布端，GUI只发布初始位姿、
+导航目标及自有执行器启停信号，不发布底盘速度或关节控制，不自动启动 SLAM 节点
 （"节点管理"面板需用户勾选后手动触发）。
 
 运行前置：推荐使用同目录 run_slam_lite_gui.sh 启动；脚本会 source
@@ -24,20 +24,40 @@ import json
 import math
 import os
 import queue
+import re
 import socket
 import signal
 import subprocess
 import sys
 import threading
 import time
+import uuid
 from collections import Counter, deque
 from pathlib import Path
 
 import numpy as np
 from PIL import Image, ImageDraw
+from map_presentation import choose_map, occupancy_colors
+from robot_projection import RobotProjection, paint_robot
+from gui_client_lifecycle import ClientUI, ViewCache
 
 APP_DIR = Path(__file__).resolve().parent
 REPO_ROOT = APP_DIR.parents[1]
+if str(APP_DIR) not in sys.path:
+    sys.path.insert(0, str(APP_DIR))
+from motion_feedback import MotionFeedback
+from teach_routes import RouteStore, map_identity, validate_recorded_stops, SHARED_SESSION as TEACH_SESSION
+from localization_recovery import RecoveryGate
+from navigation_ui import localization_help, inspect_bag, route_summary, is_realtime_backend, mapping_ready, slam_selection, workflow_help
+from navigation_session import SESSION as TASK_STATE
+from ground_model import estimate_ground, GroundPlane
+sys.path.insert(0, str(REPO_ROOT / "src" / "n01_live_navigation"))
+from n01_live_navigation.pose_policy import tracking_mode, control_pose_fresh
+from n01_live_navigation.calibration_store import load_map_ground, save_map_ground
+sys.path.insert(0, str(REPO_ROOT / "src" / "n01_static_map"))
+from n01_static_map.pcd_xyz import parse_pcd_xyz
+
+TEACH_STORE = RouteStore(REPO_ROOT.parent/'n01_runtime/routes')
 
 # ---------------------------------------------------------------------------
 # 甲方 lite 消息类型（依赖 setup_runtime.sh 的环境）
@@ -61,7 +81,7 @@ from rcl_interfaces.srv import GetParameters
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
-from sensor_msgs.msg import Imu, PointCloud2
+from sensor_msgs.msg import Imu, PointCloud2, JointState
 from std_msgs.msg import Bool, String
 from std_srvs.srv import Trigger
 
@@ -72,7 +92,7 @@ def _detect_rosk() -> str:
     """slam3d release 根目录。
 
     优先 $SLAM_ROSK；否则从 AMENT_PREFIX_PATH 里找 lite console 所在树
-    （source 哪棵树就用哪棵）；都没有时退回 /opt/slam3d_release。
+    （source 哪棵树就用哪棵）；都没有时退回项目默认的 slam3d_lite_20261106_test。
     """
     env = os.environ.get("SLAM_ROSK", "").strip()
     if env:
@@ -81,7 +101,7 @@ def _detect_rosk() -> str:
     for p in os.environ.get("AMENT_PREFIX_PATH", "").split(":"):
         if p.endswith(tail):
             return p[: -len(tail)]
-    return "/opt/slam3d_release"
+    return "/home/demo/lyy/slam3d_lite_20261106_test"
 
 
 ROSK = _detect_rosk()
@@ -100,7 +120,7 @@ MAP_NODE = "/mapping_lite_node"
 BACKEND_VENDOR = "甲方 SLAM3D Lite"
 BACKEND_FAST_LIO = "自部署 FAST-LIO2"
 BACKEND_OPTIONS = [BACKEND_VENDOR, BACKEND_FAST_LIO]
-FAST_MODE_OFFLINE = "离线（保存地图后定位导航）"
+FAST_MODE_OFFLINE = "离线地图（建图 / 加载 PCD 定位）"
 FAST_MODE_REALTIME = "实时（边建图边导航）"
 DEFAULT_FAST_LIO_MAP = "/home/demo/lyy/n01_runtime/slam/fast_lio_map.pcd"
 INITIAL_POSE_TOPIC = "/initialpose"
@@ -115,15 +135,15 @@ _DEFAULT_BAG_TOPICS = (
     "/imu/data", "/imu/rpy/filtered", "/odom",
     "/tf", "/tf_static", "/robot_pose",
     "/mapping_status", "/cloud_map",
+    "/n01/vendor_mapping/pose_raw", "/n01/localization/pose",
+    "/n01/ground_reference/pose", "/n01/ground_reference/status", "/joint_states",
 )
 MAPPING_BAG_TOPICS = tuple(
     item.strip() for item in os.environ.get(
         "N01_MAPPING_BAG_TOPICS", ",".join(_DEFAULT_BAG_TOPICS)).split(",")
     if item.strip()) or _DEFAULT_BAG_TOPICS
 FITNESS_THRESHOLD = 0.045
-# Unified A: base_link is 0.90 above base_footprint; ground is 0.778 below base_link.
-GROUND_OFFSET_FROM_FOOTPRINT = 0.90 - 0.778  # +0.122 m
-GRID_RES = 0.10
+GRID_RES = 0.06
 GRID_IMAGE_PX = 640
 
 # 会话配色（dark 面）
@@ -186,6 +206,7 @@ SEVERITY = {"info": "INFO", "ok": " OK ", "warn": "WARN", "err": "ERR "}
 # 注意 robot_state_publisher 在 hivecore_robot_description 里的可执行文件名是
 # mount_tf_publisher_node，所以两个特征都要匹配。
 NODE_EXEC_HINTS: dict[str, tuple[str, ...]] = {
+    "n01_ground_reference": ("n01_ground_reference",),
     "localization_lite_node": ("localization_lite_node",),
     "mapping_lite_node": ("mapping_lite_node",),
     "complementary_filter_gain_node": ("complementary_filter_node",),
@@ -207,6 +228,7 @@ _PROC_DENY = (
 )
 # 关键话题：同一话题出现多个发布者 = 同一路数据有多个权威源。
 CENSUS_TOPICS = (
+    "/cmd_vel",
     "/imu/data", "/imu/rpy/filtered", "/livox/imu", "/livox/lidar",
     "/livox/lidar/geo_filtered",
     "/odom", "/loc_status", "/robot_pose", "/localization_map", "/cloud_map",
@@ -224,6 +246,8 @@ CENSUS_TOPICS = (
 DESK_CHAIN_NODES = (
     "/complementary_filter_gain_node", "/lidar_cloud_preprocess_node",
     "/static_tf_publisher_node", "/robot_state_publisher",
+    "/n01_ground_reference", "/n01_localization_adapter",
+    "/n01_mapping_scan_sampler",
 )
 FAST_LIO_NODES = (
     "/n01/fast_lio/mapping", "/n01_fast_lio_relocalizer",
@@ -499,6 +523,12 @@ def pc2_to_xyz(msg: PointCloud2) -> np.ndarray | None:
 class AppState:
     def __init__(self) -> None:
         self.lock = threading.Lock()
+        self.pose_stamp_age_at_rx = None
+        self.pose_stamp_ns = 0
+        self.pose_revision = 0
+        self.pose_snapshot = None
+        self.odom_snapshot = None
+        self.joint_snapshot = None
         self.recv_t: dict[str, float] = {
             k: 0.0 for k in
             ("loc_status", "mapping_status", "pose", "loc_map", "cloud_map",
@@ -513,17 +543,32 @@ class AppState:
         }
         self.mapping = {"session": "—", "save_dir": "—"}
         self.pose = None            # (x, y, yaw)
-        self.pose_z = None          # map<-base_footprint z
+        self.ground_model = None     # measured map plane, never inferred from pose z
+        self.pose_z = None          # map<-base_link z
         self.pose_frame = ""
+        self.pose_child_frame = ""
+        self.body_root_model_ready = None
         self.trail: deque[tuple[float, float, float]] = deque(maxlen=TRAIL_MAX)
         self.loc_pts: np.ndarray | None = None
         self.loc_seq = 0
         self.cloud_pts: np.ndarray | None = None
         self.cloud_seq = 0
+        self.robot_projection=None
+        self.robot_projection_error='等待运行中的URDF'
+        self.projection_joints={};self.projection_joint_times={}
+        self.projection_seq=0;self.body_tilt=(0.,0.)
+        self.nav_inflated_pts=None;self.nav_inflated_seq=0
+        self.ground_live_frames=deque(maxlen=30)
+        self.live_pts = None
+        self.live_seq = 0
         self.nav_static_pts: np.ndarray | None = None
         self.nav_dyn_pts: np.ndarray | None = None
         self.nav_map_seq = 0
         self.nav_ready = None
+        self.nav_speed_mps = .05
+        self.motion_feedback = MotionFeedback()
+        self.motion_events = queue.Queue()
+        self.motion_result = "尚未执行"
         self.goal_status: dict = {}
         self.nav_health: dict = {}
         self.readiness: dict = {}   # 桥接 0.5s 诊断 JSON（各上游新鲜度门控）
@@ -605,6 +650,21 @@ STATE = _state_registry["state"]
 
 def push_log(sev: str, text: str) -> None:
     STATE.log_q.put(f"[{time.strftime('%H:%M:%S')}] {SEVERITY.get(sev, sev)} {text}")
+
+
+def publish_motion_events(events) -> None:
+    for event in events:
+        push_log(event['level'], event['text'])
+        STATE.motion_events.put(event)
+        # Preserve execution results across browser reconnects and GUI restarts.
+        try:
+            folder = REPO_ROOT.parent / 'n01_runtime' / 'logs'
+            folder.mkdir(parents=True, exist_ok=True)
+            with (folder / 'gui_motion_events.jsonl').open('a', encoding='utf-8') as stream:
+                stream.write(json.dumps(dict(timestamp=time.strftime('%Y-%m-%d %H:%M:%S'),
+                                             **event), ensure_ascii=False) + '\n')
+        except OSError as exc:
+            push_log('warn', f'运动事件日志写入失败：{exc}')
 
 
 def walk(x, y, z, w) -> float:
@@ -697,6 +757,14 @@ class RosWorker:
         with STATE.lock:
             STATE.pending_initialpose = {"x": x, "y": y, "yaw": yaw, "frame": frame}
         push_log("info", f"排队发布 /initialpose  x={x:.2f} y={y:.2f} yaw={math.degrees(yaw):.1f}° frame={frame}")
+
+    def hold_route_motion(self):
+        self.set_route_enabled(False)
+
+    def set_route_enabled(self, enabled):
+        publisher=getattr(self,'route_enable_pub',None)
+        if publisher is None:raise RuntimeError('ROS连接未就绪，不能确认等待期间停驶')
+        publisher.publish(Bool(data=bool(enabled)))
 
     def request_goal(self, x: float, y: float, yaw: float, frame: str = "map") -> None:
         with STATE.lock:
@@ -857,6 +925,12 @@ class RosWorker:
         self._sub(node, "/loc_status", _LOC_MSG, q_small, self._on_loc_status)
         self._sub(node, "/mapping_status", _MAP_MSG, q_small, self._on_mapping_status)
         self._sub(node, "/robot_pose", Odometry, q_small, self._on_pose)
+        from tf2_msgs.msg import TFMessage
+        q_model = QoSProfile(depth=100, reliability=ReliabilityPolicy.RELIABLE,
+                             durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self._sub(node, "/tf_static", TFMessage, q_model, self._on_model_tf)
+        self._sub(node, '/robot_description', String, q_static, self._on_robot_description)
+        self._sub(node, '/grid_map/environment_inflate', PointCloud2, q_cloud, self._on_nav_inflated)
         self._sub(node, "/body_pose", Odometry, q_small, self._on_body_pose)
         self._sub(node, "/localization_map", PointCloud2, q_cloud, self._on_loc_map)
         self._sub(node, "/cloud_map", PointCloud2, q_cloud, self._on_cloud)
@@ -871,13 +945,14 @@ class RosWorker:
         self._sub(node, "/imu/data", Imu, q_small, self._chain_cb("imu_data"))
         self._sub(node, "/imu/rpy/filtered", Vector3Stamped, q_small,
                   self._chain_cb("imu_rpy"))
-        self._sub(node, "/odom", Odometry, q_small, self._chain_cb("odom"))
+        self._sub(node, "/odom", Odometry, q_small, self._on_recording_odom)
+        self._sub(node, "/joint_states", JointState, q_small, self._on_recording_joints)
         self._sub(node, "/n01/localization/pose", Odometry, q_small,
                   self._chain_cb("n01_pose"))
         self._sub(node, "/n01/localization/status", DiagnosticArray, q_small,
-                  self._chain_cb("n01_status"))
+                  self._on_navigation_status)
         self._sub(node, "/cloud", PointCloud2, q_cloud,
-                  self._chain_cb("bridge_cloud"))
+                  self._on_live_map_cloud)
         self._sub(node, "/n01/live_navigation/readiness", String, q_small,
                   self._on_readiness)
         self._sub(node, "/n01/live_navigation/slow_motion/status", String, q_small,
@@ -895,6 +970,7 @@ class RosWorker:
                   q_status, self._on_feasibility)
         self.pose_pub = node.create_publisher(PoseWithCovarianceStamped, INITIAL_POSE_TOPIC, 3)
         self.goal_pub = node.create_publisher(PoseStamped, GOAL_TOPIC, 3)
+        self.route_enable_pub = node.create_publisher(Bool, '/n01/slow_motion/enable', 10)
 
         push_log("info", f"ROS 节点 {node.get_name()} 已启动，开始订阅")
 
@@ -964,6 +1040,18 @@ class RosWorker:
             STATE.loc["reloc_fitness"] = float(msg.reloc_fitness)
         STATE.recv("loc_status")
 
+    def _on_navigation_status(self, msg) -> None:
+        values = {}
+        for item in msg.status:
+            if item.name == 'localization':
+                values = {value.key: value.value for value in item.values}
+                break
+        with STATE.lock:
+            values['source_status_age_s'] = str((self.node.get_clock().now().nanoseconds -
+                (msg.header.stamp.sec*10**9+msg.header.stamp.nanosec))/1e9)
+            STATE.mapping_nav = values
+        STATE.recv('n01_status')
+
     def _on_mapping_status(self, msg) -> None:
         with STATE.lock:
             STATE.mapping["session"] = msg.session
@@ -975,22 +1063,88 @@ class RosWorker:
                 float(msg.pose.pose.position.x),
                 float(msg.pose.pose.position.y),
                 float(msg.pose.pose.position.z))
+            q=msg.pose.pose.orientation
+            STATE.body_tilt=(math.atan2(2*(q.w*q.x+q.y*q.z),1-2*(q.x*q.x+q.y*q.y)),
+                             math.asin(max(-1.,min(1.,2*(q.w*q.y-q.z*q.x)))))
+            STATE.control_pose=(float(msg.pose.pose.position.x),float(msg.pose.pose.position.y),
+                                walk(q.x,q.y,q.z,q.w))
+            STATE.control_pose_stamp_age=(self.node.get_clock().now().nanoseconds-
+                (msg.header.stamp.sec*10**9+msg.header.stamp.nanosec))/1e9
+            stamp=msg.header.stamp.sec*10**9+msg.header.stamp.nanosec
+            if stamp>getattr(STATE,'control_pose_stamp_ns',0):
+                STATE.control_pose_revision=getattr(STATE,'control_pose_revision',0)+1
+            STATE.control_pose_stamp_ns=stamp
         STATE.recv("body_pose")
 
     def _on_slow_status(self, msg: String) -> None:
+        try:
+            data = json.loads(msg.data)
+            if not isinstance(data, dict):
+                return
+        except (ValueError, TypeError):
+            return
+        TASK_STATE.feedback={**data,'received_at':time.monotonic()}
         with STATE.lock:
-            STATE.slow_status = msg.data
+            events = STATE.motion_feedback.feed(data, time.monotonic())
+            if TASK_STATE.active:
+                for event in events:event['notify']=False
+            if events:
+                STATE.slow_status = events[-1]['text']
+            if events and events[-1]['notify']:
+                STATE.motion_result = events[-1]['text']
         STATE.recv("slow_status")
+        publish_motion_events(events)
+
+    def _on_model_tf(self, msg) -> None:
+        if not any(t.header.frame_id == 'base_link' and t.child_frame_id == 'lidar_link'
+                   for t in msg.transforms):
+            return
+        conflict = any(t.child_frame_id in ('base_link','base_footprint') for t in msg.transforms)
+        with STATE.lock:
+            STATE.body_root_model_ready = not conflict
 
     def _on_pose(self, msg: Odometry) -> None:
         p = msg.pose.pose
         yaw = walk(p.orientation.x, p.orientation.y, p.orientation.z, p.orientation.w)
+        stamp_ns=msg.header.stamp.sec*10**9+msg.header.stamp.nanosec
+        stamp_age=(self.node.get_clock().now().nanoseconds-stamp_ns)/1e9
         with STATE.lock:
+            if stamp_ns>STATE.pose_stamp_ns:STATE.pose_revision+=1
+            STATE.pose_stamp_ns=stamp_ns
+            STATE.pose_stamp_age_at_rx=stamp_age
             STATE.pose = (float(p.position.x), float(p.position.y), yaw)
             STATE.pose_z = float(p.position.z)
             STATE.pose_frame = msg.header.frame_id or ""
+            STATE.pose_child_frame = msg.child_frame_id or ""
+            STATE.pose_snapshot = dict(stamp_ns=stamp_ns, frame=msg.header.frame_id,
+                child_frame=msg.child_frame_id, position=[p.position.x,p.position.y,p.position.z],
+                quaternion=[p.orientation.x,p.orientation.y,p.orientation.z,p.orientation.w],
+                covariance=list(msg.pose.covariance))
             STATE.trail.append((float(p.position.x), float(p.position.y), yaw))
         STATE.recv("pose")
+
+    def _on_recording_odom(self, msg: Odometry) -> None:
+        v=msg.twist.twist
+        with STATE.lock:
+            STATE.odom_snapshot=dict(stamp_ns=msg.header.stamp.sec*10**9+msg.header.stamp.nanosec,
+                frame=msg.header.frame_id,child_frame=msg.child_frame_id,
+                linear=[v.linear.x,v.linear.y,v.linear.z],angular=[v.angular.x,v.angular.y,v.angular.z])
+        STATE.recv('odom')
+
+    def _on_recording_joints(self, msg: JointState) -> None:
+        now=time.monotonic()
+        age=(self.node.get_clock().now().nanoseconds-msg.header.stamp.sec*10**9-msg.header.stamp.nanosec)/1e9
+        if -.2<=age<=.5:
+            with STATE.lock:
+                for name,position in zip(msg.name,msg.position):
+                    if math.isfinite(position):
+                        STATE.projection_joints[name]=float(position)
+                        STATE.projection_joint_times[name]=now
+                STATE.projection_seq+=1
+        with STATE.lock:
+            STATE.joint_snapshot=dict(stamp_ns=msg.header.stamp.sec*10**9+msg.header.stamp.nanosec,
+                names=list(msg.name),position=list(msg.position),velocity=list(msg.velocity))
+        STATE.recv('joint_states')
 
     def _on_loc_map(self, msg: PointCloud2) -> None:
         xyz = pc2_to_xyz(msg)
@@ -1003,11 +1157,45 @@ class RosWorker:
         xyz = pc2_to_xyz(msg)
         with STATE.lock:
             STATE.cloud_pts = xyz
+            STATE.cloud_frame = msg.header.frame_id.lstrip("/")
             STATE.cloud_seq += 1
         STATE.recv("cloud_map")
 
     def _on_input_cloud(self, msg: PointCloud2) -> None:
         STATE.recv("input_cloud")
+
+    def _on_live_map_cloud(self, msg: PointCloud2) -> None:
+        if msg.header.frame_id.lstrip('/')!='map':return
+        xyz=pc2_to_xyz(msg)
+        with STATE.lock:
+            STATE.live_pts=xyz
+            if xyz is not None:STATE.ground_live_frames.append((time.monotonic(),xyz))
+            STATE.live_seq+=1
+        STATE.recv('bridge_cloud')
+
+    def _on_robot_description(self,msg):
+        try:
+            model=RobotProjection(msg.data);error=''
+        except Exception as exc:
+            model=None;error=str(exc)
+        with STATE.lock:
+            STATE.robot_projection=model;STATE.robot_projection_error=error
+            STATE.projection_seq+=1
+        STATE.recv('robot_model')
+
+    def _on_nav_inflated(self,msg):
+        if msg.header.frame_id.lstrip('/')!='map':return
+        xyz=pc2_to_xyz(msg)
+        with STATE.lock:
+            body=getattr(STATE,'body_pose_xyz',None)
+        if xyz is not None and body is not None:
+            xyz=xyz[np.abs(xyz[:,2]-body[2])<=.05]
+            if len(xyz):
+                _,ids=np.unique(np.floor(xyz[:,:2]/.05).astype(np.int32),axis=0,return_index=True)
+                xyz=xyz[ids]
+        with STATE.lock:
+            STATE.nav_inflated_pts=xyz;STATE.nav_inflated_seq+=1
+        STATE.recv('nav_inflated')
 
     def _on_nav_static(self, msg: PointCloud2) -> None:
         xyz = pc2_to_xyz(msg)
@@ -1210,6 +1398,10 @@ class RosWorker:
         msg.header.frame_id = payload["frame"]
         msg.pose.pose.position.x = payload["x"]
         msg.pose.pose.position.y = payload["y"]
+        with STATE.lock:
+            current_z = STATE.pose_z
+        if current_z is not None:
+            msg.pose.pose.position.z = float(current_z)
         msg.pose.pose.orientation.z = math.sin(yaw / 2.0)
         msg.pose.pose.orientation.w = math.cos(yaw / 2.0)
         cov = [0.0] * 36
@@ -1434,6 +1626,7 @@ class ProcManager:
         self.lock = threading.Lock()
         self.procs: dict[str, dict] = {}
         self.desk_mode = ""
+        self.slam_selection = {}
         self.bag_path = ""
 
     def running(self, key: str) -> bool:
@@ -1503,10 +1696,12 @@ class ProcManager:
         return True
 
     def _reader(self, key: str, proc: subprocess.Popen, reader) -> None:
+        recent_output = deque(maxlen=12)
         try:
             for line in reader:
                 line = line.rstrip()
                 if line:
+                    recent_output.append(line)
                     STATE.log_q.put(f"[{time.strftime('%H:%M:%S')}] {key}| {line}")
         except Exception:  # noqa: BLE001
             pass
@@ -1516,6 +1711,21 @@ class ProcManager:
             pass
         rc = proc.poll()
         push_log("info" if rc == 0 else "warn", f"{key} 进程退出 rc={rc}")
+        if key == 'slow_motion':
+            with self.lock:
+                item = self.procs.get(key)
+                unexpected = bool(item and item['proc'] is proc)
+            with STATE.lock:
+                unfinished = not STATE.motion_feedback.terminal
+                if unexpected and unfinished:
+                    STATE.motion_feedback.terminal = True
+                    detail = next((line for line in reversed(recent_output)
+                                   if 'Error:' in line or 'Exception:' in line),
+                                  recent_output[-1] if recent_output else '无进程输出')
+                    STATE.motion_result = f'行驶失败：执行器退出 rc={rc}，未确认到达目标；原因：{detail}'
+                    result = STATE.motion_result
+            if unexpected and unfinished:
+                publish_motion_events([dict(text=result, level='err', notify=True, terminal=True)])
         if key == "desk":
             was_mapping = self.desk_mode in (
                 "mapping", "fast_lio_mapping", "fast_lio_realtime")
@@ -1574,7 +1784,13 @@ class ProcManager:
             "success=True" in text or "success: true" in text.lower())
         return ok, text
 
-    def start_desk(self, mode: str, skip_rsp: bool = False) -> bool:
+    def start_desk(self, mode: str, skip_rsp: bool = False, record_bag: bool = True) -> bool:
+        # Robot description/TF are exclusively owned by the chassis desktop
+        # launcher. GUI SLAM modules must never spawn a second RSP.
+        skip_rsp = True
+        if getattr(STATE, 'body_root_model_ready', None) is not True:
+            push_log('err', '拒绝启动：底盘模型尚未切换为机身根模型，或静态TF未收到；请从桌面入口重启底盘一次，清除旧的固定0.9m地面关系，再启动建图/定位。')
+            return False
         # 节点图检查优先于本 GUI 自己的进程表，覆盖“外部终端已经启动”的情况。
         # 普查结果过期/不存在时拒绝：否则“图里有旧 desk”看不见，会叠出第二套。
         with STATE.lock:
@@ -1613,7 +1829,8 @@ class ProcManager:
                    # 已选择由地盘 RSP 提供 TF 时，它的 robot_state_publisher 是预期存在的
                    and not (skip_rsp and r["name"] == "/robot_state_publisher")]
         orphans = [r["name"] for r in rows
-                   if r["name"] in DESK_CHAIN_NODES and "孤儿" in r.get("state", "")]
+                   if r["name"] in DESK_CHAIN_NODES and "孤儿" in r.get("state", "")
+                   and not (skip_rsp and r["name"] == "/robot_state_publisher")]
         if orphans:
             # 父 launch 已死 = 确定的残留，再起一套必然双源，直接拒绝
             push_log("err", f"拒绝启动 desk：检测到孤儿前置链残留 {orphans}"
@@ -1636,10 +1853,10 @@ class ProcManager:
             # /cloud (the navigation inputs) exist before navigation starts.
             # The helper sources ROS + vendor SLAM + this workspace; desk_guard
             # alone only has the vendor AMENT_PREFIX_PATH.
-            cmd = ["bash", os.path.join(NAV_REPO, "scripts", "start_localization_stack.sh")]
+            cmd = ["bash", os.path.join(NAV_REPO, "scripts", "runtime", "start_localization_stack.sh")]
         else:
-            cmd = ["stdbuf", "-oL", "ros2", "launch",
-                   "hivecore_slam3d_lite_console", launch]
+            cmd = ["bash", os.path.join(NAV_REPO, "scripts", "runtime", "start_localization_stack.sh"),
+                   "slam_mode:=mapping"]
         if os.path.isfile(STATIC_TF_PARAMS):
             cmd.append(f"static_tf_params_file:={STATIC_TF_PARAMS}")
             push_log("info", f"静态 TF 使用 N-01 参数：{STATIC_TF_PARAMS}")
@@ -1650,14 +1867,14 @@ class ProcManager:
         if os.path.isfile(params_file):
             key = "localization_params_file" if mode == "loc" else "mapping_params_file"
             cmd.append(f"{key}:={params_file}")
-            push_log("info", f"SLAM 参数使用统一 0.90 链：{params_file}")
+            push_log("info", f"SLAM 参数使用统一雷达参考：{params_file}")
         else:
             push_log("warn", f"缺少统一 SLAM 参数文件：{params_file}")
         if skip_rsp:
             # 甲方契约：传感器帧唯一定义在 quad_leg_description，
-            # 由 hive2_driver 的 RSP 发布（z=0.90）；SLAM 自带的 3-link URDF 是 z=0.30。
+            # 由 hive2_driver 的 RSP 发布（机身根模型）；SLAM 自带的 3-link URDF 是 z=0.30。
             cmd.append("launch_robot_state_publisher:=false")
-            push_log("info", "已关闭 desk 自带 RSP：base_footprint→base_link 由地盘 RSP 提供")
+            push_log("info", "已关闭 desk 自带 RSP：机身与雷达安装链由地盘 RSP 提供")
         desc = "定位 desk" if mode == "loc" else "建图 desk"
         if skip_rsp:
             desc += "（无自带 RSP）"
@@ -1665,7 +1882,7 @@ class ProcManager:
             push_log("err", "建图 bag 仍在录制；请先结束建图，再启动定位")
             return False
         bag_started = False
-        if mode == "mapping":
+        if mode == "mapping" and record_bag:
             if not self.start_bag():
                 return False
             bag_started = True
@@ -1682,8 +1899,11 @@ class ProcManager:
         return ok
 
     def start_fast_lio(self, mode: str, saved_map_path: str,
-                       fast_lio_map_path: str = DEFAULT_FAST_LIO_MAP) -> bool:
+                       fast_lio_map_path: str = DEFAULT_FAST_LIO_MAP, record_bag: bool = True) -> bool:
         """Start the repository-owned FAST-LIO2 backend through the same guard."""
+        if getattr(STATE, 'body_root_model_ready', None) is not True:
+            push_log('err', '拒绝启动：底盘模型仍有旧固定地面关系或TF未收到，请先从桌面入口重启底盘。')
+            return False
         if mode not in ("loc", "mapping", "realtime"):
             push_log("err", f"未知 FAST-LIO2 模式：{mode}")
             return False
@@ -1699,14 +1919,14 @@ class ProcManager:
         conflicts = sorted(names & {
             LOC_NODE, MAP_NODE, "/n01/fast_lio/mapping",
             "/n01_fast_lio_relocalizer", "/n01_fast_lio_pose_adapter",
-            "/n01_localization_adapter", "/n01_live_scan_bridge",
+            "/n01_localization_adapter", "/n01_ground_reference", "/n01_live_scan_bridge",
             "/scan_planner_node",
         })
         if conflicts:
             push_log("err", f"拒绝启动 FAST-LIO2：发现其它建图定位后端 {conflicts}")
             return False
         map_out = os.path.abspath(os.path.expanduser(fast_lio_map_path))
-        helper = os.path.join(NAV_REPO, "scripts", "start_fast_lio_gui_backend.sh")
+        helper = os.path.join(NAV_REPO, "scripts", "runtime", "start_fast_lio_gui_backend.sh")
         if not os.path.isfile(helper):
             push_log("err", f"FAST-LIO2 GUI 启动器缺失：{helper}")
             return False
@@ -1722,12 +1942,12 @@ class ProcManager:
             cmd = ["bash", helper, "mapping", f"map_file_path:={map_out}",
                    "rviz:=false"]
             desc = "FAST-LIO2 建图"
-            if not self.start_bag():
+            if record_bag and not self.start_bag():
                 return False
         else:
             cmd = ["bash", helper, "realtime", f"map_file_path:={map_out}"]
             desc = "FAST-LIO2 实时建图 + 定位适配 + 导航桥接"
-            if not self.start_bag():
+            if record_bag and not self.start_bag():
                 return False
         self.desk_mode = f"fast_lio_{mode}"
         ok = self._spawn("desk", cmd, desc)
@@ -1738,13 +1958,14 @@ class ProcManager:
         return ok
 
     def start_rviz(self, mode: str) -> bool:
-        script = (f"{ROSK}/run_vis_world_localization.sh" if mode == "loc"
-                  else f"{ROSK}/run_vis_world_mapping.sh")
-        if not os.path.isfile(script):
-            push_log("err", f"找不到 RViz 启动脚本: {script}")
+        profile = 'localization' if mode == 'loc' else 'mapping'
+        config = os.path.join(NAV_REPO, 'rviz', f'n01_{profile}.rviz')
+        if not os.path.isfile(config):
+            push_log('err', f'找不到 RViz 配置: {config}')
             return False
-        return self._spawn("rviz", ["bash", script],
-                           "RViz 定位视图" if mode == "loc" else "RViz 建图视图")
+        return self._spawn('rviz', ['rviz2', '-d', config, '--ros-args',
+                                   '-r', f'__node:=n01_{profile}_rviz'],
+                           'RViz 定位视图' if mode == 'loc' else 'RViz 建图视图')
 
     def start_fast_lio_rviz(self, realtime: bool = False) -> bool:
         config = os.path.join(NAV_REPO, "src", "n01_fast_lio", "rviz",
@@ -1757,29 +1978,45 @@ class ProcManager:
             "rviz", ["rviz2", "-d", config],
             "FAST-LIO2 实时建图 RViz" if realtime else "FAST-LIO2 重定位 RViz")
 
-    def start_slow_motion(self, speed: float = 0.05) -> bool:
+    def start_slow_motion(self, speed: float = 0.05, cbf_enabled: bool = False, task_id: str = '', goal_xy=None, start_disabled=False) -> bool:
         """Start the opt-in very-slow /cmd_vel path executor.
 
-        path_source=auto  + control_mode=auto：重规划窗口内沿用最后验证前缀
-        (grace 1s)，然后回退新鲜全局路径；4WIS 几何校验失败时自动转差速
-        缩放的 Twist，避免低速大曲率触发 ±90° 转向界死锁。
+        只跟随经局部规划验证的统一路径，并使用原生四轮几何检查。
+        局部路径无效时停车，不回退到尚未验证的全局参考。
         """
-        speed = max(0.01, min(0.08, float(speed)))
-        cmd = ["bash", os.path.join(NAV_REPO, "scripts", "start_slow_motion.sh"),
-               "--ros-args", "-p", "enabled:=true",
+        task_id=task_id or 'motion_'+uuid.uuid4().hex
+        speed = float(speed)
+        if not math.isfinite(speed) or not .01<=speed<=.8:
+            push_log('err','速度上限必须为0.01～0.8 m/s的有限数值');return False
+        cmd = ["bash", os.path.join(NAV_REPO, "scripts", "runtime", "start_slow_motion.sh"),
+               "--ros-args", "-p", f"enabled:={str(not start_disabled).lower()}", "-p", f"task_id:={task_id}",
+               "-p", f"cbf_enabled:={str(bool(cbf_enabled)).lower()}",
                "-p", f"max_speed_mps:={speed:.3f}",
                "-p", "max_yaw_rate_radps:=0.12",
                "-p", "max_accel_mps2:=0.04",
-               "-p", "path_source:=auto",
-               "-p", "control_mode:=auto"]
+               "-p", "path_source:=unified",
+               "-p", "control_mode:=four_wis",
+               "-p", "face_path:=true",
+               "-p", "tracking_model:=reduced_v_omega_curvature"]
+        if goal_xy is not None:
+            cmd += ['-p','require_expected_goal:=true','-p',f'expected_goal_x:={float(goal_xy[0])}',
+                    '-p',f'expected_goal_y:={float(goal_xy[1])}']
         return self._spawn("slow_motion", cmd,
-                           f"慢速运行（max {speed:.3f} m/s，/cmd_vel，auto/auto）")
+                           f"慢速运行（max {speed:.3f} m/s，CBF={'开启' if cbf_enabled else '关闭'}，已验证统一路径）")
+
+    def start_rotation(self,task_id,yaw):
+        if not math.isfinite(yaw):return False
+        cmd=['bash',os.path.join(NAV_REPO,'scripts','runtime','start_slow_motion.sh'),
+             '--ros-args','-p','enabled:=false','-p','motion_mode:=rotate',
+             '-p',f'target_yaw_rad:={float(yaw)}','-p',f'task_id:={task_id}',
+             '-p','max_speed_mps:=0.03','-p','max_yaw_rate_radps:=0.08']
+        return self._spawn('slow_motion',cmd,'路线朝向对齐（完整扫掠检查）')
 
     def start_nav_rviz(self) -> bool:
         if not os.path.isfile(NAV_RVIZ_CONFIG):
             push_log("err", f"找不到导航 RViz 配置: {NAV_RVIZ_CONFIG}")
             return False
-        return self._spawn("nav_rviz", ["rviz2", "-d", NAV_RVIZ_CONFIG],
+        return self._spawn("nav_rviz", ["rviz2", "-d", NAV_RVIZ_CONFIG, "--ros-args", "-r", "__node:=n01_navigation_rviz"],
                            "导航 RViz")
 
     def start_bridge(self) -> bool:
@@ -1867,7 +2104,14 @@ class ProcManager:
             self.stop(key)
 
 
-PROCS = ProcManager()
+_process_manager_registry = getattr(builtins, '_N01_GUI_PROCESS_MANAGER_REGISTRY', None)
+if not isinstance(_process_manager_registry, dict) or _process_manager_registry.get('pid') != os.getpid():
+    # NiceGUI may execute the page module again for another browser client.
+    # Keep lifecycle ownership attached to the GUI process, not one page import.
+    previous = WORKER._run.__func__.__globals__.get('PROCS')
+    _process_manager_registry = {'pid': os.getpid(), 'manager': previous if previous is not None else ProcManager()}
+    setattr(builtins, '_N01_GUI_PROCESS_MANAGER_REGISTRY', _process_manager_registry)
+PROCS = _process_manager_registry['manager']
 
 
 # ---------------------------------------------------------------------------
@@ -1885,7 +2129,14 @@ LOCALIZATION_PARAMS = os.path.join(GUI_CONFIG_DIR, "n01_localization_lite.yaml")
 MAPPING_PARAMS = os.path.join(GUI_CONFIG_DIR, "n01_mapping_lite.yaml")
 # Keep the page default aligned with the active custom localization YAML.
 DEFAULT_MAP_PATH = "/home/demo/lyy/slam_data/maps/mapping_lite_20261109_140536_087.pcd"
-NAV_RVIZ_CONFIG = os.path.join(NAV_REPO, "rviz", "n01_full_pipeline.rviz")
+try:
+    _saved_ground = load_map_ground(DEFAULT_MAP_PATH)
+except (OSError, ValueError, KeyError, TypeError):
+    _saved_ground = None
+DEFAULT_NAV_GROUND = (float(_saved_ground['a']*_saved_ground['reference_xy'][0]
+                            +_saved_ground['b']*_saved_ground['reference_xy'][1]+_saved_ground['c'])
+                      if _saved_ground else 0.0)
+NAV_RVIZ_CONFIG = os.path.join(NAV_REPO, "src", "n01_live_navigation", "rviz", "n01_live_navigation.rviz")
 _NAV_ACTION_LOCK = threading.Lock()
 
 def run_navigation_lifecycle(action: str, timeout: float | None = None,
@@ -1928,6 +2179,8 @@ def run_navigation_lifecycle(action: str, timeout: float | None = None,
         return cp.returncode == 0, output
     except subprocess.TimeoutExpired as exc:
         output = exc.stdout or ""
+        if action=='status':
+            return False,'导航状态查询超时；外部节点保持不变。'
         if isinstance(output, bytes):
             output = output.decode("utf-8", "replace")
         # 超时只杀掉了 helper 这个直接子进程；它下面可能在跑 ros2 launch。
@@ -1962,16 +2215,47 @@ class GlobalLifecycleManager:
         self.proc_manager = proc_manager
         self._lock = threading.RLock()
         self._navigation_started_by_gui = False
+        self._navigation_identity = None
+
+    @staticmethod
+    def _active_navigation_identity():
+        root=Path(os.environ.get('N01_RUNTIME_ROOT',str(Path(NAV_REPO).parent/'n01_runtime')))
+        try:
+            pid=int((root/'runs/navigation/live_scan_launch.pid').read_text().strip())
+            args=Path(f'/proc/{pid}/cmdline').read_bytes()
+            ticks=_proc_start_ticks(pid)
+            if b'live_scan.launch.py' not in args or ticks is None:return None
+            return pid,ticks
+        except (OSError,ValueError):return None
 
     def navigation(self, action: str, timeout: float | None = None,
                    env_extra: dict | None = None) -> tuple[bool, str]:
+        identity=self._active_navigation_identity()
+        with self._lock:
+            owned=(self._navigation_started_by_gui and self._navigation_identity==identity and identity is not None)
+        if action=='start' and identity is not None:
+            return False,'导航已在运行；仅监控，不停止或重启已有实例。请从其原启动入口管理。'
+        if action=='start':
+            state=globals().get('STATE')
+            if state is not None:
+                with state.lock:
+                    census_at=state.census_at
+                    external=any(r.get('name')=='/scan_planner_node' and r.get('count',0)>0
+                                 for r in state.node_rows)
+                if not census_at or time.monotonic()-census_at>15.:
+                    return False,'节点监控尚未就绪，无法确认有无外部导航实例；请稍后手动重试。'
+                if external:return False,'监测到外部导航节点，仅监控；请从其原启动入口管理。'
+        if action=='stop' and not owned:
+            return True,'当前 GUI 未持有该导航实例；保持外部导航不变。'
         ok, output = run_navigation_lifecycle(action, timeout=timeout,
                                               env_extra=env_extra)
         with self._lock:
             if action == "start" and ok:
                 self._navigation_started_by_gui = True
+                self._navigation_identity = self._active_navigation_identity()
             elif action == "stop" and ok:
                 self._navigation_started_by_gui = False
+                self._navigation_identity = None
         return ok, output
 
     def stop_all(self) -> tuple[bool, str]:
@@ -2001,7 +2285,11 @@ class GlobalLifecycleManager:
         return self.navigation("stop", timeout=75.0)
 
 
-LIFECYCLE = GlobalLifecycleManager(PROCS)
+_lifecycle_registry = getattr(builtins, '_N01_GUI_LIFECYCLE_REGISTRY', None)
+if not isinstance(_lifecycle_registry, dict) or _lifecycle_registry.get('pid') != os.getpid():
+    _lifecycle_registry = {'pid': os.getpid(), 'manager': GlobalLifecycleManager(PROCS)}
+    setattr(builtins, '_N01_GUI_LIFECYCLE_REGISTRY', _lifecycle_registry)
+LIFECYCLE = _lifecycle_registry['manager']
 
 # 兜底：即使 nicegui 的 on_shutdown 没跑到（解释器正常收尾），
 # 也在这里把 GUI 拉起的 desk / RViz / Foxglove 整组停掉。
@@ -2027,7 +2315,8 @@ atexit.register(_fallback_stop_all)
 # ---------------------------------------------------------------------------
 # 图表数据
 # ---------------------------------------------------------------------------
-_chart_cache: dict = {"key": None, "pts": [], "option": None}
+UI = ClientUI(lambda: ui.context.client)
+_chart_cache = ViewCache(UI,'chart',{"key": None, "pts": [], "option": None})
 
 
 def _view_points() -> tuple[list, str]:
@@ -2125,7 +2414,7 @@ def _chart_option(pts: list, trail: list, pose) -> dict:
 # ---------------------------------------------------------------------------
 from nicegui import app, ui  # noqa: E402
 
-UI: dict = {}
+# Widget access resolves the current page; never share Element instances.
 
 
 def _lbl(text: str, cls: str = "text-sm text-slate-300"):
@@ -2220,10 +2509,10 @@ def build_status_tab() -> None:
                 with ui.row().classes("items-center gap-3"):
                     _lbl("地图 / 位姿", "text-base font-semibold text-slate-100")
                     UI["src"] = ui.radio(["定位地图", "建图点云", "两者"], value="定位地图",
-                                        on_change=lambda _: draw_chart(force=True)) \
+                                        on_change=lambda _: draw_chart(force=True))\
                         .props("inline dense")
                     UI["range"] = ui.select(["自动", "20m", "40m", "100m"], value="自动",
-                                           label="视野", on_change=lambda _: draw_chart(force=True)) \
+                                           label="视野", on_change=lambda _: draw_chart(force=True))\
                         .classes("w-28").props("dense")
                     UI["trail_on"] = ui.checkbox("轨迹", value=True)
                     UI["chart_info"] = ui.label("等待点云…").classes("text-xs text-slate-400")
@@ -2237,13 +2526,13 @@ def build_ctrl_tab() -> None:
             with _card("定位控制"):
                 for name, desc in LOC_SRV_DESC.items():
                     with ui.row().classes("items-center gap-3 w-full no-wrap"):
-                        ui.button(name, on_click=functools.partial(srv_click, name)) \
+                        ui.button(name, on_click=functools.partial(srv_click, name))\
                             .props("outline color=primary").classes("w-64 text-left")
                         _lbl(desc, "text-xs text-slate-400")
             with _card("建图控制"):
                 for name, desc in MAP_SRV_DESC.items():
                     with ui.row().classes("items-center gap-3 w-full no-wrap"):
-                        ui.button(name, on_click=functools.partial(srv_click, name)) \
+                        ui.button(name, on_click=functools.partial(srv_click, name))\
                             .props("outline color=secondary").classes("w-64 text-left")
                         _lbl(desc, "text-xs text-slate-400")
 
@@ -2265,24 +2554,23 @@ def build_ctrl_tab() -> None:
                 UI["mg_enable"] = ui.checkbox(
                     "启用节点管理：由本 GUI 启动 / 停止 lite desk 节点", value=False)
                 with ui.row().classes("gap-2 items-center"):
-                    UI["mg_mode"] = ui.select(["定位 desk", "建图 desk"], value="定位 desk") \
+                    UI["mg_mode"] = ui.select(["定位 desk", "建图 desk"], value="定位 desk")\
                         .classes("w-36").props("dense")
                     ui.button("启动", on_click=start_desk).props("color=positive")
                     ui.button("停止", on_click=stop_desk).props("color=negative")
                 UI["mg_skip_rsp"] = ui.checkbox(
                     "不启动 SLAM 的 RSP（由地盘 hive2_driver 提供 "
-                    "base_footprint→base_link→lidar_link）", value=True)
-                _lbl("勾选后传 launch_robot_state_publisher:=false。"
-                     "desk 自带的 3-link URDF 是 z=0.30，地盘的整机 URDF 是 z=0.90；"
-                     "两者同时发同一 joint 会交替抖动。仅当地盘 RSP 已在运行时才可勾选。",
+                    "base_link→lidar_link，地面帧由算法计算）", value=True)
+                UI["mg_skip_rsp"].disable()
+                _lbl("机身与雷达安装 TF 由桌面底盘独占发布。"
+                     "地面参考帧由点云拟合后动态发布，不使用固定腿高。",
                      "text-xs text-slate-400")
-                _lbl("命令：ros2 launch hivecore_slam3d_lite_console "
-                     "{localization|mapping}_lite_desk.launch.py", "text-xs text-slate-400")
-                _lbl("desk 会同时起 IMU 互补滤波 / RSP / cloud_preprocessor，"
+                _lbl("建图与定位使用同一项目适配链路。", "text-xs text-slate-400")
+                _lbl("desk 会同时起 IMU 互补滤波 / cloud_preprocessor / 地面投影，"
                      "若这些已在跑请勿重复启动。", "text-xs text-amber-400")
                 ui.separator()
                 _lbl("定位与建图互斥：两者都订阅同一输入云、都发布 /robot_pose 与 "
-                     "map→base_footprint TF；同一时刻只能运行一个。", "text-xs text-amber-400")
+                     "map→base_link TF；同一时刻只能运行一个。", "text-xs text-amber-400")
                 with ui.grid(columns=2).classes("gap-x-4 gap-y-1"):
                     UI["proc_nodes"] = _kv("节点在位")
                     UI["proc_procs"] = _kv("本 GUI 进程")
@@ -2298,9 +2586,9 @@ def build_lifecycle_tab() -> None:
                 UI["life_map"] = _kv("Lite 建图")
                 UI["life_nav"] = _kv("N-01 导航")
             with ui.row().classes("w-full items-center gap-2"):
-                ui.button("刷新状态", on_click=lambda: navigation_action("status")) \
+                ui.button("刷新状态", on_click=lambda: navigation_action("status"))\
                     .props("outline color=primary")
-                ui.button("停止全部 GUI 托管模块", on_click=stop_managed_all) \
+                ui.button("停止全部 GUI 托管模块", on_click=stop_managed_all)\
                     .props("color=negative")
         with ui.row().classes("w-full items-start gap-4"):
             with ui.column().classes("flex-1 gap-3"):
@@ -2308,13 +2596,13 @@ def build_lifecycle_tab() -> None:
                     _lbl("启动前执行节点普查。发现定位/建图或 desk 前置链残留时拒绝叠加；不会误杀 Livox、IMU、底盘或外部 SLAM。",
                          "text-xs text-slate-400")
                     with ui.row().classes("items-center gap-2"):
-                        ui.button("启动定位", on_click=lambda: lifecycle_start_slam("loc")) \
+                        ui.button("启动定位", on_click=lambda: lifecycle_start_slam("loc"))\
                             .props("color=positive")
-                        ui.button("启动建图 + 录包", on_click=lambda: lifecycle_start_slam("mapping")) \
+                        ui.button("启动建图 + 录包", on_click=lambda: lifecycle_start_slam("mapping"))\
                             .props("color=positive")
-                        ui.button("结束建图 / 停止 desk", on_click=stop_desk) \
+                        ui.button("结束建图 / 停止 desk", on_click=stop_desk)\
                             .props("color=negative")
-                    UI["life_slam_note"] = ui.label("SLAM desk 由本 GUI 的独立进程组管理。") \
+                    UI["life_slam_note"] = ui.label("SLAM desk 由本 GUI 的独立进程组管理。")\
                         .classes("text-xs text-slate-400")
             with ui.column().classes("flex-1 gap-3"):
                 with _card("N-01 导航生命周期"):
@@ -2322,13 +2610,13 @@ def build_lifecycle_tab() -> None:
                     _lbl("启动前先停止上一套受管导航进程组，再执行状态复查。只清理 N-01 导航自有进程，不会全局 kill ROS 节点。",
                          "text-xs text-slate-400")
                     with ui.row().classes("items-center gap-2"):
-                        ui.button("启动导航", on_click=lambda: navigation_action("start")) \
+                        ui.button("启动导航", on_click=lambda: navigation_action("start"))\
                             .props("color=positive")
-                        ui.button("停止导航", on_click=stop_navigation_module) \
+                        ui.button("停止导航", on_click=stop_navigation_module)\
                             .props("color=negative")
-                        ui.button("导航状态", on_click=lambda: navigation_action("status")) \
+                        ui.button("导航状态", on_click=lambda: navigation_action("status"))\
                             .props("outline color=primary")
-                    UI["nav_result"] = ui.label("尚未执行导航生命周期命令。") \
+                    UI["nav_result"] = ui.label("尚未执行导航生命周期命令。")\
                         .classes("w-full text-xs font-mono whitespace-pre-wrap break-all")
         with _card("安全边界"):
             ui.markdown(
@@ -2342,76 +2630,663 @@ def build_lifecycle_tab() -> None:
 
 
 async def lifecycle_start_slam(mode: str) -> None:
-    # 统一生命周期页是显式的节点管理入口，因此在此处启用原有安全检查。
-    UI["mg_enable"].value = True
-    UI["mg_mode"].value = "定位 desk" if mode == "loc" else "建图 desk"
-    backend = (UI["slam_backend"].value
-               if UI.get("slam_backend") else BACKEND_VENDOR)
-    if backend == BACKEND_FAST_LIO:
-        fast_mode = (UI["fast_lio_mode"].value
-                     if UI.get("fast_lio_mode") else FAST_MODE_OFFLINE)
-        realtime = fast_mode == FAST_MODE_REALTIME
-        saved_map = str(UI["map_path"].value or "").strip()
-        fast_map = str(UI["fast_lio_map"].value or DEFAULT_FAST_LIO_MAP).strip()
-        if realtime:
-            mode = "realtime"
-            fast_map = str(UI["fast_lio_map"].value or DEFAULT_FAST_LIO_MAP).strip()
-            with STATE.lock:
-                STATE.loc["map_path"] = "(FAST-LIO2 实时地图)"
-        elif mode == "mapping":
-            # The compact GUI treats this field as an output PCD for FAST-LIO2,
-            # while the vendor backend keeps its original save-directory meaning.
-            if not fast_map.lower().endswith(".pcd"):
-                fast_map = DEFAULT_FAST_LIO_MAP
-        else:
-            fast_map = DEFAULT_FAST_LIO_MAP
-            with STATE.lock:
-                STATE.loc["map_path"] = saved_map
-        label = ("实时建图定位 + bag" if mode == "realtime" else
-                 ("定位" if mode == "loc" else "离线建图 + bag"))
-        detail = (f"参考地图：{saved_map}\n" if mode == "loc" else "")
-        if not await _confirm(
-                f"将启动 {BACKEND_FAST_LIO} · {label}。\n{detail}"
-                "输出经 n01_fast_lio 适配到统一定位/导航接口；"
-                "不会与甲方 SLAM 同时运行。\n\n确认？"):
-            return
-        ok = await asyncio.to_thread(
-            PROCS.start_fast_lio, mode, saved_map, fast_map)
-        ui.notify("FAST-LIO2 已启动" if ok else "FAST-LIO2 启动失败，见运行日志",
-                  type="positive" if ok else "negative")
+    if PROCS.running('desk'):
+        notify_user('已有建图定位会话运行，请先停止再切换组合', type='warning')
         return
-    await start_desk()
+    backend = UI['slam_backend'].value if UI.get('slam_backend') else BACKEND_VENDOR
+    fast = backend == BACKEND_FAST_LIO
+    realtime = bool(UI.get('slam_map_mode') and UI['slam_map_mode'].value == FAST_MODE_REALTIME)
+    if (realtime and mode != 'realtime') or (not realtime and mode == 'realtime'):
+        notify_user('实时模式请统一启动实时SLAM；离线模式请分别选择建图或定位', type='info')
+        return
+    task = '定位' if mode == 'loc' else '建图'
+    profile = slam_selection(fast, task, realtime)
+    UI['mg_enable'].value = True
+    UI['mg_mode'].value = '定位 desk' if profile['engine_mode'] == 'loc' else '建图 desk'
+    previous = getattr(PROCS, 'slam_selection', {})
+    PROCS.slam_selection = profile
+    with STATE.lock:
+        STATE.mapping_nav = {}
+        STATE.mapping['session'] = '—'
+        STATE.loc.update(session='—', map_loaded=None, reloc_ok=None, reloc_fitness=None)
+        for key in ('n01_status','loc_status','mapping_status','pose','body_pose','cloud_map'):
+            STATE.recv_t[key] = 0.0
+    operation = '实时SLAM（建图＋位姿估计）' if realtime else task
+    push_log('info', f"启动选择：{backend} / {operation} / {'实时' if realtime else '离线'}；底层模式={profile['engine_mode']}")
+    try:
+        if fast:
+            saved = str(UI['map_path'].value or '').strip()
+            output = str(UI['fast_lio_map'].value or DEFAULT_FAST_LIO_MAP).strip()
+            if not output.lower().endswith('.pcd'):
+                output = DEFAULT_FAST_LIO_MAP
+            ok = await asyncio.to_thread(ProcManager.start_fast_lio, PROCS, profile['engine_mode'], saved, output,
+                                         record_bag=profile['record_bag'])
+            if ok:
+                with STATE.lock:
+                    STATE.loc['map_path'] = saved if profile['needs_pcd'] else '(本次实时地图)'
+            notify_user('FAST-LIO2 已启动' if ok else 'FAST-LIO2 启动失败，见日志',
+                      type='positive' if ok else 'negative')
+        else:
+            ok = await start_desk()
+            notify_user(f"{operation} 启动成功" if ok else f"{operation} 启动失败，请查看日志", type="positive" if ok else "negative")
+        if not ok:
+            PROCS.slam_selection = previous
+    except Exception:
+        PROCS.slam_selection = previous
+        raise
 
 
 async def start_selected_slam_task() -> None:
-    task = UI["slam_task"].value if UI.get("slam_task") else "定位"
-    await lifecycle_start_slam("mapping" if task == "建图" else "loc")
+    if not UI.get('slam_map_mode') or UI['slam_map_mode'].value != FAST_MODE_REALTIME:
+        notify_user('离线模式请使用“启动建图”或“启动定位”入口', type='info')
+        return
+    await lifecycle_start_slam('realtime')
 
 
 async def start_selected_rviz() -> None:
-    task = UI["slam_task"].value if UI.get("slam_task") else "定位"
-    await start_slam_rviz("mapping" if task == "建图" else "loc")
+    realtime = bool(UI.get('slam_map_mode') and UI['slam_map_mode'].value == FAST_MODE_REALTIME)
+    mapping = PROCS.running('desk') and PROCS.desk_mode in ('mapping','fast_lio_mapping','fast_lio_realtime')
+    await start_slam_rviz('mapping' if realtime or mapping else 'loc')
 
 
-def _slow_notice(msg: str, sev: str = "warn") -> None:
+def notify_user(message, **kwargs):
+    """All result toasts disappear after five seconds; confirmation dialogs are separate."""
+    if not UI.available:return None
+    kwargs['timeout']=5000
+    kwargs['close_button']=False
+    return ui.notify(message, **kwargs)
+
+
+def _slow_notice(msg: str, sev: str = "warn", terminal: bool = False) -> None:
     """慢速行驶结果写进 STATE，由 refresh_panels 统一显示（单一写者，避免 0.5 s 被覆盖）。"""
     with STATE.lock:
         STATE.slow_status = msg
-    push_log(sev, msg)
+        if terminal or sev == 'err':
+            STATE.motion_result = msg
+    terminal = terminal or sev == 'err'
+    publish_motion_events([dict(text=msg, level=sev, notify=terminal, terminal=terminal)])
+
+
+def _teach_view(message=''):
+    route = TEACH_SESSION.loaded
+    points = TEACH_SESSION.points if TEACH_SESSION.active else (route['points'] if route else [])
+    if UI.get('teach_table'):
+        UI['teach_table'].rows = [dict(index=i+1, name=p['name'], x=round(p['x'],3),
+             y=round(p['y'],3), yaw=round(math.degrees(p['yaw']),1), wait=p['wait_s'])
+             for i,p in enumerate(points)]
+        UI['teach_table'].update()
+    if UI.get('teach_result'):
+        UI['teach_result'].set_text(message or f"{'正在路线记录' if TEACH_SESSION.active else '路线预览'} · {len(points)} 个站点")
+    if UI.get('teach_execution'):
+        UI['teach_execution'].set_text(route_summary(route) if route and not TEACH_SESSION.active
+                                       else '保存并加载路线后，开始时先到第一个站点，再依次访问后续站点。')
+    if UI.get('teach_station_states'):
+        UI['teach_station_states'].set_text(json.dumps(points,ensure_ascii=False,indent=2))
+
+
+def _teach_map_path():
+    if PROCS.desk_mode in ('mapping','fast_lio_mapping','fast_lio_realtime') and PROCS.running('desk'):
+        raise ValueError('实时建图坐标系尚未绑定已保存地图；请先保存地图并进入该地图定位，再保存或回放跨会话路线')
+    with STATE.lock:
+        loc=dict(STATE.loc)
+    selected=str(UI['map_path'].value or '') if UI.get('map_path') else ''
+    path=str(loc.get('map_path','')) if loc.get('map_loaded') is True else selected
+    if not path or not os.path.isfile(path):
+        raise ValueError('请先选择有效 PCD 地图，再加载或新建路线')
+    return path
+
+
+def _teach_context():
+    if PROCS.desk_mode in ('mapping','fast_lio_mapping','fast_lio_realtime') and PROCS.running('desk'):
+        raise ValueError('当前为实时建图导航；持久化路线需先保存地图并进入该地图定位')
+    if PROCS.running('slow_motion'):
+        raise ValueError('请先停止自动执行器，再进行路线记录或更换路线')
+    with STATE.lock:
+        loc=dict(STATE.loc);pose=STATE.pose;z=STATE.pose_z
+        frame=STATE.pose_frame;child=getattr(STATE,'pose_child_frame','')
+    if (not STATE.ros_ready or loc.get('session')!='tracking' or loc.get('reloc_ok') is not True
+            or loc.get('map_loaded') is not True):
+        raise ValueError('需要加载地图并完成定位后才能路线记录')
+    if (pose is None or z is None or frame!='map' or child!='base_link'
+            or (STATE.age_of('pose') or 999)>.5 or (STATE.age_of('loc_status') or 999)>1.5):
+        raise ValueError('定位位姿过期或参考帧不匹配')
+    path=str(loc.get('map_path',''))
+    if not path or not os.path.isfile(path):
+        raise ValueError('当前定位地图路径不可用')
+    return path,(pose[0],pose[1],z,pose[2])
+
+
+def _capture_station_state(after):
+    with STATE.lock:
+        pose=getattr(STATE,'pose_snapshot',None)
+        odom=getattr(STATE,'odom_snapshot',None)
+        joints=getattr(STATE,'joint_snapshot',None)
+        loc=dict(STATE.loc)
+        bridge=dict(getattr(STATE,'readiness',{}) or {})
+    if pose is None or odom is None:
+        raise ValueError('站点状态采集未就绪，请重启 GUI 后再记录')
+    if math.dist(pose['position'],after[:3])>1e-6:
+        raise ValueError('记录期间定位更新，请停车后重试')
+    if (STATE.age_of('odom') or 999)>.3 or math.sqrt(sum(v*v for v in odom['linear']))>.01 or abs(odom['angular'][2])>.02:
+        raise ValueError('底盘尚未确认停车，请停车后记录')
+    prediction=bridge.get('pose_prediction')
+    if prediction and (prediction.get('fault') or
+            pose['stamp_ns']-prediction.get('source_stamp_ns',0)>500_000_000):
+        raise ValueError('真实定位仍未跟上停车位置，请等待后再记录')
+    return json.loads(json.dumps(dict(captured_unix_ns=time.time_ns(),source='measured_stop',
+        backend=UI['slam_backend'].value,pose=pose,odometry=odom,joints=joints,
+        joint_receive_age_s=STATE.age_of('joint_states'),localization=loc,
+        prediction=prediction,control=dict(TASK_STATE.feedback)),allow_nan=False))
+
+
+async def teaching_action(action):
+    if TASK_STATE.active or TASK_STATE.context is not None:
+        notify_user('路线运行或暂停中，请先取消再编辑',type='warning');return
+    if TEACH_SESSION.busy:
+        return
+    TEACH_SESSION.busy=True
+    try:
+        if action=='discard':
+            TEACH_SESSION.discard();_teach_view('已放弃未保存路线记录');return
+        if action=='undo':
+            TEACH_SESSION.undo();_teach_view();return
+        if action=='record':
+            path,before=_teach_context()
+        elif action=='save':
+            if not TEACH_SESSION.active:raise ValueError('没有正在记录的路线')
+            path=TEACH_SESSION.identity['path']
+        else:
+            path=_teach_map_path()
+        identity=await asyncio.to_thread(map_identity,path,REPO_ROOT/'config/n01_sensor_geometry.json')
+        if action=='begin':
+            TEACH_SESSION.begin(identity);_teach_view('路线记录已开始：遥控到点停车后，点击记录当前位置')
+        elif action=='record':
+            with STATE.lock:
+                before_rx=STATE.recv_t.get('pose',0.)
+            await asyncio.sleep(.35)
+            current,after=_teach_context()
+            snapshot=_capture_station_state(after)
+            with STATE.lock:
+                if STATE.recv_t.get('pose',0.)<=before_rx:
+                    raise ValueError('等待期间未收到新的定位位姿，请检查连接后重试')
+            latest=await asyncio.to_thread(map_identity,current,REPO_ROOT/'config/n01_sensor_geometry.json')
+            if latest!=identity:
+                raise ValueError('记录期间地图或安装模型发生变化')
+            name=str(UI['teach_point_name'].value or f'站点{len(TEACH_SESSION.points)+1}')
+            wait=float(UI['teach_wait'].value or 0.)
+            TEACH_SESSION.record(latest,before,after,name,wait,state=snapshot)
+            push_log('info',f'路线记录记录 {name}：map ({after[0]:.3f}, {after[1]:.3f}) yaw={math.degrees(after[3]):.1f}°')
+            UI['teach_point_name'].value=('B终点' if len(TEACH_SESSION.points)==1
+                                          else f'站点{len(TEACH_SESSION.points)+1}')
+            _teach_view()
+        elif action=='save':
+            validate_recorded_stops(TEACH_SESSION.points)
+            saved=await asyncio.to_thread(TEACH_SESSION.save,TEACH_STORE,
+                str(UI['teach_name'].value or '路线记录路线'),identity,bool(UI['teach_return'].value))
+            TEACH_SESSION.loaded=await asyncio.to_thread(TEACH_STORE.load,saved,identity)
+            TEACH_SESSION.loaded_path=saved
+            UI['teach_saved'].options=TEACH_STORE.list();UI['teach_saved'].value=saved;UI['teach_saved'].update()
+            _teach_view(f'路线已保存：{TEACH_SESSION.loaded["name"]} · {len(TEACH_SESSION.loaded["points"])}点')
+            push_log('ok',f'路线记录路线已保存：{saved}')
+        elif action=='load':
+            if TEACH_SESSION.active:
+                raise ValueError('请先保存或放弃当前路线记录')
+            selected=UI['teach_saved'].value
+            if not selected:
+                raise ValueError('请先选择已保存路线')
+            TEACH_SESSION.loaded=await asyncio.to_thread(TEACH_STORE.load,selected,identity)
+            TEACH_SESSION.loaded_path=selected
+            _teach_view(f'已加载 {TEACH_SESSION.loaded["name"]}，仅预览，不触发运动')
+    except (ValueError,OSError,TypeError,KeyError) as exc:
+        _teach_view(f'路线记录操作失败：{exc}');push_log('warn',f'路线记录操作失败：{exc}')
+    finally:
+        TEACH_SESSION.busy=False
+
+
+async def manage_saved_route(action):
+    if TEACH_SESSION.busy:return
+    if action=='delete' and (TASK_STATE.active or TASK_STATE.context is not None):
+        notify_user('路线运行或暂停中，请先取消再删除',type='warning');return
+    TEACH_SESSION.busy=True
+    try:
+        selected=UI['teach_saved'].value
+        if action=='refresh':
+            options=await asyncio.to_thread(TEACH_STORE.list)
+            UI['teach_saved'].options=options
+            UI['teach_saved'].value=selected if selected in options else None
+            UI['teach_saved'].update()
+            UI['teach_saved_info'].set_text(f'共 {len(options)} 条已保存路线')
+            return
+        if not selected:raise ValueError('请先选择已保存路线')
+        route=await asyncio.to_thread(TEACH_STORE.load,selected)
+        if action=='info':
+            UI['teach_saved_info'].set_text(
+                f'{route["name"]} · {len(route["points"])}站 · '
+                f'地图：{Path(route["map"]["path"]).name} · '
+                f'保存：{route.get("created_utc","未知")} · '
+                f'结束返回首点：{"是" if route["return_to_start"] else "否"}')
+        elif action=='delete':
+            if not await _confirm(f'删除路线“{route["name"]}”（{len(route["points"])}站）？删除后将从列表移除，文件保留在路线回收目录。'):
+                return
+            if TASK_STATE.active or TASK_STATE.context is not None:
+                raise ValueError('路线正在运行或暂停，请先取消')
+            removed=await asyncio.to_thread(TEACH_STORE.delete,selected)
+            if TEACH_SESSION.loaded is not None and TEACH_SESSION.loaded.get('id')==removed.get('id'):
+                TEACH_SESSION.loaded=None
+                TEACH_SESSION.loaded_path=None
+            UI['teach_saved'].options=await asyncio.to_thread(TEACH_STORE.list)
+            UI['teach_saved'].value=None;UI['teach_saved'].update()
+            UI['teach_saved_info'].set_text(f'已删除：{removed["name"]}')
+            _teach_view(f'已删除路线：{removed["name"]}')
+            push_log('info',f'已删除路线：{removed["name"]}，文件已移入回收目录')
+    except (ValueError,OSError,KeyError,TypeError) as exc:
+        push_log('warn',f'路线管理失败：{exc}')
+        notify_user(f'路线管理失败：{exc}',type='warning')
+    finally:
+        TEACH_SESSION.busy=False
+
+
+class RoutePaused(RuntimeError):
+    pass
+
+
+async def _start_owned_motion(method,*args):
+    if TASK_STATE.switching or TASK_STATE.cancel:
+        raise RuntimeError('任务正在结束，请等待停止完成')
+    pending=asyncio.create_task(asyncio.to_thread(method,*args))
+    TASK_STATE.pending_spawn=pending
+    try:
+        return await asyncio.shield(pending)
+    finally:
+        if pending.done() and TASK_STATE.pending_spawn is pending:
+            TASK_STATE.pending_spawn=None
+
+
+async def _stop_owned_motion():
+    pending=TASK_STATE.pending_spawn
+    if pending is not None:
+        try:await asyncio.shield(pending)
+        except Exception as exc:push_log('warn',f'启动任务未成功，继续清理：{exc}')
+        if TASK_STATE.pending_spawn is pending:TASK_STATE.pending_spawn=None
+    await asyncio.to_thread(PROCS.stop,'slow_motion')
+
+
+class RouteLocalizationWait(RuntimeError):
+    pass
+
+
+async def _await_route_stable():
+    gate=RecoveryGate(timeout_s=30.)
+    goal_seq=STATE.goal_seq
+    push_log('info','等待定位连续稳定：至少1.2秒及4次新位姿；期间不启动运动')
+    _teach_view('等待定位稳定，机器人保持停车')
+    with STATE.lock:STATE.motion_result='路线等待定位连续稳定，保持停车；稳定后自动重新检查并规划'
+    while True:
+        if STATE.goal_seq!=goal_seq:raise RuntimeError('等待定位期间目标被更改')
+        if PROCS.running('slow_motion'):
+            f=dict(TASK_STATE.feedback)
+            if f.get('state') in ('MANUAL_OVERRIDE','ESTOP'):
+                raise RoutePaused(f'{f["state"]}：等待期间已手动接管或急停')
+            if time.monotonic()-f.get('received_at',0)>3:
+                raise RoutePaused('等待定位期间执行反馈中断')
+        try:
+            _route_live();fresh=True
+        except RouteLocalizationWait:
+            fresh=False
+        with STATE.lock:revision=(getattr(STATE,'control_pose_revision',0) if _route_uses_prediction() else STATE.pose_revision)
+        result=gate.update(time.monotonic(),fresh,revision)
+        if result=='ready':
+            push_log('ok','定位连续稳定，重新检查当前站点并规划')
+            return
+        if result=='timeout':
+            raise RoutePaused('30秒内定位未恢复稳定，保留站点，请检查定位后手动继续')
+        await asyncio.sleep(.1)
+
+
+async def _hold_route_for_localization(reason):
+    push_log('warn',str(reason)+'；停驶等待定位稳定，暂不结束路线')
+    if PROCS.running('slow_motion'):
+        began=time.monotonic()
+        while True:
+            if TASK_STATE.pause:raise RoutePaused('用户暂停')
+            if TASK_STATE.cancel:raise RuntimeError('路线已由用户取消')
+            WORKER.hold_route_motion()
+            f=dict(TASK_STATE.feedback)
+            if f.get('state') in ('MANUAL_OVERRIDE','ESTOP'):
+                raise RoutePaused(f'{f["state"]}：等待期间已手动接管或急停')
+            if f.get('received_at',0)>=began and f.get('state') in ('DISABLED','ARRIVED','SESSION_COMPLETE'):
+                break
+            if time.monotonic()-began>2:
+                raise RoutePaused('2秒内未确认执行器停驶，已取消自动恢复')
+            await asyncio.sleep(.1)
+    await _await_route_stable()
+    await asyncio.to_thread(PROCS.stop,'slow_motion')
+
+
+async def pause_recorded_route():
+    if not TASK_STATE.active:return
+    TASK_STATE.pause=True
+    await asyncio.to_thread(PROCS.stop,'slow_motion')
+    push_log('warn','路线暂停已请求，等待停止确认')
+
+
+async def _wait_route_motion(task_id,target,phase,token=None):
+    began=time.monotonic();last_progress=began
+    from teach_routes import matching_arrival
+    while True:
+        _,pose=_route_live();f=dict(TASK_STATE.feedback);now=time.monotonic()
+        if token is not None and STATE.goal_seq!=token:raise RuntimeError('运行目标已更改')
+        if f.get('task_id')==task_id:
+            if matching_arrival(f,task_id,pose,target,phase):return
+            state=f.get('state')
+            if state in ('MANUAL_OVERRIDE','ESTOP'):
+                raise RoutePaused(f'{state} {f.get("reason","")}')
+            if state in ('ARRIVED','SESSION_COMPLETE','GOAL_CHANGED','ROTATION_TIMEOUT','ROTATION_DRIFT'):
+                raise RuntimeError(f'本站未完成：{state} {f.get("reason","")}')
+            if now-f.get('received_at',0)>3:raise RuntimeError('执行反馈中断')
+            if state in ('MOVING','ROTATING','VERIFYING_ARRIVAL'):last_progress=now
+        elif now-began>10:raise RuntimeError('执行器没有返回本次任务反馈')
+        if now-last_progress>30 or now-began>900:raise RuntimeError('本站持续受阻或执行超时')
+        if not PROCS.running('slow_motion'):raise RuntimeError('执行器提前退出')
+        await asyncio.sleep(.1)
+
+
+async def _start_route_motion_when_ready(task_id,token=None):
+    began=time.monotonic()
+    while True:
+        if TASK_STATE.pause:raise RoutePaused('用户暂停')
+        if TASK_STATE.cancel:raise RuntimeError('路线已由用户取消')
+        if token is not None and STATE.goal_seq!=token:raise RuntimeError('运行目标已更改')
+        if not PROCS.running('slow_motion'):raise RuntimeError('执行器在初始化期间退出')
+        f=dict(TASK_STATE.feedback)
+        if f.get('task_id')==task_id:
+            if f.get('state') in ('MANUAL_OVERRIDE','ESTOP'):
+                raise RoutePaused(f'启动期间 {f["state"]}')
+            if f.get('state')=='DISABLED' and time.monotonic()-f.get('received_at',0)<1:
+                break
+        if time.monotonic()-began>20:
+            raise RoutePaused('执行器初始化20秒未就绪；保持未启用，不发送运动指令')
+        await asyncio.sleep(.1)
+    # No commands can be emitted before construction and observer discovery finish.
+    await _await_route_stable()
+    _route_live()
+    if token is not None and STATE.goal_seq!=token:raise RuntimeError('运行目标已更改')
+    WORKER.set_route_enabled(True)
+    push_log('info',f'执行器已就绪且定位稳定，启用本次任务 {task_id}')
+
+
+async def _align_route_station(target,label,token=None):
+    _,pose=_route_live()
+    err=math.atan2(math.sin(target['yaw']-pose[2]),math.cos(target['yaw']-pose[2]))
+    if abs(err)<=math.radians(1):return
+    task_id='rotate_'+uuid.uuid4().hex
+    anchor={**target,'x':pose[0],'y':pose[1]}
+    _teach_view('对齐朝向：'+label)
+    TASK_STATE.feedback={}
+    with STATE.lock:
+        STATE.motion_feedback=MotionFeedback();STATE.motion_feedback.last_rx=time.monotonic()
+    ok=await _start_owned_motion(PROCS.start_rotation,task_id,target['yaw'])
+    if not ok:raise RuntimeError('旋转任务启动失败')
+    await _start_route_motion_when_ready(task_id)
+    await _wait_route_motion(task_id,anchor,'rotate',token=token)
+    await asyncio.to_thread(PROCS.stop,'slow_motion')
+    push_log('ok','朝向对齐完成：'+label)
+
+
+def _route_uses_prediction():
+    return isinstance(getattr(STATE,'readiness',{}).get('pose_prediction'),dict)
+
+
+def _route_live():
+    from n01_live_navigation.pose_policy import tracking_mode, control_pose_fresh
+    if TASK_STATE.pause:
+        raise RoutePaused('用户暂停')
+    if TASK_STATE.cancel:
+        raise RuntimeError('路线已由用户取消')
+    with STATE.lock:
+        loc=dict(STATE.loc);pose=STATE.pose
+        stamp_age_at_rx=STATE.pose_stamp_age_at_rx
+    bridge=getattr(STATE,'readiness',{})
+    bridge_age=STATE.age_of('readiness')
+    predicted_ready=(bridge_age is not None and bridge_age<=.75 and tracking_mode(bridge)!='WAITING')
+    mapping_mode = getattr(PROCS,'desk_mode','loc') == 'mapping' and _slam_uses_live_map()
+    if mapping_mode:
+        if not _mapping_navigation_ready() and not predicted_ready:
+            raise RouteLocalizationWait('实时建图位姿或状态未就绪，等待稳定')
+    elif loc.get('session')!='tracking' or loc.get('reloc_ok') is not True:
+        raise RuntimeError(f'定位失效：session={loc.get("session")} reloc_ok={loc.get("reloc_ok")}')
+    pose_age=STATE.age_of('pose')
+    status_age=STATE.age_of('n01_status' if mapping_mode else 'loc_status')
+    stamp_age=None if stamp_age_at_rx is None or pose_age is None else stamp_age_at_rx+pose_age
+    # Only the bridge's bounded, timestamp-aware prediction may replace the raw
+    # route pose. Never relabel the old SLAM pose as a fresh measurement.
+    if _route_uses_prediction():
+        bridge_age=STATE.age_of('readiness')
+        bridge=getattr(STATE,'readiness',{})
+        if (bridge_age is None or bridge_age>.75 or
+                bridge.get('status')!='LIVE_SCAN_INPUTS_READY' or
+                bridge.get('body_pose_live_fresh') is not True):
+            raise RouteLocalizationWait('预测位姿链路未就绪或过期，等待稳定')
+        pose=getattr(STATE,'control_pose',None)
+        pose_age=STATE.age_of('body_pose')
+        at_rx=getattr(STATE,'control_pose_stamp_age',None)
+        stamp_age=None if at_rx is None or pose_age is None else at_rx+pose_age
+        status_age=bridge_age
+    valid_control = (control_pose_fresh(stamp_age,pose_age) if _route_uses_prediction()
+                     else pose_age is not None and pose_age<=.5 and stamp_age is not None and -.2<=stamp_age<=.8)
+    if (pose is None or not valid_control
+            or status_age is None or status_age>1.5):
+        detail=lambda age:'无数据' if age is None else f'{age:.3f}s'
+        raise RouteLocalizationWait(f'等待定位：接收间隔={detail(pose_age)}（限0.500s），'
+                                    f'位姿年龄={detail(stamp_age)}（预测控制位姿限0.400s），'
+                                    f'状态间隔={detail(status_age)}（限1.500s）')
+    binding=TASK_STATE.binding
+    if binding:
+        if str(loc.get('map_path',''))!=binding[0]:
+            raise RuntimeError('运行期间地图已切换')
+        for path,size,mtime in binding[1]:
+            info=Path(path).stat()
+            if (info.st_size,info.st_mtime_ns)!=(size,mtime):
+                raise RuntimeError('运行期间地图或安装模型文件已改变')
+    return str(loc.get('map_path','')),pose
+
+
+async def _execute_recorded_route(route,context,speed):
+    from teach_routes import validate,execution_points,matching_arrival
+    path,_=_route_live()
+    identity=await asyncio.to_thread(map_identity,path,REPO_ROOT/'config/n01_sensor_geometry.json')
+    validate(route,identity)
+    files=[path,str(REPO_ROOT/'config/n01_sensor_geometry.json')]
+    TASK_STATE.binding=(path,[(p,Path(p).stat().st_size,Path(p).stat().st_mtime_ns)for p in files])
+    points=execution_points(route)
+    for index in range(context['index'],len(points)):
+        context['index']=index
+        target=points[index]
+        path,pose=_route_live()
+        current=await asyncio.to_thread(map_identity,path,REPO_ROOT/'config/n01_sensor_geometry.json')
+        validate(route,current)
+        label=f'{index+1}/{len(points)} {target["name"]}'
+        _teach_view('路线运行：'+label)
+        push_log('info','路线运行：'+label)
+        align_after=route.get('orientation_timing','before_translation')=='after_arrival'
+        if not align_after:await _align_route_station(target,label)
+        _,pose=_route_live()
+        if math.hypot(pose[0]-target['x'],pose[1]-target['y'])>.08:
+            WORKER.request_goal(target['x'],target['y'],pose[2],'map')
+            token=STATE.goal_seq;goal_ns=STATE.plan_goal_ns
+            deadline=time.monotonic()+80
+            while True:
+                _route_live()
+                if STATE.goal_seq!=token:raise RuntimeError('目标被其他来源更改')
+                if STATE.goal_failed:raise RuntimeError('当前站点规划失败')
+                if (STATE.plan_active and STATE.plan_success_ns>=goal_ns
+                        and (STATE.age_of('plan_path') or 999)<2):break
+                if time.monotonic()>deadline:raise RuntimeError('等待当前站点规划超时')
+                await asyncio.sleep(.1)
+            task_id='route_'+uuid.uuid4().hex;TASK_STATE.feedback={}
+            with STATE.lock:
+                STATE.motion_feedback=MotionFeedback()
+                STATE.motion_feedback.last_rx=time.monotonic()
+            ok=await _start_owned_motion(PROCS.start_slow_motion,speed,
+                bool(UI['slow_cbf'].value),task_id,(target['x'],target['y']),True)
+            if not ok:raise RuntimeError('执行器启动失败')
+            await _start_route_motion_when_ready(task_id,token)
+            await _wait_route_motion(task_id,target,'translate',token)
+            await asyncio.to_thread(PROCS.stop,'slow_motion')
+        if align_after:await _align_route_station(target,label)
+        push_log('ok','到达路线站点并完成朝向：'+label)
+        remaining=target['wait_s'] if context['remaining_wait'] is None else context['remaining_wait']
+        end=time.monotonic()+remaining
+        while time.monotonic()<end:
+            context['remaining_wait']=max(0.,end-time.monotonic())
+            _route_live();await asyncio.sleep(.1)
+        context['remaining_wait']=None;context['index']=index+1
+    return len(points)
+
+
+async def run_recorded_route(resume=False):
+    if TASK_STATE.switching or TASK_STATE.active or TEACH_SESSION.busy or TEACH_SESSION.active:
+        notify_user('请先结束路线记录或当前任务',type='warning');return
+    context=TASK_STATE.context
+    if resume and context is None:
+        notify_user('没有可继续的暂停路线',type='warning');return
+    if not resume and context is not None:
+        notify_user('已有暂停路线，请继续或取消',type='warning');return
+    if TEACH_SESSION.loaded is None and context is None:
+        notify_user('请先加载已保存路线',type='warning');return
+    if PROCS.running('slow_motion'):
+        notify_user('请先停止当前单点行驶',type='warning');return
+    try:
+        speed=float(UI['slow_speed'].value)
+        if not math.isfinite(speed) or not .01<=speed<=.8:raise ValueError()
+    except (TypeError,ValueError):
+        notify_user('速度上限必须为0.01～0.8 m/s',type='warning');return
+    if speed>STATE.nav_speed_mps+1e-6:
+        notify_user('请按所选速度重新启动导航后运行路线',type='warning');return
+    route=json.loads(json.dumps(context['route'] if resume else TEACH_SESSION.loaded))
+    action=f'从第{context["index"]+1}个站点继续' if resume else '先回到第一个记录点，再依次移动'
+    if not await _confirm(f'运行路线“{route["name"]}”：{action}。速度上限 {speed:.2f} m/s。确认整段现场可通行且可随时急停？'):
+        return
+    if TASK_STATE.active or TEACH_SESSION.active or PROCS.running('slow_motion'):
+        return
+    TASK_STATE.active=True;TASK_STATE.cancel=False;TASK_STATE.pause=False
+    TASK_STATE.task=asyncio.current_task()
+    if not resume:TASK_STATE.context={'route':route,'index':0,'remaining_wait':None}
+    context=TASK_STATE.context
+    with STATE.lock:
+        STATE.motion_result='路线执行中：先到起点，再按站点顺序移动'
+    message='';success=False;paused=False
+    try:
+        await _await_route_stable()
+        while True:
+            try:
+                count=await _execute_recorded_route(route,context,speed)
+                success=True;message=f'路线完成：{route["name"]}，已依次到达{count}个站点'
+                break
+            except RouteLocalizationWait as exc:
+                await _hold_route_for_localization(exc)
+    except RoutePaused as exc:
+        paused=True;message=f'路线已暂停：{exc}；保留当前站点，点击继续后重新检查并规划'
+    except asyncio.CancelledError:
+        message='路线已取消：执行会话关闭；未跳过当前站点'
+        raise
+    except (RuntimeError,ValueError,OSError,KeyError) as exc:
+        message=f'路线结束：{exc}；未跳过失败站点'
+    finally:
+        await _stop_owned_motion()
+        TASK_STATE.active=False
+        TASK_STATE.binding=None
+        if not paused:TASK_STATE.context=None
+        if TASK_STATE.task is asyncio.current_task():TASK_STATE.task=None
+        with STATE.lock:
+            STATE.motion_result=message
+            STATE.motion_feedback.terminal=True
+        _teach_view(message)
+        push_log('ok' if success else 'err',message)
+        if not paused:notify_user(message,type='positive' if success else 'negative',timeout=10000)
+
+
+def build_teaching_panel():
+    with ui.expansion('手动记录路线',icon='route',value=True).classes('w-full compact-expansion').bind_visibility_from(UI['navigation_mode'],'value',backward=lambda v:v=='手动记录路线'):
+        _lbl('在真实起点停车并记录 A → 遥控到下一处停车并记录 B → 结束保存。每站保存实测位姿、定位、里程计与关节状态；运行时先回到所记录的 A，再依次到终点。','text-xs text-slate-400')
+        _lbl('① 定位导航就绪 → ② 遥控停车并记录 A、B → ③ 结束并保存 → ④ 先回 A，再到 B。记录期间可用遥控器移动，自动行驶保持禁用。','text-xs text-cyan-200')
+        with ui.row().classes('gap-2 items-center'):
+            UI['teach_name']=ui.input('路线名称',value='待命-A-B').classes('w-48')
+            UI['teach_return']=ui.checkbox('执行结束后返回首点',value=False)
+        with ui.row().classes('gap-2 items-center'):
+            UI['teach_point_name']=ui.input('站点名称',value=('A起点' if not TEACH_SESSION.points else
+                ('B终点' if len(TEACH_SESSION.points)==1 else f'站点{len(TEACH_SESSION.points)+1}'))).classes('w-40')
+            UI['teach_wait']=ui.number('到站停留秒数',value=1,min=0,max=600).classes('w-32')
+        with ui.row().classes('gap-2 flex-wrap'):
+            for label,action in [('新建路线','begin'),('记录当前位置','record'),('撤销末点','undo'),
+                                 ('结束并保存','save'),('放弃路线记录','discard')]:
+                ui.button(label,on_click=lambda a=action:teaching_action(a)).props('outline dense')
+        UI['teach_table']=ui.table(columns=[dict(name=k,label=v,field=k)for k,v in
+            [('index','顺序'),('name','名称'),('x','X / m'),('y','Y / m'),('yaw','朝向 / °'),('wait','停留 / s')]],
+            rows=[],row_key='index',pagination=5).classes('w-full')
+        with ui.expansion('已记录站点状态（只读）',icon='data_object').classes('w-full compact-expansion'):
+            UI['teach_station_states']=ui.label('[]').classes('text-xs font-mono whitespace-pre-wrap max-h-64 overflow-auto w-full')
+        with ui.row().classes('gap-2 items-center'):
+            saved_options=TEACH_STORE.list()
+            UI['teach_saved']=ui.select(saved_options,label='已保存路线',
+                value=(TEACH_SESSION.loaded_path if TEACH_SESSION.loaded_path in saved_options else None),
+                on_change=lambda:manage_saved_route('info')).classes('grow')
+            ui.button('加载路线',on_click=lambda:teaching_action('load')).props('outline dense')
+            ui.button('刷新列表',on_click=lambda:manage_saved_route('refresh')).props('outline dense')
+            ui.button('删除路线',on_click=lambda:manage_saved_route('delete')).props('outline dense color=negative')
+        UI['teach_saved_info']=ui.label('选择路线查看站点数、绑定地图及保存时间').classes('text-xs text-slate-400 break-all')
+        UI['teach_execution']=ui.label('').classes('text-xs text-cyan-200 break-all')
+        with ui.row().classes('gap-2'):
+            ui.button('开始运行路线（先到起点）',on_click=lambda:run_recorded_route(False)).props('color=primary')
+            ui.button('暂停路线',on_click=pause_recorded_route).props('outline dense')
+            ui.button('继续路线',on_click=lambda:run_recorded_route(True)).props('outline dense')
+            ui.button('取消路线',on_click=stop_slow_motion).props('outline dense')
+        _lbl('定位短时波动由有界里程计预测衔接；超预算停车，稳定后重新规划继续；30秒未恢复则暂停并保留站点。','text-xs text-slate-400')
+        _lbl('路线绑定 PCD 和机身坐标模型；历史 bag 不代替实时定位与障碍感知。启动时会重新规划，现场障碍或定位失效仍可能阻止行驶。','text-xs text-slate-400')
+        UI['teach_result']=ui.label('尚未开始路线记录').classes('text-xs break-all')
+        _teach_view()
+
+
+def _point_alignment_heading():
+    from navigation_ui import alignment_before_replan
+    age=STATE.age_of('body_pose');review_age=STATE.age_of('feasibility')
+    path_age=STATE.age_of('plan_path')
+    if age is None or age>.5 or review_age is None or review_age>.75:return None
+    with STATE.lock:
+        pose=getattr(STATE,'control_pose',None)
+        target=STATE.goal_target
+        points=list(STATE.global_xy)
+        reason=STATE.feasibility.get('reason','')
+        local_ready=bool(STATE.plan_active) and path_age is not None and path_age<=2.
+    return alignment_before_replan(pose,target,points,STATE.age_of('global_path'),local_ready,reason)
 
 
 async def start_slow_motion() -> None:
+    if PROCS.running('desk') and not getattr(PROCS, 'slam_selection', {}).get('navigation_allowed', True):
+        _slow_notice('当前为离线建图，不能启动导航行驶；请保存地图后定位，或停止后选择实时模式。', 'err')
+        return
+    if TASK_STATE.switching:
+        _slow_notice('正在结束上一任务，请稍候。');return
+    if TASK_STATE.context is not None:
+        _slow_notice('存在暂停路线，请点击“结束当前任务”，或切换模式取消旧路线。');return
+    if TASK_STATE.active:
+        notify_user('路线已经运行，请使用停止路线',type='warning');return
+    if TEACH_SESSION.active or TEACH_SESSION.busy:
+        _slow_notice('请先保存或放弃当前路线记录，再启动自动行驶。')
+        return
     with STATE.lock:
         loc = dict(STATE.loc)
     ready = _nav_ready_state()
-    if str(loc.get("session", "")).lower() != "tracking":
-        _slow_notice("拒绝慢速运行：定位尚未 tracking。", "err"); return
+    mapping = PROCS.desk_mode == 'mapping' and PROCS.running('desk')
+    if (mapping and not _mapping_navigation_ready()) or (not mapping and str(loc.get("session", "")).lower() != "tracking"):
+        _slow_notice("拒绝运行：建图位姿尚未就绪或定位尚未 tracking。", "err"); return
     body_age = STATE.age_of("body_pose")
     path_age = STATE.age_of("plan_path")
     # 轨迹被清空时 monitor 会发一条空 Path，recv() 会把 age 重置到约 0，
     # 只看 age 会把"已清空"误判为"新鲜"。必须同时要求存在活动路径。
     path_ok = bool(STATE.plan_active) and path_age is not None and path_age <= 2.0
-    if body_age is None or body_age > 0.5 or not path_ok:
+    alignment_heading=_point_alignment_heading() if not path_ok else None
+    if body_age is None or body_age > 0.5 or (not path_ok and alignment_heading is None):
         _slow_notice(f"拒绝慢速运行：/body_pose age={body_age}, "
                      f"local path age={path_age}, 活动路径={STATE.plan_active}；"
                      f"需要新鲜输入。", "err"); return
@@ -2421,29 +3296,145 @@ async def start_slow_motion() -> None:
         speed = float(UI["slow_speed"].value if UI.get("slow_speed") else 0.05)
     except (TypeError, ValueError):
         speed = 0.05
-    speed = max(0.01, min(0.08, speed))
-    ok = await asyncio.to_thread(PROCS.start_slow_motion, speed)
-    _slow_notice(f"慢速运行启动，最大 {speed:.3f} m/s" if ok else "慢速运行启动失败；查看日志",
+    if not math.isfinite(speed) or not .01<=speed<=.8:
+        _slow_notice('速度上限必须为0.01～0.8 m/s','err');return
+    if PROCS.running('slow_motion'):
+        with STATE.lock:
+            terminal = (STATE.motion_feedback.terminal or
+                        STATE.motion_feedback.state == 'MANUAL_OVERRIDE')
+        if not terminal:
+            _slow_notice('执行器已运行，请查看行驶状态和受阻原因。'); return
+        await asyncio.to_thread(PROCS.stop, 'slow_motion')
+    with STATE.lock:
+        STATE.motion_feedback = MotionFeedback()
+        STATE.motion_feedback.last_rx = time.monotonic()
+        STATE.motion_result = '执行已请求，等待执行器反馈'
+    if speed>STATE.nav_speed_mps+1e-6:
+        _slow_notice('请按新速度重新启动导航，使规划器与执行器速度一致。','err');return
+    cbf_enabled = bool(UI['slow_cbf'].value) if UI.get('slow_cbf') else False
+    TASK_STATE.cancel=False;TASK_STATE.pause=False;TASK_STATE.feedback={}
+    TASK_STATE.task=asyncio.current_task()
+    task_id='point_'+uuid.uuid4().hex
+    ok=False
+    try:
+        from navigation_ui import rear_goal_heading
+        _,current_pose=_route_live()
+        target=STATE.goal_target
+        if target is None:raise RuntimeError('缺少本次目标坐标，请重新选点')
+        token=STATE.goal_seq
+        with STATE.lock:
+            maneuver_review=dict(STATE.feasibility)
+        planned_maneuver=(maneuver_review.get('path_model')=='rotate_then_forward_se2'
+                          and maneuver_review.get('candidate_review_ready')is True)
+        heading=None if planned_maneuver else (alignment_heading if alignment_heading is not None else rear_goal_heading(current_pose,target))
+        if heading is not None:
+            push_log('info','先检查实际转角扫掠空间并原地对齐，再重新规划前进')
+            await _align_route_station(dict(x=current_pose[0],y=current_pose[1],yaw=heading),'路径起步朝向',token=token)
+            if STATE.goal_seq!=token:raise RuntimeError('转向期间目标已改变，请重新启动行驶')
+            WORKER.request_goal(target[0],target[1],heading,'map')
+            token=STATE.goal_seq;goal_ns=STATE.plan_goal_ns
+            deadline=time.monotonic()+80
+            while True:
+                _route_live()
+                if STATE.goal_seq!=token:raise RuntimeError('重新规划期间目标已改变')
+                if STATE.goal_failed:raise RuntimeError('转向后重新规划失败')
+                if (STATE.plan_active and STATE.plan_success_ns>=goal_ns
+                        and (STATE.age_of('plan_path') or 999)<2):break
+                if time.monotonic()>deadline:raise RuntimeError('转向后等待规划超时')
+                await asyncio.sleep(.1)
+        ok=await _start_owned_motion(PROCS.start_slow_motion,speed,cbf_enabled,task_id,target,True)
+        if ok:await _start_route_motion_when_ready(task_id,STATE.goal_seq)
+    except asyncio.CancelledError:
+        await _stop_owned_motion()
+        raise
+    except (RuntimeError,ValueError,OSError) as exc:
+        ok=False
+        await _stop_owned_motion()
+        _slow_notice(f'本次行驶未启动：{exc}','err');return
+    finally:
+        if TASK_STATE.task is asyncio.current_task():TASK_STATE.task=None
+    if not ok:
+        with STATE.lock:
+            STATE.motion_feedback.terminal = True
+            STATE.motion_result = '行驶启动失败，请查看进程日志'
+    _slow_notice(f"已请求慢速运行，最大 {speed:.3f} m/s，CBF={'开启' if cbf_enabled else '关闭（仅 SCAN）'}，等待执行反馈" if ok else "慢速运行启动失败；查看日志",
                  "ok" if ok else "err")
 
 
 async def stop_slow_motion() -> None:
-    await asyncio.to_thread(PROCS.stop, "slow_motion")
-    _slow_notice("慢速运行已停止（已发零速）", "warn")
+    TASK_STATE.cancel=True;TASK_STATE.pause=False
+    paused=not TASK_STATE.active and TASK_STATE.context is not None
+    owner=TASK_STATE.task
+    had_owner=owner is not None and owner is not asyncio.current_task() and not owner.done()
+    if had_owner:
+        owner.cancel()
+        try:await asyncio.shield(owner)
+        except asyncio.CancelledError:pass
+    await _stop_owned_motion()
+    TASK_STATE.active=False;TASK_STATE.context=None;TASK_STATE.binding=None;TASK_STATE.task=None
+    message='已取消暂停路线' if paused else '用户停止行驶，未将此操作计为到达成功'
+    with STATE.lock:
+        STATE.motion_feedback.terminal = True
+        STATE.motion_result = message
+        STATE.goal_seq += 1
+        STATE.plan_pending=False;STATE.global_pending=False
+        STATE.pending_goal=None
+        STATE.plan_active=False;STATE.global_active=False
+        STATE.plan_stale=bool(getattr(STATE,'plan_pts',0))
+        STATE.global_stale=bool(getattr(STATE,'global_pts',0))
+    if UI.get('goal_result'):UI['goal_result'].set_text('本次规划/行驶已取消，可重新选点')
+    _teach_view(message);push_log('warn',message)
+    if not had_owner and not paused:
+        _slow_notice('本次执行已取消：'+message, 'warn', terminal=True)
+
+
+async def change_navigation_mode(mode):
+    if mode==TASK_STATE.mode:return
+    if TASK_STATE.switching:return
+    old=TASK_STATE.mode;TASK_STATE.switching=True
+    try:
+        await stop_slow_motion()
+        TASK_STATE.mode=mode
+        push_log('info','已结束旧任务，切换导航模式：'+mode)
+    except Exception as exc:
+        UI['navigation_mode'].value=old
+        push_log('err',f'模式切换未完成：{exc}')
+    finally:
+        TASK_STATE.switching=False
+
+
+def _slam_uses_live_map():
+    return is_realtime_backend(PROCS.desk_mode, PROCS.running('desk'),
+                               getattr(PROCS, 'slam_selection', {}).get('map_mode'))
+
+
+def _mapping_navigation_ready():
+    if PROCS.desk_mode != 'mapping' or not PROCS.running('desk'):
+        return False
+    with STATE.lock:
+        status = dict(getattr(STATE, 'mapping_nav', {}))
+    return mapping_ready(status, STATE.age_of('n01_status'))
 
 
 async def navigation_action(action: str) -> None:
     env_extra = None
     if action == "start":
+        if PROCS.running('desk') and not getattr(PROCS, 'slam_selection', {}).get('navigation_allowed', True):
+            msg = '当前为离线建图：请结束并保存地图后进入定位，或停止后选择实时模式再建图导航。'
+            UI['nav_result'].set_text(msg); push_log('err', msg); return
         realtime = bool(
-            PROCS.desk_mode == "fast_lio_realtime" and PROCS.running("desk"))
+            _slam_uses_live_map())
         with STATE.lock:
             loc = dict(STATE.loc)
         age = STATE.age_of("pose")
-        if str(loc.get("session", "")).lower() != "tracking":
+        mapping = PROCS.desk_mode == 'mapping' and PROCS.running('desk')
+        if mapping and not _mapping_navigation_ready():
+            msg = '拒绝启动导航：甲方建图会话或新鲜位姿尚未就绪，请检查建图与适配器。'
+            UI['nav_result'].set_text(msg); push_log('err', msg); return
+        if not mapping and str(loc.get("session", "")).lower() != "tracking":
             msg = "拒绝启动导航：当前建图定位后端尚未处于 tracking。"
             UI["nav_result"].set_text(msg); push_log("err", msg); return
-        if loc.get("map_loaded") is not True or loc.get("reloc_ok") is not True:
+        if not mapping and (loc.get("map_loaded") is not True or loc.get("reloc_ok") is not True):
             msg = "拒绝启动导航：地图未加载或 reloc_ok 未确认。"
             UI["nav_result"].set_text(msg); push_log("err", msg); return
         if age is None or age > float(os.environ.get("N01_NAV_MAX_POSE_AGE", "2.0")):
@@ -2470,24 +3461,49 @@ async def navigation_action(action: str) -> None:
             msg = f"拒绝启动导航：导航 PCD 不存在：{pcd}"
             UI["nav_result"].set_text(msg); push_log("err", msg); return
         try:
-            ground = float(UI["nav_ground_z"].value if UI.get("nav_ground_z") else 0.139)
+            ground = float(UI["nav_ground_z"].value if UI.get("nav_ground_z") else DEFAULT_NAV_GROUND)
         except (TypeError, ValueError):
             msg = "拒绝启动导航：ground_z_map_m 无效。"
             UI["nav_result"].set_text(msg); push_log("err", msg); return
+        try:
+            plane, xy = await navigation_ground_model(realtime)
+        except (ValueError, OSError) as exc:
+            msg = f"拒绝启动导航：{exc}"
+            UI['nav_result'].set_text(msg); push_log('err', msg); return
+        measured_ground = plane.height(*xy)
+        if abs(ground-measured_ground) > .05:
+            msg = (f"拒绝启动导航：设置地面 {ground:+.3f} m 与地图拟合地面 "
+                   f"{measured_ground:+.3f} m 不符，请点击“同步地面”。")
+            UI['nav_result'].set_text(msg); push_log('err', msg); return
+        with STATE.lock:
+            body_xyz = getattr(STATE, 'body_pose_xyz', None)
+        if body_xyz is not None and body_xyz[2] <= measured_ground:
+            msg = (f"拒绝启动导航：机体参考点不高于检测地面（高度差 "
+                   f"{body_xyz[2]-measured_ground:.3f} m），请检查定位与坐标帧。")
+            UI['nav_result'].set_text(msg); push_log('err', msg); return
         env_extra = {
-            "N01_NAV_GROUND_Z": f"{ground:.3f}",
+            "N01_NAV_GROUND_Z": f"{plane.c:.6f}",
+            "N01_NAV_GROUND_A": f"{plane.a:.8f}",
+            "N01_NAV_GROUND_B": f"{plane.b:.8f}",
             "N01_NAV_MAP_MODE": "realtime" if realtime else "offline",
             # Headless GUI must not let launch start a dead rviz2. Use the
             # navigation module's standalone RViz button when DISPLAY exists.
             "N01_NAV_RVIZ": "false",
+            "N01_NAV_SPEED": str(float(UI['slow_speed'].value or .05)),
         }
         if not realtime:
             env_extra["N01_NAV_PCD"] = pcd
-        map_desc = "FAST-LIO2 实时地图" if realtime else f"PCD={pcd}"
-        push_log("info", f"导航启动参数：{map_desc} ground={ground:.3f} rviz=false")
+        if mapping:
+            env_extra['N01_NAV_REALTIME_REFERENCE_TOPIC'] = '/cloud_map'
+        map_desc = ('甲方实时建图（逐帧避障＋累积地图参考）' if mapping else
+                    ('FAST-LIO2 实时地图' if realtime else f'PCD={pcd}'))
+        push_log("info", f"导航启动参数：{map_desc} 地面z={plane.a:.6f}x+{plane.b:.6f}y{plane.c:+.6f} 拟合P95={plane.residual:.3f}m rviz=false")
     UI["nav_result"].set_text(f"正在执行导航 {action} …")
     ok, output = await asyncio.to_thread(LIFECYCLE.navigation, action,
                                          env_extra=env_extra)
+    if ok and action=='start':
+        STATE.nav_speed_mps=float(env_extra['N01_NAV_SPEED'])
+    notify_user(f"导航 {action} 成功" if ok else f"导航 {action} 失败：{output[-300:]}", type="positive" if ok else "negative")
     UI["nav_result"].set_text(("完成" if ok else "失败") + "\n" + output)
     errors = [line for line in output.splitlines()
               if any(token in line.lower() for token in ("error", "refusing", "timeout", "错误", "失败"))]
@@ -2504,7 +3520,7 @@ async def stop_managed_all() -> None:
     await asyncio.to_thread(PROCS.stop, "slow_motion")
     if not await _close_mapping_session():
         UI["nav_result"].set_text("建图保存失败：已保留 bag 和 desk，停止全部已取消。")
-        ui.notify("建图保存失败，未执行停止全部", type="negative")
+        notify_user("建图保存失败，未执行停止全部", type="negative")
         return
     ok, output = await asyncio.to_thread(LIFECYCLE.stop_all)
     UI["nav_result"].set_text(("导航停止完成" if ok else "导航停止有告警") + "\n" + output)
@@ -2529,13 +3545,14 @@ def refresh_lifecycle() -> None:
         return
     with STATE.lock:
         loc = dict(STATE.loc); mapping = dict(STATE.mapping)
-    loc_running = STATE.loc_node_up or (
+    loc_running = _slam_uses_live_map() or STATE.loc_node_up or (
         PROCS.desk_mode in ("fast_lio_loc", "fast_lio_realtime")
         and PROCS.running("desk"))
     map_running = STATE.map_node_up or (
         PROCS.desk_mode in ("fast_lio_mapping", "fast_lio_realtime")
         and PROCS.running("desk"))
-    _set(UI["life_loc"], f"{'运行' if loc_running else '停止'} / {loc.get('session', '—')}",
+    loc_state = "SLAM位姿估计" if _slam_uses_live_map() else loc.get("session", "—")
+    _set(UI["life_loc"], f"{'运行' if loc_running else '停止'} / {loc_state}",
          COL_OK if loc_running else COL_IDLE)
     _set(UI["life_map"], f"{'运行' if map_running else '停止'} / {mapping.get('session', '—')}",
          COL_OK if map_running else COL_IDLE)
@@ -2558,7 +3575,7 @@ def build_ds_tab() -> None:
                 ]
                 rows = [{"topic": t, "type": ty, "dir": d, "note": n, "age": "—"}
                         for t, ty, d, n in TOPICS_DEF]
-                UI["ds_table"] = ui.table(columns=cols, rows=rows, row_key="topic") \
+                UI["ds_table"] = ui.table(columns=cols, rows=rows, row_key="topic")\
                     .classes("w-full text-xs").props("dense wrap-cells")
             with _card("服务 std_srvs/srv/Trigger"):
                 for svc, ty in SERVICES_DEF:
@@ -2584,7 +3601,7 @@ def build_ds_tab() -> None:
                     f"**互斥**\n\n"
                     f"- `localization_lite_node` 与 `mapping_lite_node` **不能同时运行**："
                     f"两者订阅同一 `/livox/lidar/geo_filtered`、都写 `/robot_pose` 与 "
-                    f"`map→base_footprint` TF。\n"
+                    f"`map→base_link` TF。\n"
                     f"- 建图产出的 PCD 是定位的输入，二者是串行工作流。\n\n"
                     f"**数据来源**\n\n"
                     f"- 话题 / TF / frame 全部来自甲方发布端，本 GUI 不生成。\n"
@@ -2650,10 +3667,10 @@ def build_viz_tab() -> None:
     with ui.row().classes("w-full gap-4 items-start"):
         with ui.column().classes("flex-1 min-w-72 gap-3"):
             with _card("RViz2（原生窗口）"):
-                _lbl("使用 /opt/slam3d_release 自带的 vis_world_*.launch.py 与 .rviz 配置；"
+                _lbl("使用项目内建图、定位、导航三个 RViz 配置；"
                      "脚本内部会 source setup_runtime.sh。", "text-xs text-slate-400")
                 with ui.row().classes("gap-2 items-center"):
-                    UI["viz_mode"] = ui.select(["定位视图", "建图视图"], value="定位视图") \
+                    UI["viz_mode"] = ui.select(["定位视图", "建图视图"], value="定位视图")\
                         .classes("w-36").props("dense")
                     ui.button("启动 RViz2", on_click=start_rviz).props("color=positive")
                     ui.button("停止", on_click=stop_rviz).props("color=negative")
@@ -2716,7 +3733,7 @@ def build_health_tab() -> None:
                     {"name": "state", "label": "判定", "field": "state"},
                     {"name": "owner", "label": "宿主进程", "field": "owner", "align": "left"},
                 ]
-                UI["health_nodes"] = ui.table(columns=cols, rows=[], row_key="name") \
+                UI["health_nodes"] = ui.table(columns=cols, rows=[], row_key="name")\
                     .classes("w-full text-xs").props("dense wrap-cells")
                 _lbl("次数 >1 = 同一节点名被多个进程/线程占用（ros2 会警告 "
                      "“share an exact name”）。宿主进程列显示 pid/pgid/启动时长："
@@ -2731,7 +3748,7 @@ def build_health_tab() -> None:
                     {"name": "state", "label": "判定", "field": "state"},
                     {"name": "pubs", "label": "发布者", "field": "pubs", "align": "left"},
                 ]
-                UI["health_topics"] = ui.table(columns=cols, rows=[], row_key="topic") \
+                UI["health_topics"] = ui.table(columns=cols, rows=[], row_key="topic")\
                     .classes("w-full text-xs").props("dense wrap-cells")
                 _lbl("/imu/data 应只有互补滤波一个源；/livox/lidar/geo_filtered 应只有 "
                      "cloud_preprocessor 一个源；/loc_status、/robot_pose 应只有当前 "
@@ -2742,11 +3759,11 @@ def build_health_tab() -> None:
                 _lbl("只对 SLAM desk 链生效。甲方底盘 / 腿控 / 手柄 / Livox 驱动 / lpms "
                      "即使同名也永远不会出现在这里。", "text-xs text-amber-400")
                 UI["kill_target"] = ui.select(
-                    list(KILL_OPTIONS), value=None, label="选择节点") \
+                    list(KILL_OPTIONS), value=None, label="选择节点")\
                     .classes("w-full").props("dense")
                 with ui.row().classes("gap-2 items-center"):
                     ui.button("查看进程明细", on_click=show_kill_plan).props("flat")
-                    ui.button("停止该节点", on_click=kill_selected) \
+                    ui.button("停止该节点", on_click=kill_selected)\
                         .props("color=negative")
                 _lbl("停止方式：先 SIGINT 所在 launch（comp 滤波是 respawn=True，只杀叶子会被"
                      "拉起），3 秒后对残余 SIGKILL。每个节点都要单独确认。",
@@ -2768,6 +3785,7 @@ def build_health_tab() -> None:
 # 动作
 # ---------------------------------------------------------------------------
 async def _confirm(message: str) -> bool:
+    if not UI.available:return False
     with ui.dialog() as dlg, ui.card().classes("w-96 gap-3"):
         ui.label(message).classes("text-sm")
         with ui.row().classes("w-full justify-end gap-2"):
@@ -2790,7 +3808,7 @@ def _status_cb(ok, text) -> None:
 
 async def srv_click(name: str) -> None:
     if not STATE.ros_ready:
-        ui.notify("ROS 未连接", type="negative")
+        notify_user("ROS 未连接", type="negative")
         return
     if name == "deactivate_mapping":
         # Mapping close is a coordinated lifecycle: save PCD, stop bag, stop desk.
@@ -2798,14 +3816,14 @@ async def srv_click(name: str) -> None:
         return
     if name == "activate_mapping":
         if not PROCS.running("desk") or PROCS.desk_mode != "mapping":
-            ui.notify("请先用“启动建图 + 录包”启动建图会话", type="warning")
+            notify_user("请先用“启动建图 + 录包”启动建图会话", type="warning")
             return
         if not PROCS.running("bag") and not PROCS.start_bag():
-            ui.notify("bag 录制启动失败，未激活建图", type="negative")
+            notify_user("bag 录制启动失败，未激活建图", type="negative")
             return
     desc = LOC_SRV_DESC.get(name) or MAP_SRV_DESC.get(name) or name
     if name == "deactivate_localization":
-        extra = "（会停止位姿输出）" if name == "deactivate_localization" \
+        extra = "（会停止位姿输出）" if name == "deactivate_localization"\
             else "（自动保存 PCD 后清空内存）"
         if not await _confirm(f"确认调用 {name} {extra}？"):
             return
@@ -2823,6 +3841,9 @@ def _service_button(name: str, desc: str) -> None:
 
 def request_enter_tracking() -> None:
     """Refuse locally while relocalization is not matched, with a visible reason."""
+    if PROCS.desk_mode == 'mapping' and PROCS.running('desk'):
+        notify_user('甲方实时建图直接估计位姿，无需进入离线定位 tracking；请同步地面并启动导航', type='info')
+        return
     with STATE.lock:
         loc = dict(STATE.loc)
     ok = loc.get("reloc_ok")
@@ -2834,7 +3855,7 @@ def request_enter_tracking() -> None:
         if UI.get("loc_track_result"):
             _set(UI["loc_track_result"], msg, COL_ERR)
         push_log("warn", msg)
-        ui.notify(msg, type="warning")
+        notify_user(msg, type="warning")
         return
     if UI.get("loc_track_result"):
         _set(UI["loc_track_result"], "重定位已通过，正在进入跟踪…", COL_OK)
@@ -2843,9 +3864,9 @@ def request_enter_tracking() -> None:
     if backend == BACKEND_FAST_LIO:
         # The FAST-LIO adapter publishes tracking immediately after ICP succeeds;
         # it deliberately has no vendor enter_tracking service.
-        realtime = bool(UI.get("fast_lio_mode")
-                        and UI["fast_lio_mode"].value == FAST_MODE_REALTIME)
-        ui.notify("FAST-LIO2 实时适配器已自动进入 tracking" if realtime else
+        realtime = bool(UI.get("slam_map_mode")
+                        and UI["slam_map_mode"].value == FAST_MODE_REALTIME)
+        notify_user("FAST-LIO2 实时适配器已自动进入 tracking" if realtime else
                   "FAST-LIO2 ICP 已通过，适配器已自动进入 tracking",
                   type="positive")
         return
@@ -2853,14 +3874,14 @@ def request_enter_tracking() -> None:
 
 
 def send_initialpose() -> None:
-    if ((PROCS.desk_mode == "fast_lio_realtime" and PROCS.running("desk"))
+    if ((_slam_uses_live_map())
             or (UI.get("slam_backend") and UI["slam_backend"].value == BACKEND_FAST_LIO
-            and UI.get("fast_lio_mode")
-            and UI["fast_lio_mode"].value == FAST_MODE_REALTIME)):
-        ui.notify("FAST-LIO2 实时模式不需要初始位姿", type="info")
+            and UI.get("slam_map_mode")
+            and UI["slam_map_mode"].value == FAST_MODE_REALTIME)):
+        notify_user("实时建图模式不需要旧地图初始位姿", type="info")
         return
     if not STATE.ros_ready:
-        ui.notify("ROS 未连接", type="negative")
+        notify_user("ROS 未连接", type="negative")
         return
     x = UI["ip_x"].value or 0.0
     y = UI["ip_y"].value or 0.0
@@ -2870,25 +3891,39 @@ def send_initialpose() -> None:
 
 
 def begin_relocalization() -> None:
+    if PROCS.desk_mode == 'mapping' and PROCS.running('desk'):
+        notify_user('甲方实时建图无需旧地图重定位', type='info')
+        return
     """Expose one operator action while keeping backend-specific services hidden."""
     backend = (UI["slam_backend"].value
                if UI.get("slam_backend") else BACKEND_VENDOR)
     if backend == BACKEND_FAST_LIO:
-        if ((PROCS.desk_mode == "fast_lio_realtime" and PROCS.running("desk"))
-                or (UI.get("fast_lio_mode")
-                    and UI["fast_lio_mode"].value == FAST_MODE_REALTIME)):
-            ui.notify("实时模式以本次启动点为 map 原点，不需要重定位",
+        if ((_slam_uses_live_map())
+                or (UI.get("slam_map_mode")
+                    and UI["slam_map_mode"].value == FAST_MODE_REALTIME)):
+            notify_user("实时模式以本次启动点为 map 原点，不需要重定位",
                       type="info")
             return
-        ui.notify("FAST-LIO2 在启动时已进入重定位；请发送初始位姿触发 ICP",
+        notify_user("FAST-LIO2 在启动时已进入重定位；请发送初始位姿触发 ICP",
                   type="info")
         return
     WORKER.call_service("activate_localization", "开始重定位", _status_cb)
 
 
+def rsp_unavailable_message(snapshot):
+    processes=[p for p in snapshot if 'robot_state_publisher' in p.get('cmd','')]
+    if processes:
+        pids=', '.join(str(p['pid']) for p in processes)
+        return (f'底盘 RSP 进程存在（PID {pids}），但当前 ROS 图未发现其节点；'
+                '请检查 ROS 域和 DDS 通信，并从桌面入口恢复底盘模型发布。'
+                '保持“不启动 SLAM 的 RSP”勾选，避免重复模型。')
+    return ('未发现底盘 RSP 进程，请先从桌面入口启动底盘并等待 ROS 节点与传感器 TF 就绪。'
+            '保持“不启动 SLAM 的 RSP”勾选；GUI 不会补起第二套模型。')
+
+
 async def start_desk() -> None:
     if not UI["mg_enable"].value:
-        ui.notify("请先勾选“启用节点管理”", type="warning")
+        notify_user("请先勾选“启用节点管理”", type="warning")
         return
     mode = "loc" if UI["mg_mode"].value == "定位 desk" else "mapping"
     with STATE.lock:
@@ -2896,23 +3931,23 @@ async def start_desk() -> None:
     # 互斥：目标节点已在跑，或另一模式的节点在跑
     if mode == "loc" and map_up:
         push_log("err", "互斥阻止：mapping_lite_node 在运行，请先停建图")
-        ui.notify("定位与建图互斥：建图节点正在运行，请先停止", type="negative")
+        notify_user("定位与建图互斥：建图节点正在运行，请先停止", type="negative")
         return
     if mode == "mapping" and loc_up:
         push_log("err", "互斥阻止：localization_lite_node 在运行，请先停定位")
-        ui.notify("定位与建图互斥：定位节点正在运行，请先停止", type="negative")
+        notify_user("定位与建图互斥：定位节点正在运行，请先停止", type="negative")
         return
     if (mode == "loc" and loc_up) or (mode == "mapping" and map_up):
         push_log("warn", "目标节点已在运行（可能由外部终端启动）")
-        ui.notify("该节点已在运行，无需重复启动", type="warning")
+        notify_user("该节点已在运行，无需重复启动", type="warning")
         return
-    skip_rsp = bool(UI["mg_skip_rsp"].value)
+    skip_rsp = True
     with STATE.lock:
         rows = list(STATE.node_rows)
         census_at = STATE.census_at
     if not census_at or time.monotonic() - census_at > 15.0:
         push_log("err", "启动 desk 前节点普查不可用/已过期：请稍等再试")
-        ui.notify("节点普查未完成或已过期，无法确认前置链没有残留，请稍等片刻再启动。",
+        notify_user("节点普查未完成或已过期，无法确认前置链没有残留，请稍等片刻再启动。",
                   type="negative", timeout=8000)
         return
     residue = [r["name"] for r in rows
@@ -2922,44 +3957,43 @@ async def start_desk() -> None:
         push_log("err", f"拒绝启动：前置链节点已在位 {residue}，"
                         f"再起一套会让 /imu/data、/tf_static 出现双源")
         if residue == ["/robot_state_publisher"] and not skip_rsp:
-            msg = ("图里的 robot_state_publisher 是地盘 hive2_driver 的（z=0.90）。"
+            msg = ("图里的 robot_state_publisher 是地盘 hive2_driver 的（机身根模型）。"
                    "请勾选“不启动 SLAM 的 RSP”，或先停掉地盘 RSP。")
         else:
             msg = (f"{', '.join(residue)} 已在运行（可能是上次残留）。先到“节点体检”页"
                    f"停止；未托管残留请回到原启动终端正常 Ctrl+C，再启动。")
-        ui.notify(msg, type="negative", timeout=8000)
+        notify_user(msg, type="negative", timeout=8000)
         return
     if skip_rsp:
-        # 关闭 SLAM RSP 的前提：图里已有另一份 robot_state_publisher（地盘 hive2_driver）。
-        # 否则 base_footprint→base_link 会整条缺失，宁可拦住。
+        # Desktop owns the model; an alive OS process is not proof of ROS health.
         with STATE.lock:
             rsp_count = next((r["count"] for r in STATE.node_rows
                               if r["name"] == "/robot_state_publisher"), 0)
         if rsp_count < 1:
-            push_log("err", "已勾选“不启动 SLAM RSP”，但图里没有其它 "
-                            "robot_state_publisher（地盘 hive2_driver 未运行）→ "
-                            "关闭会让 base_footprint→base_link 缺失，已阻止启动")
-            ui.notify("未检测到地盘 RSP，不能关闭 SLAM RSP。"
-                      "请取消勾选，或先启动 hive2_driver。",
-                      type="negative", timeout=8000)
+            message=rsp_unavailable_message(await asyncio.to_thread(_ps_snapshot))
+            push_log('err', '拒绝启动：'+message)
+            notify_user(message, type="negative", timeout=10000)
             return
     label = "定位 desk（localization_lite_node）" if mode == "loc" else "建图 desk（mapping_lite_node）"
     rsp_note = ("\n\nRSP：不启动 SLAM 自带 RSP，使用地盘 hive2_driver 的 "
-                "base_footprint→base_link（z=0.90）。" if skip_rsp else
-                "\n\nRSP：启动 desk 自带 RSP（3-link，z=0.30），可能与地盘 RSP 冲突。")
-    msg = (f"将启动 {label}，同时会拉起 LiDAR 驱动、IMU 互补滤波、cloud_preprocessor。"
-           f"{rsp_note}\n\n定位模式还会拉起 n01_localization_adapter 和 "
+                "base_link→lidar_link（地面帧动态估计）。" if skip_rsp else
+                "\n\nRSP：仍使用桌面底盘，项目不启动第二套模型发布者。")
+    msg = (f"将启动 {label}，同时启动 IMU 互补滤波和 cloud_preprocessor；使用桌面已启动的雷达与底盘。"
+           f"{rsp_note}\n\n同时拉起 n01_localization_adapter 和 "
            "n01_live_scan_bridge，使 /body_pose 直接可供导航。"
            "\n\n定位与建图互斥，同一时刻只能运行一个。")
-    if mode == "mapping":
+    if mode == "mapping" and getattr(PROCS, 'slam_selection', {}).get('record_bag', True):
         msg += ("\n\n同时开始 ros2 bag 录制；结束建图会先保存 PCD，"
                 "再停止录包和 desk。")
     msg += "\n\n确认？"
     if await _confirm(msg):
-        if PROCS.start_desk(mode, skip_rsp=skip_rsp):
-            ui.notify("已启动，" + label, type="positive")
+        if ProcManager.start_desk(PROCS, mode, skip_rsp=skip_rsp,
+                                  record_bag=getattr(PROCS, 'slam_selection', {}).get('record_bag', True)):
+            notify_user("已启动，" + label, type="positive")
+            return True
         else:
-            ui.notify("启动失败，见运行日志", type="negative")
+            notify_user("启动失败，见运行日志", type="negative")
+            return False
 
 
 async def _close_mapping_session() -> bool:
@@ -2967,7 +4001,10 @@ async def _close_mapping_session() -> bool:
     with STATE.lock:
         mode = PROCS.desk_mode
         session = str(STATE.mapping.get("session", "")).lower()
-    if mode == "mapping" and session == "mapping":
+        saved_xy = STATE.pose[:2] if STATE.pose else None
+        saved_body_z = STATE.pose_z
+    if (mode == "mapping" and session == "mapping" and PROCS.running("desk")
+            and getattr(PROCS, "slam_selection", {}).get("record_bag", True)):
         if UI.get("svc_result"):
             UI["svc_result"].set_text("正在结束建图：保存 PCD（可能需要几十秒）…")
         ok, text = await asyncio.to_thread(PROCS.deactivate_mapping)
@@ -2978,6 +4015,36 @@ async def _close_mapping_session() -> bool:
                  "建图 PCD 已保存" if ok else "建图 PCD 保存失败，保留 bag/desk 以便重试")
         if not ok:
             return False
+        # Persist this PCD's own map-plane, never the preceding map's Z or a
+        # body-height offset. Exact service-returned paths avoid selecting an
+        # unrelated newest PCD from another producer.
+        paths = [p for p in re.findall(r"(/[^\s'\"]+\.pcd)", text) if os.path.isfile(p)]
+        if paths and saved_xy is not None:
+            path = paths[-1]
+            try:
+                points = await asyncio.to_thread(lambda: np.column_stack(parse_pcd_xyz(path)))
+                plane = await asyncio.to_thread(estimate_ground, points, saved_xy, 6.0,
+                                               body_z=saved_body_z)
+                profile = await asyncio.to_thread(save_map_ground, path, vars(plane), saved_xy)
+                geometry = json.loads((REPO_ROOT/'config/n01_sensor_geometry.json').read_text())
+                metadata = {'schema': 'n01.map_metadata.v1', 'map_frame': 'map',
+                            'slam_tracking_frame': 'lidar_link', 'body_frame': 'base_link',
+                            'ground_reference': 'dynamic_plane_projection',
+                            'ground': profile, 'sensor_geometry': geometry}
+                Path(path+'.n01.json').write_text(json.dumps(metadata, indent=2, ensure_ascii=False))
+                for name in ('map_path','nav_pcd'):
+                    if UI.get(name):
+                        UI[name].value = path
+                with STATE.lock:
+                    STATE.ground_model = (plane, saved_xy)
+                for name in ('nav_ground_z','ground_z'):
+                    if UI.get(name):
+                        UI[name].value = round(plane.height(*saved_xy),3)
+                push_log('ok', f'新地图地面与安装模型已保存：{path}.n01.json；定位和导航已选择此图')
+            except (ValueError, OSError, KeyError) as exc:
+                push_log('warn', f'地图已保存，但地面配置未自动完成：{exc}；定位后需同步地面')
+        else:
+            push_log('warn', '地图已保存，但未取得精确PCD路径或参考位置；定位后请选新地图并同步地面')
     elif mode in ("fast_lio_mapping", "fast_lio_realtime"):
         if UI.get("svc_result"):
             UI["svc_result"].set_text(
@@ -2990,21 +4057,20 @@ async def _close_mapping_session() -> bool:
 
 async def stop_desk() -> None:
     if not UI["mg_enable"].value:
-        ui.notify("请先勾选“启用节点管理”", type="warning")
+        notify_user("请先勾选“启用节点管理”", type="warning")
         return
     with STATE.lock:
         mode = PROCS.desk_mode
     if mode in ("mapping", "fast_lio_mapping", "fast_lio_realtime"):
-        is_fast_lio = mode in ("fast_lio_mapping", "fast_lio_realtime")
         if not await _confirm(
-                "结束建图将依次执行：\n"
-                + ("1) FAST-LIO2 收到 SIGINT 后保存 PCD；\n" if is_fast_lio else
-                   "1) deactivate_mapping 保存全分辨率 PCD；\n")
-                + "2) 停止 bag 录制并写入 metadata；\n"
-                + "3) 停止建图后端。\n\n确认？"):
+                "先停止自动行驶与导航，再结束当前会话。\n"
+                "建图或实时SLAM会话保存PCD并结束bag。\n"
+                "底盘、雷达和桌面RSP保持独立运行。\n\n确认？"):
             return
+        await stop_slow_motion()
+        await stop_navigation_module()
         if not await _close_mapping_session():
-            ui.notify("建图保存失败：bag 和 desk 仍保留，请检查后重试", type="negative")
+            notify_user("建图保存失败：bag 和 desk 仍保留，请检查后重试", type="negative")
             return
         await asyncio.to_thread(PROCS.stop, "desk")
         await asyncio.to_thread(PROCS.stop, "rviz")
@@ -3012,7 +4078,7 @@ async def stop_desk() -> None:
         # 都会沿用“建图 desk”这个残留值（曾经导致“① 启动定位节点”误起建图栈）。
         if UI.get("mg_mode"):
             UI["mg_mode"].value = "定位 desk"
-        ui.notify("建图已保存，bag 已停止，desk/RViz 已停止", type="positive")
+        notify_user("会话已结束；建图任务按配置保存，desk/RViz 已停止", type="positive")
         return
     nav_live = _nav_ready_state() is True or _node_present("/scan_planner_node")
     # 最常见状态是“导航已停、bridge 仍随定位栈存活”：此时 nav_ready 心跳已停、
@@ -3027,13 +4093,13 @@ async def stop_desk() -> None:
         else:
             warn = ("导航已停止，但 n01_live_scan_bridge 仍由定位 desk 承载"
                     "（/cloud、/body_pose 由它提供）。\n"
-                    "停止定位会连同它启动的 Livox 驱动一起移除此桥接。\n\n"
+                    "停止定位只移除此 GUI 启动的桥接；底盘和 Livox 保持运行。\n\n"
                     "之后要单独启动导航时需先重新启动定位 desk。仍要停止定位吗？")
         if not await _confirm(warn):
             return
     stop_msg = "确认停止当前 desk 进程？（会中断定位/建图输出"
     if bridge_up:
-        stop_msg += "，并移除 Livox 驱动与 n01_live_scan_bridge 桥接"
+        stop_msg += "，并移除本 GUI 的 n01_live_scan_bridge 桥接；底盘和雷达不受影响"
     stop_msg += "）"
     if await _confirm(stop_msg):
         await asyncio.to_thread(PROCS.stop, "desk")
@@ -3047,7 +4113,7 @@ async def start_rviz() -> None:
     _text, available, _fallback = _display_info()
     if not available:
         push_log("err", f"RViz2 无法启动：{_text}")
-        ui.notify(_text, type="negative")
+        notify_user(_text, type="negative")
         return
     mode = "loc" if UI["viz_mode"].value == "定位视图" else "mapping"
     if await _confirm("将启动 RViz2 原生窗口（走 vendor 的 vis_world 启动脚本，内部自动 source）。确认？"):
@@ -3099,20 +4165,20 @@ async def _confirm_detail(title: str, lines: list[str]) -> bool:
 
 def refresh_census_now() -> None:
     if not STATE.ros_ready:
-        ui.notify("ROS 未连接", type="negative")
+        notify_user("ROS 未连接", type="negative")
         return
     WORKER.force_census()
-    ui.notify("已请求重新普查，约 2 秒内刷新")
+    notify_user("已请求重新普查，约 2 秒内刷新")
 
 
 async def show_kill_plan() -> None:
     name = UI["kill_target"].value
     if not name:
-        ui.notify("先选一个节点", type="warning")
+        notify_user("先选一个节点", type="warning")
         return
     plan = await asyncio.to_thread(node_kill_plan, name)
     if not plan["supported"]:
-        ui.notify("该节点不在可停止白名单内", type="warning")
+        notify_user("该节点不在可停止白名单内", type="warning")
         return
     lines = _plan_lines(plan) or ["（没有找到对应的宿主进程）"]
     with ui.dialog() as dlg, ui.card().classes("w-[42rem] gap-3"):
@@ -3126,14 +4192,14 @@ async def show_kill_plan() -> None:
 async def kill_selected() -> None:
     name = UI["kill_target"].value
     if not name:
-        ui.notify("先选一个节点", type="warning")
+        notify_user("先选一个节点", type="warning")
         return
     if not STATE.ros_ready:
-        ui.notify("ROS 未连接", type="negative")
+        notify_user("ROS 未连接", type="negative")
         return
     plan = await asyncio.to_thread(node_kill_plan, name)
     if not plan["supported"]:
-        ui.notify("该节点不在可停止白名单内", type="warning")
+        notify_user("该节点不在可停止白名单内", type="warning")
         return
     if not plan["killable"]:
         msg = ("检测到外部管理的进程；GUI 只展示，不会越权停止。请回到原启动终端 Ctrl+C。"
@@ -3141,7 +4207,7 @@ async def kill_selected() -> None:
                ("没有找到可停止的宿主进程（节点可能已退出，或进程属于其他用户）"
                 if plan["procs"] else "按进程名没有匹配到该节点"))
         push_log("warn", f"{name}: {msg}")
-        ui.notify(msg, type="warning")
+        notify_user(msg, type="warning")
         return
     lines = _plan_lines(plan)
     lines.append("")
@@ -3172,7 +4238,7 @@ async def show_orphans() -> None:
     targets = await asyncio.to_thread(collect_unmanaged_residue)
     if not targets:
         UI["orphan_result"].set_text("没有发现疑似未托管残留")
-        ui.notify("没有发现疑似未托管残留", type="positive")
+        notify_user("没有发现疑似未托管残留", type="positive")
         return
     lines = _orphan_lines(targets)
     lines.append("")
@@ -3423,6 +4489,18 @@ def draw_chart(force: bool = False) -> None:
 
 def drain_ui_events() -> None:
     """把工作线程/服务回调的事件搬到 UI 线程执行。"""
+    with STATE.lock:
+        events = STATE.motion_feedback.watchdog(time.monotonic())
+    publish_motion_events(events)
+    while True:
+        try:
+            event = STATE.motion_events.get_nowait()
+        except queue.Empty:
+            break
+        if event['notify'] and event.get('terminal'):
+            notify_user(event['text'], type={'ok': 'positive', 'err': 'negative',
+                      'warn': 'warning'}.get(event['level'], 'info'),
+                      timeout=0, close_button=True)
     while True:
         try:
             text = UI_EVENTS.get_nowait()
@@ -3435,8 +4513,9 @@ def drain_ui_events() -> None:
 
 
 def drain_logs() -> None:
+    if not UI.available:return
     lines = []
-    while True:
+    for _ in range(80):
         try:
             lines.append(STATE.log_q.get_nowait())
         except queue.Empty:
@@ -3452,8 +4531,8 @@ def drain_logs() -> None:
 # ---------------------------------------------------------------------------
 # Single-page console: projected occupancy grid + manual SLAM/nav control
 # ---------------------------------------------------------------------------
-_GRID_VIEW: dict = {}
-_GRID_CACHE: dict = {"key": None}
+_GRID_VIEW = ViewCache(UI,'grid_view')
+_GRID_CACHE = ViewCache(UI,'grid_cache',{'key':None})
 _BLANK_PNG = (
     "data:image/png;base64,"
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
@@ -3483,49 +4562,51 @@ def _card2(title: str):
 
 
 def _grid_source():
-    src = str(UI["src"].value) if UI.get("src") else "自动"
+    requested=str(UI['src'].value) if UI.get('src') else '自动'
+    body_age=STATE.age_of('body_pose')
     with STATE.lock:
-        loc = STATE.loc_pts
-        cloud = STATE.cloud_pts
-        nav_static = STATE.nav_static_pts
-        nav_dyn = STATE.nav_dyn_pts
-        loc_seq = STATE.loc_seq
-        cloud_seq = STATE.cloud_seq
-        nav_seq = STATE.nav_map_seq
-        pose = STATE.pose
-        pose_z = STATE.pose_z
-        trail = list(STATE.trail)
-        loc_session = str(STATE.loc.get("session", "")).lower()
-        map_session = str(STATE.mapping.get("session", "")).lower()
-
+        loc,cloud=STATE.loc_pts,STATE.cloud_pts
+        nav_static,nav_dyn=STATE.nav_static_pts,STATE.nav_dyn_pts
+        live=getattr(STATE,'live_pts',None)
+        seq=(STATE.loc_seq,STATE.cloud_seq,STATE.nav_map_seq,getattr(STATE,'live_seq',0))
+        pose=STATE.pose;pose_z=STATE.pose_z;trail=list(STATE.trail)
+        if body_age is not None and body_age<.5:
+            pose=getattr(STATE,'control_pose',pose)
+            body=getattr(STATE,'body_pose_xyz',None)
+            if body is not None:pose_z=body[2]
+        loc_session=str(STATE.loc.get('session','')).lower()
+        map_session=str(STATE.mapping.get('session','')).lower()
+    age=STATE.age_of('bridge_cloud')
+    if age is None or age>1.:live=None
+    nav_age=STATE.age_of('nav_health')
+    source=choose_map(requested,nav_age is not None and nav_age<2.,
+                      PROCS.running('desk') and (PROCS.desk_mode in ('mapping','fast_lio_mapping','fast_lio_realtime') or map_session=='mapping'),
+                      loc_session in ('tracking','relocalization'))
     def stack(parts):
-        valid = [p for p in parts if p is not None and len(p)]
-        return np.vstack(valid) if valid else None
-
-    nav_pts = stack([nav_static, nav_dyn])
-    if src == "定位地图":
-        return loc, "定位 PCD 投影", loc_seq, None, pose, pose_z, trail
-    if src == "建图":
-        return cloud, "建图点云投影", cloud_seq, None, pose, pose_z, trail
-    if src == "导航栅格":
-        return nav_pts, "导航占用栅格投影", nav_seq, nav_dyn, pose, pose_z, trail
-    if loc_session in ("tracking", "relocalization") and loc is not None:
-        return loc, "定位 PCD 投影", loc_seq, None, pose, pose_z, trail
-    if map_session == "mapping" and cloud is not None:
-        return cloud, "建图点云投影", cloud_seq, None, pose, pose_z, trail
-    if nav_pts is not None:
-        return nav_pts, "导航占用栅格投影", nav_seq, nav_dyn, pose, pose_z, trail
-    if loc is not None:
-        return loc, "定位 PCD 投影", loc_seq, None, pose, pose_z, trail
-    return cloud, "建图点云投影", cloud_seq, None, pose, pose_z, trail
+        parts=[x for x in parts if x is not None and len(x)]
+        return np.vstack(parts) if parts else None
+    if source=='导航栅格':
+        points=stack([nav_static,nav_dyn,live]);detail='导航 · 参考环境＋实时障碍'
+        dynamic=live if live is not None else nav_dyn
+    elif source=='建图':
+        points=stack([cloud,live]);detail='建图 · 累积环境＋当前扫描';dynamic=live
+    elif source=='定位地图':
+        points=stack([loc,live]);detail='定位 · 已载地图＋当前扫描';dynamic=live
+    else:
+        points=None;detail='等待模块启动';dynamic=None
+    return points,detail,(*seq,source,live is not None),dynamic,pose,pose_z,trail
 
 
 def _grid_ground():
+    with STATE.lock:
+        fitted=STATE.ground_model
+    if fitted is not None:
+        return float(fitted[0].height(*fitted[1]))
     try:
-        value = float(UI["ground_z"].value) if UI.get("ground_z") else 0.139
+        value = float(UI["ground_z"].value) if UI.get("ground_z") else DEFAULT_NAV_GROUND
     except (TypeError, ValueError):
-        value = 0.139
-    return value if math.isfinite(value) else 0.139
+        value = DEFAULT_NAV_GROUND
+    return value if math.isfinite(value) else DEFAULT_NAV_GROUND
 
 
 def _map_xy_to_pixel(x, y, view):
@@ -3537,8 +4618,12 @@ def _map_xy_to_pixel(x, y, view):
 def _rasterize(points, view, ground, dynamic_points):
     x, y, z = points[:, 0], points[:, 1], points[:, 2]
     valid = np.isfinite(x) & np.isfinite(y) & np.isfinite(z)
-    zmin, zmax = ground + 0.08, ground + 1.60
-    valid &= (z >= zmin) & (z <= zmax)
+    with STATE.lock:
+        fitted = STATE.ground_model
+    base = ground if fitted is None else (
+        fitted[0].height(x, y) + ground-fitted[0].height(*fitted[1]))
+    zmin, zmax = ground + 0.03, ground + 1.60
+    valid &= (z >= base+0.03) & (z <= base+1.60)
     if not valid.any():
         return None, zmin, zmax
     x, y = x[valid], y[valid]
@@ -3554,30 +4639,21 @@ def _rasterize(points, view, ground, dynamic_points):
     if dynamic_points is not None and len(dynamic_points):
         dx, dy, dz = (dynamic_points[:, 0], dynamic_points[:, 1],
                       dynamic_points[:, 2])
+        dbase = ground if fitted is None else (
+            fitted[0].height(dx, dy)+ground-fitted[0].height(*fitted[1]))
         dmask = (np.isfinite(dx) & np.isfinite(dy) & np.isfinite(dz)
-                 & (dz >= zmin) & (dz <= zmax))
+                 & (dz >= dbase+.03) & (dz <= dbase+1.60))
         dix = np.floor((dx[dmask] - view["x0"]) / res).astype(np.int32)
         diy = np.floor((dy[dmask] - view["y0"]) / res).astype(np.int32)
         din = (dix >= 0) & (dix < n) & (diy >= 0) & (diy < n)
         dyn[diy[din], dix[din]] = 1
-    rgb = np.zeros((n, n, 3), dtype=np.uint8)
-    rgb[:] = GRID_COLORS["unknown"]
-    xmin, xmax = float(np.min(x)), float(np.max(x))
-    ymin, ymax = float(np.min(y)), float(np.max(y))
-    ix0 = int(max(0, math.floor((xmin - view["x0"]) / res)))
-    ix1 = int(min(n, math.ceil((xmax - view["x0"]) / res)))
-    iy0 = int(max(0, math.floor((ymin - view["y0"]) / res)))
-    iy1 = int(min(n, math.ceil((ymax - view["y0"]) / res)))
-    if ix1 > ix0 and iy1 > iy0:
-        rgb[iy0:iy1, ix0:ix1] = GRID_COLORS["free"]
-    rgb[occ > 0] = GRID_COLORS["occupied"]
-    rgb[dyn > 0] = GRID_COLORS["dynamic"]
+    rgb = occupancy_colors(occ,dyn,res)
     return rgb, zmin, zmax
 
 
 def _grid_overlay(img, view, pose, trail, goal_xy, plan_xy=None,
                   plan_active=True, goal_failed=False, global_xy=None,
-                  global_active=True):
+                  global_active=True, trail_on=True):
     draw = ImageDraw.Draw(img)
     for gx in range(int(math.ceil(view["x0"])),
                     int(math.floor(view["x0"] + view["size_m"])) + 1):
@@ -3587,7 +4663,6 @@ def _grid_overlay(img, view, pose, trail, goal_xy, plan_xy=None,
                     int(math.floor(view["y0"] + view["size_m"])) + 1):
         _, py = _map_xy_to_pixel(view["x0"], gy, view)
         draw.line([(0, py), (GRID_IMAGE_PX, py)], fill=GRID_COLORS["grid"], width=1)
-    trail_on = bool(UI["trail_on"].value) if UI.get("trail_on") else True
     if trail_on and trail:
         pts = [_map_xy_to_pixel(t[0], t[1], view) for t in trail]
         if len(pts) >= 2:
@@ -3624,7 +4699,57 @@ def _grid_overlay(img, view, pose, trail, goal_xy, plan_xy=None,
     return img
 
 
+def _render_grid_frame(points, view, ground, dynamic_points, pose, _pose_z,
+                       observed, inflated, model_polygons, envelope, trail,
+                       goal_xy, plan_xy, plan_active, goal_failed, global_xy,
+                       global_active, trail_on):
+    """CPU-only rendering; never read or mutate browser widgets in this worker."""
+    rgb, zmin, zmax = _rasterize(points, view, ground, dynamic_points)
+    if rgb is None:
+        return None, zmin, zmax
+    img = Image.fromarray(rgb[::-1]).resize(
+        (GRID_IMAGE_PX, GRID_IMAGE_PX), Image.Resampling.BILINEAR)
+    if pose is not None:
+        env = inflated[:, :2] if inflated is not None else None
+        raw = None
+        if observed is not None and _pose_z is not None:
+            mask = ((observed[:, 2] > ground + .03)
+                    & (observed[:, 2] >= _pose_z - .90)
+                    & (observed[:, 2] <= _pose_z + .25))
+            raw = observed[mask, :2]
+        img = paint_robot(img, view, pose, model_polygons, envelope, env, observed=raw)
+    img = _grid_overlay(img, view, pose, trail, goal_xy, plan_xy, plan_active,
+                        goal_failed, global_xy, global_active, trail_on)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG", compress_level=1)
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode(), zmin, zmax
+
+
 def draw_grid(force: bool = False) -> None:
+    if not UI.available:
+        return
+    cache = UI.view().caches
+    cache['grid_force'] = cache.get('grid_force', False) or force
+    task = cache.get('grid_task')
+    if task is None or task.done():
+        task = asyncio.create_task(_draw_grid_pending())
+        cache['grid_task'] = task
+        UI.view().tasks.add(task)
+        task.add_done_callback(UI.view().tasks.discard)
+
+
+async def _draw_grid_pending() -> None:
+    cache = UI.view().caches
+    force = cache.pop('grid_force', False)
+    try:
+        await _draw_grid_async(force)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        push_log('warn', f'地图刷新失败：{exc}')
+
+
+async def _draw_grid_async(force: bool = False) -> None:
     if not UI.get("map_image"):
         return
     points, label, seq, dynamic_points, pose, _pose_z, trail = _grid_source()
@@ -3636,6 +4761,22 @@ def draw_grid(force: bool = False) -> None:
         global_xy = list(STATE.global_xy)
         global_seq = STATE.global_seq
         global_active = STATE.global_active
+        model=STATE.robot_projection;model_error=STATE.robot_projection_error
+        joints=dict(STATE.projection_joints);times=dict(STATE.projection_joint_times)
+        model_seq=STATE.projection_seq;tilt=STATE.body_tilt
+        inflated=STATE.nav_inflated_pts;inflated_seq=STATE.nav_inflated_seq
+        observed=STATE.nav_dyn_pts
+        envelope=dict(STATE.feasibility.get('planning_footprint',{}))
+    now=time.monotonic()
+    joints={k:v for k,v in joints.items() if now-times.get(k,0)<=.5}
+    model_polygons=[]
+    if model is not None:
+        try:model_polygons=model.polygons(joints,tilt);model_error=''
+        except ValueError as exc:model_error=str(exc)
+    inflated_age=STATE.age_of('nav_inflated')
+    if inflated_age is None or inflated_age>1.:inflated=None
+    review_age=STATE.age_of('feasibility')
+    if review_age is None or review_age>.75:envelope=None
     # 发布者中途消失时，最后一条路径不能继续按“活动”着色。
     # 与 _chain_state / refresh_console 共用同一判据 _nav_paths_live()，
     # 避免“地图灰了导航页还绿”的三套定义漂移。
@@ -3652,7 +4793,7 @@ def draw_grid(force: bool = False) -> None:
     if points is None or not len(points):
         UI["map_image"].set_source(_BLANK_PNG)
         if UI.get("grid_info"):
-            UI["grid_info"].set_text("等待地图数据…（定位 PCD / 建图点云 / 导航占用栅格）")
+            UI["grid_info"].set_text("等待当前模式的数据；可从右侧选择建图、定位或导航")
         return
     try:
         half = float(str(UI["range"].value).replace("m", "")) / 2.0
@@ -3674,40 +4815,41 @@ def draw_grid(force: bool = False) -> None:
     key = (str(UI["src"].value), str(UI["range"].value), round(ground, 3),
            seq, None if pose is None else tuple(round(v, 2) for v in pose),
            len(trail), goal_xy, plan_seq, plan_active, goal_failed,
-           global_seq, global_active,
+           global_seq, global_active,model_seq,model_error,inflated_seq,inflated is not None,bool(envelope),
            bool(UI["trail_on"].value) if UI.get("trail_on") else True)
     if not force and key == _GRID_CACHE.get("key"):
         return
-    rgb, zmin, zmax = _rasterize(points, view, ground, dynamic_points)
-    if rgb is None:
-        UI["map_image"].set_source(_BLANK_PNG)
-        if UI.get("grid_info"):
-            UI["grid_info"].set_text(
-                f"{label} 在 z [{ground + 0.08:.2f}, {ground + 1.60:.2f}] 内无点；"
-                "请调整地面 z")
+    trail_on = bool(UI["trail_on"].value) if UI.get("trail_on") else True
+    source, zmin, zmax = await asyncio.to_thread(
+        _render_grid_frame, points, view, ground, dynamic_points, pose, _pose_z,
+        observed, inflated, model_polygons, envelope, trail, goal_xy, plan_xy,
+        plan_active, goal_failed, global_xy, global_active, trail_on)
+    if not UI.available:
         return
-    # Raster row 0 is map y0 (bottom); flip so image top is map ymax, matching
-    # the robot/trail overlay conversion.
-    # rgb is already uint8 HxWx3; let Pillow infer RGB. Passing mode= is
-    # deprecated in Pillow 11 and removed in Pillow 13.
-    img = Image.fromarray(rgb[::-1]).resize(
-        (GRID_IMAGE_PX, GRID_IMAGE_PX), Image.NEAREST)
-    img = _grid_overlay(img, view, pose, trail, goal_xy, [], plan_active,
-                        goal_failed, global_xy, global_active)
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    UI["map_image"].set_source(
-        "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode())
+    UI["map_image"].set_source(source or _BLANK_PNG)
+    if source is None:
+        if UI.get("grid_info"):
+            UI["grid_info"].set_text(f"{label} 当前高度范围内无点；请检查地面 z")
+        return
     _GRID_VIEW.clear()
     _GRID_VIEW.update(view)
     _GRID_CACHE["key"] = key
     if UI.get("grid_info"):
         UI["grid_info"].set_text(
             f"{label} · {len(points)} pts · z [{zmin:.2f}, {zmax:.2f}] · "
-            f"ground {ground:.2f} · {size_m:.0f} m 视野")
+            f"ground {ground:.2f} · {size_m:.0f} m 视野 · "
+            + ('URDF关节投影 · ' if model_polygons else f'模型未就绪：{model_error} · ')
+            + ('紫色包络就绪 · ' if envelope else '等待机器人审核包络 · ')
+            + ('环境膨胀层就绪 · ' if inflated is not None else '等待环境膨胀层 · ')
+
+            + (f"实时层 {STATE.age_of('bridge_cloud')*1000:.0f} ms"
+               if STATE.age_of('bridge_cloud') is not None and STATE.age_of('bridge_cloud')<1.
+               else "实时层未就绪／已过期"))
 
 
 def on_map_click(e) -> None:
+    if UI.get('navigation_mode') and UI['navigation_mode'].value!='地图选点移动':
+        return
     if not _GRID_VIEW:
         return
     x = _GRID_VIEW["x0"] + (e.image_x / GRID_IMAGE_PX) * _GRID_VIEW["size_m"]
@@ -3741,22 +4883,24 @@ def _goal_failure_reason() -> str:
 
 
 async def send_goal() -> None:
+    if TASK_STATE.active:
+        notify_user('请先停止路线再发送单点目标',type='warning');return
     if not STATE.ros_ready:
-        ui.notify("ROS 未连接", type="negative")
+        notify_user("ROS 未连接", type="negative")
         return
     try:
         x = float(UI["goal_x"].value)
         y = float(UI["goal_y"].value)
         yaw = math.radians(float(UI["goal_yaw"].value or 0.0))
     except (TypeError, ValueError):
-        ui.notify("目标 x/y/yaw 无效", type="negative")
+        notify_user("目标 x/y/yaw 无效", type="negative")
         return
     with STATE.lock:
         pending_goal = STATE.plan_pending or STATE.global_pending
     if pending_goal:
         UI["goal_result"].set_text(
             "上一个目标仍在规划；请等它成功或失败（会自动清除）后再发新点。")
-        ui.notify("上一个目标仍在规划，请等待结果", type="warning")
+        notify_user("上一个目标仍在规划，请等待结果", type="warning")
         return
     if not await _confirm(
             f"发送导航目标 map ({x:.2f}, {y:.2f}) yaw {math.degrees(yaw):.1f}°？\n"
@@ -3777,15 +4921,15 @@ async def send_goal() -> None:
 
     def fail(reason: str, phase: str, elapsed_ms: float, pts: int = 0) -> None:
         with STATE.lock:
-            if STATE.goal_seq == token:
-                STATE.plan_pending = False
-                STATE.global_pending = False
-                STATE.goal_failed = True
+            if STATE.goal_seq != token:return
+            STATE.plan_pending = False
+            STATE.global_pending = False
+            STATE.goal_failed = True
         UI["goal_result"].set_text(
             f"规划失败（{phase}）：{reason}；耗时 {elapsed_ms:.0f} ms；"
             "目标已清除，允许重新选点；旧路径/过期路径不计入成功。")
         push_log("err", f"目标 ({x:.2f}, {y:.2f}) {phase}失败：{reason}；耗时 {elapsed_ms:.0f} ms；已清除")
-        ui.notify(f"{phase}规划失败：{reason}", type="negative", timeout=8000)
+        notify_user(f"{phase}规划失败：{reason}", type="negative", timeout=8000)
 
     # Phase 1: global A* path. Fail fast; do not keep the goal pending.
     global_ok = False
@@ -3800,14 +4944,14 @@ async def send_goal() -> None:
             g_distance = STATE.global_goal_distance
             gate = dict(STATE.goal_status)
         if seq != token:
-            UI["goal_result"].set_text("目标已被更新的目标取代；本次等待结束。")
             return
         if g_success_ns and g_success_ns >= goal_ns:
             global_ms = max(0.0, (g_success_ns - goal_ns) / 1e6)
             if g_distance is not None and g_distance > tol:
-                fail(f"全局路径终点偏差 {g_distance:.2f} m > {tol:.2f} m（{g_pts} 点）",
-                     "全局 A*", global_ms, g_pts)
-                return
+                # The previous goal can still be replanning when this request
+                # is queued. A newly stamped old-goal path is not a failure
+                # response to this goal; wait for its matching endpoint.
+                continue
             global_ok = True
             push_log("ok", f"全局 A* 成功：{g_pts} 点，耗时 {global_ms:.0f} ms")
             break
@@ -3837,7 +4981,6 @@ async def send_goal() -> None:
             l_active = STATE.plan_active
             gate = dict(STATE.goal_status)
         if seq != token:
-            UI["goal_result"].set_text("目标已被更新的目标取代；本次等待结束。")
             return
         if l_success_ns and l_success_ns >= goal_ns:
             local_ms = max(0.0, (l_success_ns - goal_ns) / 1e6)
@@ -3850,7 +4993,15 @@ async def send_goal() -> None:
                 f"规划成功：全局 {g_pts} 点（{global_ms:.0f} ms）+ 局部 {l_pts} 点（{local_ms:.0f} ms）"
                 + ("（局部当前有效）" if l_active else "（局部已过期，但本次曾成功）"))
             push_log("ok", f"目标 ({x:.2f}, {y:.2f}) 规划成功：全局 {g_pts} 点/{global_ms:.0f} ms + 局部 {l_pts} 点/{local_ms:.0f} ms")
-            ui.notify(f"规划成功：全局 {global_ms:.0f} ms + 局部 {local_ms:.0f} ms", type="positive")
+            return
+        heading=_point_alignment_heading()
+        if heading is not None:
+            with STATE.lock:
+                STATE.plan_pending=False;STATE.global_pending=False;STATE.goal_failed=False
+            text=(f'全局路线已就绪（{global_ms:.0f} ms）；当前朝向需要先对齐。'
+                  '点击“开始沿路径行驶”后，将检查旋转空间、原地转向，再重新规划前进。')
+            UI['goal_result'].set_text(text);push_log('info',text)
+            notify_user('等待启动：先对齐朝向，再规划前进',type='info')
             return
         if (gate.get("goal_received") and gate.get("last_goal_accepted") is False
                 and gate.get("goal_event_age_s") is not None
@@ -3858,38 +5009,41 @@ async def send_goal() -> None:
             reason = str(gate.get("reason", "goal_rejected"))
             fail(f"Goal Gate 拒绝（{reason}）", "局部", 0.0)
             return
-    fail(f"全局 A* 已成功，但局部 SCAN/CBF 未在 {local_timeout:.0f} s 内生成路径",
+    fail(f"全局路线已生成，局部搜索在 {local_timeout:.0f} s 内尚未找到可执行曲线（不等于确定无路）",
          "局部", local_timeout * 1000.0)
 
 async def apply_map_path() -> None:
+    if PROCS.desk_mode == 'mapping' and PROCS.running('desk'):
+        notify_user('甲方实时建图使用本次地图，不加载历史 PCD', type='info')
+        return
     path = str(UI["map_path"].value or "").strip()
     if not path or not os.path.isfile(path):
-        ui.notify(f"地图文件不存在：{path}", type="negative")
+        notify_user(f"地图文件不存在：{path}", type="negative")
         return
     backend = (UI["slam_backend"].value
                if UI.get("slam_backend") else BACKEND_VENDOR)
     if backend == BACKEND_FAST_LIO:
-        if ((PROCS.desk_mode == "fast_lio_realtime" and PROCS.running("desk"))
-                or (UI.get("fast_lio_mode")
-                    and UI["fast_lio_mode"].value == FAST_MODE_REALTIME)):
-            ui.notify("实时模式不加载历史 PCD；本次启动点就是 map 原点",
+        if ((_slam_uses_live_map())
+                or (UI.get("slam_map_mode")
+                    and UI["slam_map_mode"].value == FAST_MODE_REALTIME)):
+            notify_user("实时模式不加载历史 PCD；本次启动点就是 map 原点",
                       type="info")
             return
         if PROCS.running("desk"):
-            ui.notify("FAST-LIO2 参考地图在启动时加载；请先停止后端再更换地图",
+            notify_user("FAST-LIO2 参考地图在启动时加载；请先停止后端再更换地图",
                       type="warning")
             return
         UI["nav_pcd"].value = path
         UI["svc_result"].set_text(
             f"FAST-LIO2 定位参考地图已选择：{path}\n启动定位时执行 ICP 加载。")
-        ui.notify("FAST-LIO2 参考地图已选择", type="positive")
+        notify_user("FAST-LIO2 参考地图已选择", type="positive")
         return
     with STATE.lock:
         ros_ready = STATE.ros_ready
         loc_up = STATE.loc_node_up
     if not ros_ready:
         UI["svc_result"].set_text("ROS worker 尚未连接；先等顶部显示 ROS ✓ 再试。")
-        ui.notify("ROS 未连接", type="negative")
+        notify_user("ROS 未连接", type="negative")
         return
     # The localization desk may still be starting when the user clicks. Wait for
     # the census to see /localization_lite_node instead of echoing raw
@@ -3904,8 +5058,8 @@ async def apply_map_path() -> None:
         UI["svc_result"].set_text(
             "设置 map_path 失败：/localization_lite_node 尚未上线。\n"
             "请先点“启动定位”，等定位节点出现并进入 Relocalization，"
-            "再点“设置并加载”。")
-        ui.notify("定位节点未运行：请先启动定位 desk", type="negative")
+            "再点“加载 PCD 地图”。")
+        notify_user("定位节点未运行：请先启动定位 desk", type="negative")
         return
     UI["svc_result"].set_text(f"设置 map_path={path} …")
     try:
@@ -3927,9 +5081,9 @@ async def apply_map_path() -> None:
             if "Node not found" in text:
                 UI["svc_result"].set_text(
                     "设置 map_path 失败：/localization_lite_node 未发现。\n"
-                    "请先启动定位 desk，等节点上线后再点“设置并加载”。\n\n"
+                    "请先启动定位 desk，等节点上线后再点“加载 PCD 地图”。\n\n"
                     + text[-1200:])
-                ui.notify("定位节点未运行", type="negative")
+                notify_user("定位节点未运行", type="negative")
             else:
                 UI["svc_result"].set_text(f"设置 map_path 失败：{text[-2000:]}")
             return
@@ -3937,6 +5091,47 @@ async def apply_map_path() -> None:
         await srv_click("load_map")
     except Exception as exc:  # noqa: BLE001
         UI["svc_result"].set_text(f"设置 map_path 异常：{type(exc).__name__}: {exc}")
+
+
+def refresh_backend_descriptions() -> None:
+    if not all(UI.get(k) for k in ('slam_backend', 'slam_map_mode')):
+        return
+    fast = UI['slam_backend'].value == BACKEND_FAST_LIO
+    realtime = UI['slam_map_mode'].value == FAST_MODE_REALTIME
+    text = workflow_help(fast, realtime)
+    for key, value in [('backend_help', text['summary']),
+                       ('loc_workflow', text['workflow']),
+                       ('loc_map_action', text['map_action'])]:
+        if UI.get(key):
+            UI[key].set_text(value)
+    for key in ('slam_backend', 'slam_map_mode'):
+        UI[key].set_enabled(not PROCS.running('desk'))
+    for key, visible in [('offline_slam_actions', not realtime),
+                         ('realtime_slam_actions', realtime),
+                         ('offline_localization_controls', not realtime),
+                         ('offline_loc_advanced', not realtime)]:
+        if UI.get(key):
+            UI[key].set_visibility(visible)
+    for key in ('offline_map_start', 'offline_loc_start', 'realtime_slam_start'):
+        if UI.get(key):
+            UI[key].set_enabled(not PROCS.running('desk'))
+    if UI.get('map_path'):
+        UI['map_path'].set_enabled(text['needs_pcd'])
+    if UI.get('loc_map_action'):
+        UI['loc_map_action'].set_enabled(text['needs_pcd'])
+
+
+async def inspect_selected_bag() -> None:
+    field = UI['loc_bag_result']
+    field.set_text('正在只读核验 bag 元数据…')
+    try:
+        data = await asyncio.to_thread(inspect_bag, str(UI['loc_bag_path'].value or '').strip())
+        field.set_text(f'{data["duration_s"]:.1f}s · {data["message_count"]:,}条 · '
+                       f'{len(data["topics"])}个话题；未回放，未作为导航输入。'
+                       + (' 提示：' + '；'.join(data['warnings']) if data['warnings'] else '')
+                       + ' 与当前 PCD 的对应关系需核对建图记录。')
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        field.set_text(f'bag 核验失败：{exc}')
 
 
 async def run_tf_check() -> None:
@@ -4019,7 +5214,7 @@ async def start_full_stack() -> None:
         map_up = STATE.map_node_up
         loc_up = STATE.loc_node_up
     if map_up:
-        ui.notify("建图正在运行：建图与定位互斥，请先结束建图", type="warning")
+        notify_user("建图正在运行：建图与定位互斥，请先结束建图", type="warning")
         return
     if not loc_up:
         await lifecycle_start_slam("loc")
@@ -4030,7 +5225,7 @@ async def start_full_stack() -> None:
                 break
             await asyncio.sleep(0.5)
         if not loc_up:
-            ui.notify("定位节点未上线，未继续启动导航；请查看顶部错误/日志",
+            notify_user("定位节点未上线，未继续启动导航；请查看顶部错误/日志",
                       type="negative")
             return
     await navigation_action("start")
@@ -4038,20 +5233,22 @@ async def start_full_stack() -> None:
 
 async def start_slam_rviz(mode: str) -> None:
     """Start the RViz profile matching the selected localization backend."""
+    if _slam_uses_live_map():
+        mode = 'mapping'
     if PROCS.running("rviz"):
         await asyncio.to_thread(PROCS.stop, "rviz")
     display_text, available, _fallback = _display_info()
     if not available:
         push_log("err", f"RViz2 无法启动：{display_text}")
-        ui.notify(display_text, type="negative")
+        notify_user(display_text, type="negative")
         return
     UI["viz_mode"].value = "定位视图" if mode == "loc" else "建图视图"
     backend = (UI["slam_backend"].value
                if UI.get("slam_backend") else BACKEND_VENDOR)
     realtime = bool(
-        PROCS.desk_mode == "fast_lio_realtime" and PROCS.running("desk")) or bool(
-        backend == BACKEND_FAST_LIO and UI.get("fast_lio_mode")
-        and UI["fast_lio_mode"].value == FAST_MODE_REALTIME)
+        _slam_uses_live_map()) or bool(
+        backend == BACKEND_FAST_LIO and UI.get("slam_map_mode")
+        and UI["slam_map_mode"].value == FAST_MODE_REALTIME)
     label = ("FAST-LIO2 实时建图视图" if realtime else
              "FAST-LIO2 重定位视图") if backend == BACKEND_FAST_LIO else (
         "甲方定位视图" if mode == "loc" else "甲方建图视图")
@@ -4060,7 +5257,7 @@ async def start_slam_rviz(mode: str) -> None:
     ok = (PROCS.start_fast_lio_rviz(realtime=realtime)
           if backend == BACKEND_FAST_LIO
           else PROCS.start_rviz(mode))
-    ui.notify("RViz 已启动" if ok else "RViz 启动失败，请查看运行日志",
+    notify_user("RViz 已启动" if ok else "RViz 启动失败，请查看运行日志",
               type="positive" if ok else "negative")
 
 
@@ -4068,26 +5265,30 @@ async def start_nav_visualization() -> None:
     with STATE.lock:
         names = {r["name"] for r in STATE.node_rows}
     if names & {"/n01_live_navigation_rviz", "/n01_navigation_rviz", "/n01_rviz"}:
-        ui.notify("导航启动时已自带 RViz，无需重复启动", type="warning")
+        notify_user("导航启动时已自带 RViz，无需重复启动", type="warning")
         return
     if PROCS.running("nav_rviz"):
-        ui.notify("导航 RViz 已在运行", type="warning")
+        notify_user("导航 RViz 已在运行", type="warning")
         return
     _text, available, _fallback = _display_info()
     if not available:
         push_log("err", f"导航 RViz 无法启动：{_text}")
-        ui.notify(_text, type="negative")
+        notify_user(_text, type="negative")
         return
-    if await _confirm("将启动独立导航 RViz（n01_full_pipeline.rviz）。确认？"):
+    if await _confirm("将打开导航 RViz：参考环境表面、实时障碍轮廓、机器人模型与执行路径。确认？"):
         if not PROCS.start_nav_rviz():
-            ui.notify("导航 RViz 启动失败；请查看运行日志", type="negative")
+            notify_user("导航 RViz 启动失败；请查看运行日志", type="negative")
             return
         await asyncio.sleep(1.0)
         if not PROCS.running("nav_rviz"):
             msg = ("导航 RViz 启动后立即退出：DISPLAY/X 服务器不可用或无权限。"
                    "请在有桌面的终端设置 DISPLAY/XAUTHORITY，或使用 Foxglove。")
             push_log("err", msg)
-            ui.notify(msg, type="negative", timeout=8000)
+            notify_user(msg, type="negative", timeout=8000)
+
+
+        else:
+            notify_user("导航 RViz 启动成功", type="positive")
 
 
 async def stop_nav_visualization() -> None:
@@ -4104,26 +5305,65 @@ async def sync_nav_pcd() -> None:
     with STATE.lock:
         path = str(STATE.loc.get("map_path", "") or "")
     if not path or not os.path.isfile(path):
-        ui.notify("定位当前没有可用的 map_path；先加载地图", type="negative")
+        notify_user("定位当前没有可用的 map_path；先加载地图", type="negative")
         return
     if UI.get("nav_pcd"):
         UI["nav_pcd"].value = path
-    ui.notify("已同步定位当前地图到导航 PCD；启动导航时生效", type="positive")
+    notify_user("已同步定位当前地图到导航 PCD；启动导航时生效", type="positive")
+
+
+async def navigation_ground_model(realtime=False):
+    with STATE.lock:
+        pose = STATE.pose
+        body_z = STATE.pose_z
+        cloud = STATE.cloud_pts
+        cloud_frame = getattr(STATE, 'cloud_frame', '')
+        model=STATE.robot_projection;tilt=STATE.body_tilt
+        joints={k:v for k,v in STATE.projection_joints.items() if time.monotonic()-STATE.projection_joint_times.get(k,0)<.5}
+        ground_frames=[p for t,p in STATE.ground_live_frames if time.monotonic()-t<3.]
+    if (pose is None or body_z is None or not math.isfinite(body_z)
+            or STATE.age_of('pose') is None or STATE.age_of('pose') > 1.5):
+        raise ValueError('定位位姿未就绪或已过期，无法选择地面拟合区域')
+    xy = pose[:2]
+    if realtime:
+        if cloud is None or cloud_frame != 'map' or (STATE.age_of('cloud_map') if STATE.age_of('cloud_map') is not None else 999) > 3:
+            raise ValueError('实时建图需要新鲜的map坐标系点云才能同步地面')
+        points = np.vstack([cloud,*ground_frames]) if ground_frames else cloud
+    else:
+        path = str(UI['nav_pcd'].value or '') if UI.get('nav_pcd') else ''
+        if not path or not os.path.isfile(path):
+            raise ValueError('请先选择导航PCD，再同步地面')
+        points = await asyncio.to_thread(lambda: np.column_stack(parse_pcd_xyz(path)))
+    hint=None
+    if model is not None:
+        try:hint=model.floor_hint(joints,body_z,tilt)
+        except ValueError as exc:push_log('warn',f'地面拟合未采用轮模型提示：{exc}')
+    plane = await asyncio.to_thread(estimate_ground, points, xy, 6.0, body_z=body_z,height_hint=hint)
+    if not realtime:
+        await asyncio.to_thread(save_map_ground, path, vars(plane), xy)
+    with STATE.lock:
+        STATE.ground_model = (plane, xy)
+    return plane, xy
 
 
 async def sync_nav_ground() -> None:
-    with STATE.lock:
-        pose_z = STATE.pose_z
-    if pose_z is not None:
-        ground = pose_z + GROUND_OFFSET_FROM_FOOTPRINT
-    elif UI.get("ground_z"):
-        ground = float(UI["ground_z"].value or 0.139)
-    else:
-        ui.notify("没有位姿，无法同步当前地面", type="negative")
+    try:
+        realtime = _slam_uses_live_map()
+        plane, xy = await navigation_ground_model(realtime)
+    except (ValueError, OSError) as exc:
+        push_log('err', f'同步地面失败：{exc}')
+        notify_user(f'同步地面失败：{exc}', type='negative')
         return
-    if UI.get("nav_ground_z"):
-        UI["nav_ground_z"].value = round(float(ground), 3)
-    ui.notify(f"已同步当前地面 {ground:+.3f} m；启动导航时生效", type="positive")
+    ground = float(plane.height(*xy))
+    for name in ('nav_ground_z', 'ground_z'):
+        if UI.get(name):
+            UI[name].value = round(ground, 3)
+    draw_grid(force=True)
+    msg = (f'地图拟合地面 {ground:+.3f} m，支持{plane.support}个回波点，'
+           f'残差P95={plane.residual*1000:.0f} mm；'
+           + ('实时平面将在本次启动生效' if realtime else '已保存，重启后按地图恢复'))
+    push_log('info', msg)
+    notify_user(msg, type='positive')
 
 
 def refresh_console() -> None:
@@ -4175,13 +5415,13 @@ def refresh_console() -> None:
         else:
             _set(UI["ros_reason"], "ROS worker 启动中…", COL_WARN)
 
-    loc_session = str(loc.get("session", "—"))
+    loc_session = "SLAM位姿估计" if _slam_uses_live_map() else str(loc.get("session", "—"))
     map_session = str(mapping.get("session", "—"))
     nav_text = "就绪" if nav_ready is True else (
         "阻塞" if nav_ready is False else "未启动")
     nav_color = COL_OK if nav_ready is True else (
         COL_ERR if nav_ready is False else MUTED)
-    loc_running = STATE.loc_node_up or (
+    loc_running = _slam_uses_live_map() or STATE.loc_node_up or (
         PROCS.desk_mode in ("fast_lio_loc", "fast_lio_realtime")
         and PROCS.running("desk"))
     map_running = STATE.map_node_up or (
@@ -4299,7 +5539,7 @@ def refresh_console() -> None:
                  f"x={pose[0]:+.2f} y={pose[1]:+.2f} yaw={math.degrees(pose[2]):+.1f}°")
     if UI.get("nav_pcd_match"):
         realtime = bool(
-            PROCS.desk_mode == "fast_lio_realtime" and PROCS.running("desk"))
+            _slam_uses_live_map())
         nav_pcd = str(UI["nav_pcd"].value or "") if UI.get("nav_pcd") else ""
         loc_map = str(loc.get("map_path", "") or "")
         if realtime:
@@ -4315,10 +5555,12 @@ def refresh_console() -> None:
             _set(UI["nav_pcd_match"], "—", MUTED)
     if UI.get("nav_ground_match"):
         try:
-            nav_g = float(UI["nav_ground_z"].value) if UI.get("nav_ground_z") else 0.139
+            nav_g = float(UI["nav_ground_z"].value) if UI.get("nav_ground_z") else DEFAULT_NAV_GROUND
         except (TypeError, ValueError):
             nav_g = None
-        loc_g = pose_z + GROUND_OFFSET_FROM_FOOTPRINT if pose_z is not None else None
+        with STATE.lock:
+            fitted = STATE.ground_model
+        loc_g = float(fitted[0].height(*fitted[1])) if fitted is not None else None
         if nav_g is None or loc_g is None:
             _set(UI["nav_ground_match"], "—", MUTED)
         else:
@@ -4665,6 +5907,8 @@ def _chain_html() -> str:
         '绿=当前有数据 · 灰=未启动 · 红=节点在但数据缺失/过期</div>')
 
 def _chain_hint() -> str:
+    if PROCS.running('desk') and not getattr(PROCS, 'slam_selection', {}).get('navigation_allowed', True):
+        return '离线建图进行中；结束保存PCD后进入定位，或停止后选择实时模式进行建图导航'
     checks = [
         ("/livox/lidar", "livox_lidar", "启动 Livox 驱动（定位数据链）"),
         ("/livox/imu", "livox_imu", "检查 Livox IMU/驱动"),
@@ -4681,7 +5925,11 @@ def _chain_hint() -> str:
         ("/n01/live_navigation/hive2_candidate_path", "plan_path",
          "等待规划器产生局部路径"),
     ]
-    if not STATE.loc.get("map_loaded"):
+    if PROCS.desk_mode == 'mapping' and PROCS.running('desk'):
+        if not _mapping_navigation_ready():
+            return '下一步：等待甲方建图会话和新鲜位姿就绪'
+        checks = [entry for entry in checks if entry[1] != 'loc_status']
+    elif not STATE.loc.get("map_loaded"):
         return "下一步：加载 PCD 地图"
     for topic, key, action in checks:
         # 与链路卡使用同一判据：只有“红”才算断点。规划输出空闲时是灰，
@@ -4722,6 +5970,11 @@ def refresh_panels() -> None:
     """Refresh localization/mapping/freshness labels that refresh_console does not own."""
     if not UI.get("loc_desk"):
         return
+    # Backend changes take effect on a new launch, not on the running chain.
+    desk_running = PROCS.running('desk')
+    for key in ('slam_backend', 'slam_map_mode', 'offline_map_start', 'offline_loc_start', 'realtime_slam_start'):
+        if UI.get(key):
+            UI[key].set_enabled(not desk_running)
     with STATE.lock:
         loc = dict(STATE.loc)
         mapping = dict(STATE.mapping)
@@ -4733,7 +5986,7 @@ def refresh_panels() -> None:
     ml = loc.get("map_loaded")
     ro = loc.get("reloc_ok")
     fit = loc.get("reloc_fitness")
-    loc_running = STATE.loc_node_up or (
+    loc_running = _slam_uses_live_map() or STATE.loc_node_up or (
         PROCS.desk_mode in ("fast_lio_loc", "fast_lio_realtime")
         and PROCS.running("desk"))
     _set(UI["loc_desk"], "运行" if loc_running else "停止",
@@ -4759,12 +6012,13 @@ def refresh_panels() -> None:
          f"{sess} · map={'Y' if ml else 'N'} · reloc={'Y' if ro else 'N'}"
          f" · fit={'—' if fit is None else f'{float(fit):.3f}'}")
     _set(UI["loc_ground"],
-         "—" if pose_z is None else f"{pose_z + GROUND_OFFSET_FROM_FOOTPRINT:+.2f}")
+         "请同步地图地面" if STATE.ground_model is None else
+         f"{STATE.ground_model[0].height(*STATE.ground_model[1]):+.3f} m（点云拟合）")
     _set(UI["l_fresh"],
          f"cloud {_age_text('input_cloud')} · pose {_age_text('pose')}",
          _fresh_color(_worst_age(STATE.age_of("input_cloud"), STATE.age_of("pose"))))
     _set(UI["tf_check"],
-         "map→base_footprint 有" if pose_age is not None and pose_age <= 1.0 else "—",
+         "map→base_link 有" if pose_age is not None and pose_age <= 1.0 else "—",
          COL_OK if pose_age is not None and pose_age <= 1.0 else MUTED)
     if UI.get("nav_pcd_match") and UI.get("loc_pcd_match"):
         _set(UI["loc_pcd_match"], UI["nav_pcd_match"].text)
@@ -4777,15 +6031,18 @@ def refresh_panels() -> None:
     _set(UI["n_fresh"], _age_text("body_pose"),
          _fresh_color(STATE.age_of("body_pose")))
     if UI.get("drive_ready"):
-        tracking = str(loc.get("session", "")).lower() == "tracking"
+        mapping_mode = PROCS.running('desk') and PROCS.desk_mode == 'mapping'
+        tracking = _mapping_navigation_ready() if mapping_mode else str(loc.get("session", "")).lower() == "tracking"
         body_age = STATE.age_of("body_pose")
         path_age = STATE.age_of("plan_path")
         # 空 Path（轨迹清空）会刷新 age，单看 age 会把"已清空"当新鲜；
         # 这里要求活动路径 + 2 s 窗口，与 _chain_limit("plan_path") 一致。
         path_ok = bool(STATE.plan_active) and path_age is not None and path_age <= 2.0
         reasons = []
+        if not getattr(PROCS, 'slam_selection', {}).get('navigation_allowed', True):
+            reasons.append('离线建图未进入定位')
         if not tracking:
-            reasons.append("未 tracking")
+            reasons.append("SLAM位姿未就绪" if mapping_mode else "未 tracking")
         if body_age is None or body_age > 0.5:
             reasons.append("/body_pose 过期")
         if not path_ok:
@@ -4800,6 +6057,13 @@ def refresh_panels() -> None:
             UI["drive_button"].set_enabled(can_drive)
     if UI.get("slow_status"):
         _set(UI["slow_status"], str(getattr(STATE, "slow_status", "") or "—"))
+    if UI.get('motion_result'):
+        _set(UI['motion_result'], STATE.motion_result)
+    if UI.get('slam_map_mode') and UI['slam_map_mode'].value == FAST_MODE_REALTIME:
+        slam_running = _slam_uses_live_map()
+        _set(UI['loc_session'], '实时SLAM（建图＋位姿估计）' if slam_running else '实时SLAM未启动', COL_OK if slam_running else MUTED)
+        _set(UI['loc_match'], '位姿新鲜' if slam_running and pose_age is not None and pose_age <= .7 else '等待新鲜位姿', COL_OK if slam_running and pose_age is not None and pose_age <= .7 else COL_WARN)
+        _set(UI['loc_track_result'], '无需旧地图重定位；导航仍需单独启动', MUTED)
     refresh_lifecycle()
 
 
@@ -4817,6 +6081,13 @@ def build_data_chain_panel() -> None:
 
 
 def build_console_page() -> None:
+    with STATE.lock:
+        current_map_path = str(STATE.loc.get('map_path', '') or '')
+    if _saved_ground is not None:
+        with STATE.lock:
+            if STATE.ground_model is None:
+                STATE.ground_model = (GroundPlane(**{k:_saved_ground[k] for k in ('a','b','c','support','residual')}),
+                                      tuple(_saved_ground['reference_xy']))
     ui.dark_mode().enable()
     ui.add_head_html("""
     <style>
@@ -4835,16 +6106,16 @@ def build_console_page() -> None:
 
     with ui.header().classes("items-center justify-between bg-slate-950 px-4 py-2"):
         with ui.column().classes("gap-0"):
-            ui.label("N-01 机器人总控制台").classes(
+            ui.label("R2 机器人总控制台").classes(
                 "text-lg font-bold text-white")
-            ui.label("建图定位后端 → 标准适配器 → SCAN 导航") \
+            ui.label("建图定位后端 → 标准适配器 → SCAN 导航")\
                 .classes("text-xs text-slate-400")
         with ui.column().classes("items-end gap-0"):
             with ui.row().classes("items-center gap-2"):
-                ui.button("RViz", icon="visibility", on_click=start_selected_rviz) \
+                ui.button("RViz", icon="visibility", on_click=start_selected_rviz)\
                     .props("outline dense color=secondary")
-                ui.button(icon="visibility_off", on_click=stop_rviz) \
-                    .props("flat round dense color=secondary") \
+                ui.button(icon="visibility_off", on_click=stop_rviz)\
+                    .props("flat round dense color=secondary")\
                     .tooltip("停止 RViz")
                 UI["ros_badge"] = ui.label("ROS 未连接").classes("text-sm font-bold")
                 _lbl(f"domain={os.environ.get('ROS_DOMAIN_ID', '0')} · {ROSK}",
@@ -4854,28 +6125,25 @@ def build_console_page() -> None:
 
     with ui.column().classes("w-full max-w-[1800px] mx-auto p-3 gap-3"):
         # ---------------- top: shared map ----------------
-        with _card2("共享地图视图（投影栅格 / 目标选取）"):
-            with ui.row().classes("items-center gap-3 w-full flex-wrap"):
-                UI["src"] = ui.radio(
-                    ["自动", "定位地图", "建图", "导航栅格"], value="自动",
-                    on_change=lambda _: draw_grid(force=True)).props("inline dense")
-                UI["range"] = ui.select(
-                    ["10m", "20m", "40m"], value="20m", label="视野",
-                    on_change=lambda _: draw_grid(force=True)) \
-                    .classes("w-24").props("dense")
-                UI["ground_z"] = ui.number(
-                    "地面 z", value=0.139, format="%.2f",
-                    on_change=lambda _: draw_grid(force=True)) \
-                    .classes("w-28").props("dense")
-                UI["trail_on"] = ui.checkbox(
-                    "轨迹", value=True, on_change=lambda _: draw_grid(force=True))
-            UI["grid_info"] = ui.label("等待地图数据…").classes(
-                "text-xs text-slate-400")
-            UI["map_image"] = ui.interactive_image(
-                _BLANK_PNG, on_mouse=on_map_click, events=["click"]) \
-                .classes("w-full max-w-[580px] max-h-[52vh] mx-auto rounded border border-slate-800")
-            _lbl("点击地图会把 map 坐标填入“导航”页目标 x/y。",
-                 "text-xs text-slate-500")
+        with _card2("实时地图"):
+            with ui.row().classes('w-full items-start gap-4 flex-wrap lg:flex-nowrap'):
+                with ui.column().classes('grow min-w-0 items-center'):
+                    UI['map_image']=ui.interactive_image(
+                        _BLANK_PNG,on_mouse=on_map_click,events=['click']).classes(
+                        'w-full max-w-[860px] mx-auto rounded-xl border border-slate-700')
+                with ui.column().classes('w-52 gap-3 shrink-0'):
+                    UI['src']=ui.select(['自动','建图','定位地图','导航栅格'],value='自动',
+                        label='地图模式',on_change=lambda _:draw_grid(force=True)).props('outlined dense').classes('w-full')
+                    UI['grid_info']=ui.label('等待地图数据…').classes('text-xs text-slate-400 leading-relaxed')
+                    UI['range']=ui.select(['10m','20m','40m'],value='10m',label='视野',
+                        on_change=lambda _:draw_grid(force=True)).props('outlined dense').classes('w-full')
+                    UI['trail_on']=ui.checkbox('显示行驶轨迹',value=True,on_change=lambda _:draw_grid(force=True))
+                    ui.label('白色实体：URDF碰撞几何\n紫色光晕：机器人规划包络\n琥珀色：环境外扩6cm\n青绿：实时障碍\n灰蓝：参考环境').classes('text-xs text-slate-300 whitespace-pre-line')
+                    ui.label('环境余量6cm只计一次；紫色为机身近似覆盖，琥珀色为环境外扩（5cm栅格离散）。').classes('text-xs text-slate-500')
+                    with ui.expansion('显示参数',icon='tune').classes('w-full'):
+                        UI['ground_z']=ui.number('地面 z',value=DEFAULT_NAV_GROUND,format='%.2f',
+                            on_change=lambda _:draw_grid(force=True)).props('dense').classes('w-full')
+                    ui.label('点击地图设置导航目标坐标。').classes('text-xs text-slate-400')
 
         # ---------------- middle: tabs ----------------
         with ui.tabs().classes("w-full bg-slate-900 rounded-lg").props(
@@ -4890,36 +6158,43 @@ def build_console_page() -> None:
                 with _card2("整体项目生命周期（总览）"):
                     with ui.row().classes("w-full items-end gap-3 flex-wrap"):
                         UI["slam_backend"] = ui.select(
-                            BACKEND_OPTIONS, value=BACKEND_VENDOR,
-                            label="建图定位后端") \
+                            BACKEND_OPTIONS, value=(BACKEND_FAST_LIO if PROCS.running('desk')
+                                and str(PROCS.desk_mode).startswith('fast_lio') else BACKEND_VENDOR),
+                            label="方法", on_change=lambda _: refresh_backend_descriptions())\
                             .classes("w-72").props("outlined dense")
-                        UI["fast_lio_mode"] = ui.select(
-                            [FAST_MODE_OFFLINE, FAST_MODE_REALTIME],
-                            value=FAST_MODE_OFFLINE, label="FAST-LIO2 模式") \
+                        UI["slam_map_mode"] = ui.select(
+                            {FAST_MODE_OFFLINE: '离线', FAST_MODE_REALTIME: '实时'},
+                            value=(FAST_MODE_REALTIME if _slam_uses_live_map()
+                                   else FAST_MODE_OFFLINE), label="地图模式",
+                            on_change=lambda _: refresh_backend_descriptions())\
                             .classes("w-72").props("outlined dense")
-                        UI["slam_task"] = ui.select(
-                            ["定位", "建图"], value="定位", label="任务") \
-                            .classes("w-32").props("outlined dense")
-                        _lbl("两个后端统一输出 /robot_pose、/loc_status，"
-                             "再由 N-01 Adapter 转为导航输入；FAST-LIO2 实时模式"
-                             "忽略任务选项，直接启动建图定位一体链。",
-                             "text-xs text-slate-400 pb-2")
+                        UI['backend_help'] = ui.label('').classes('text-xs text-cyan-200 pb-2')
+                    _lbl('甲方 SLAM3D Lite / 自部署 FAST-LIO2 → 标准适配器 → SCAN 导航。'
+                         '离线地图指已保存的 PCD，定位仍使用当前传感器；bag 回放是另一种数据来源。',
+                         'text-xs text-slate-400')
+                    _lbl('先选方法和地图模式，再按下方步骤操作；导航与行驶分别手动启动。', 'text-xs text-slate-500')
                     with ui.grid(columns=5).classes("w-full gap-2"):
-                        UI["gl_loc"] = _kv("定位进程")
-                        UI["gl_map"] = _kv("建图进程")
+                        UI["gl_loc"] = _kv("位姿估计")
+                        UI["gl_map"] = _kv("地图更新")
                         UI["gl_nav"] = _kv("导航")
                         UI["gl_bag"] = _kv("录包")
                         UI["gl_rviz"] = _kv("RViz")
+                    with ui.row().classes('items-center gap-2 flex-wrap') as offline_actions:
+                        UI['offline_slam_actions'] = offline_actions
+                        UI['offline_map_start'] = ui.button('① 启动建图', on_click=lambda: lifecycle_start_slam('mapping')).props('color=positive')
+                        ui.button('结束建图并保存', on_click=stop_desk).props('outline color=positive')
+                        UI['offline_loc_start'] = ui.button('② 启动定位', on_click=lambda: lifecycle_start_slam('loc')).props('color=positive')
+                    with ui.row().classes('items-center gap-2 flex-wrap') as realtime_actions:
+                        UI['realtime_slam_actions'] = realtime_actions
+                        UI['realtime_slam_start'] = ui.button('① 启动实时SLAM', on_click=start_selected_slam_task).props('color=positive')
+                        ui.label('同时建图与估计位姿；不会自动启动导航或行驶').classes('text-xs text-slate-400')
                     with ui.row().classes("items-center gap-2 flex-wrap"):
-                        ui.button("启动建图定位", on_click=start_selected_slam_task) \
-                            .props("color=positive")
-                        ui.button("停止建图定位", on_click=stop_desk) \
-                            .props("color=negative")
-                        ui.button("启动导航", on_click=lambda: navigation_action("start")) \
+                        ui.button('停止SLAM / 定位', on_click=stop_desk).props('color=negative')
+                        ui.button("启动导航", on_click=lambda: navigation_action("start"))\
                             .props("color=primary")
-                        ui.button("停止导航", on_click=lambda: navigation_action("stop")) \
+                        ui.button("停止导航", on_click=lambda: navigation_action("stop"))\
                             .props("outline color=primary")
-                        ui.button("停止全部（保存建图）", on_click=stop_managed_all) \
+                        ui.button("停止本 GUI 模块（保存建图）", on_click=stop_managed_all)\
                             .props("color=negative")
                         ui.button("刷新状态", on_click=refresh_console).props("flat dense")
                         UI["mg_skip_rsp"] = ui.checkbox(
@@ -4930,17 +6205,18 @@ def build_console_page() -> None:
 
             with ui.tab_panel("建图"):
                 with _card2("① 建图模块（建图 + bag 录制）"):
+                    ui.button("建图 RViz", icon="visibility", on_click=lambda: start_slam_rviz("mapping")).props("outline dense")
                     with ui.row().classes("w-full gap-4 items-start"):
                         with ui.column().classes("w-full lg:w-[430px] gap-2"):
                             UI["map_save_dir"] = ui.input(
                                 "甲方 SLAM3D Lite 保存目录",
-                                value="/home/demo/lyy/slam_data/maps") \
+                                value="/home/demo/lyy/slam_data/maps")\
                                 .classes("w-full")
                             UI["fast_lio_map"] = ui.input(
-                                "FAST-LIO2 输出 PCD", value=DEFAULT_FAST_LIO_MAP) \
+                                "FAST-LIO2 输出 PCD", value=DEFAULT_FAST_LIO_MAP)\
                                 .classes("w-full")
-                            _lbl("在“总控 / 适配器”选择后端与“建图”任务后统一启动；"
-                                 "停止建图定位时自动保存并结束 bag。",
+                            _lbl("在总控选择方法与地图模式：离线模式点击“启动建图”，实时模式点击“启动实时SLAM”；"
+                                 "结束建图时保存地图并结束 bag。",
                                  "text-xs text-slate-400")
                         with ui.column().classes("w-full grow gap-2"):
                             with ui.grid(columns=4).classes("w-full gap-x-3 gap-y-1 status-grid"):
@@ -4959,32 +6235,38 @@ def build_console_page() -> None:
                                     UI["in_cloud_age"] = _kv("点云年龄")
 
             with ui.tab_panel("定位"):
-                with _card2("② 定位模块（定位 + 适配 + 导航桥接）"):
+                with _card2("位姿与离线地图定位"):
+                    UI['loc_workflow'] = ui.label('').classes('text-xs text-amber-300')
+                    ui.button("定位 RViz", icon="visibility", on_click=lambda: start_slam_rviz("loc")).props("outline dense")
                     with ui.row().classes("w-full gap-4 items-start"):
-                        with ui.column().classes("w-full lg:w-[470px] gap-2"):
-                            _lbl("流程：启动定位 → 顶栏 RViz 手动选初始位姿 → 等待匹配 → "
-                                 "进入跟踪 → 数据链绿后启动导航",
-                                 "text-xs text-amber-300")
+                        with ui.column().classes("w-full lg:w-[470px] gap-2") as offline_loc_controls:
+                            UI['offline_localization_controls'] = offline_loc_controls
                             UI["map_path"] = ui.input(
                                 "定位参考 PCD",
-                                value=(DEFAULT_MAP_PATH if os.path.isfile(DEFAULT_MAP_PATH) else "")) \
+                                value=(current_map_path if os.path.isfile(current_map_path) else
+                                       (DEFAULT_MAP_PATH if os.path.isfile(DEFAULT_MAP_PATH) else "")))\
                                 .classes("w-full")
-                            _lbl("① 在“总控 / 适配器”选择后端与“定位”任务并启动。",
-                                 "text-xs text-slate-400")
+                            _lbl('PCD 是定位参考地图；bag 保存历史传感器记录，在线导航不要求加载 bag。',
+                                 'text-xs text-slate-400')
                             with ui.row().classes("gap-2 flex-wrap"):
-                                ui.button("② 选择/加载地图", on_click=apply_map_path) \
+                                UI['loc_map_action'] = ui.button("② 选择/加载地图", on_click=apply_map_path)\
                                     .props("outline dense")
-                                ui.button("③ 开始重定位", on_click=begin_relocalization) \
+                                ui.button("③ 开始重定位", on_click=begin_relocalization)\
                                     .props("outline dense")
+                            with ui.expansion('建图 bag（可选，只读核验）', icon='inventory_2').classes('w-full compact-expansion'):
+                                UI['loc_bag_path'] = ui.input('bag 目录或 metadata.yaml').classes('w-full')
+                                ui.button('核验 bag 记录', on_click=inspect_selected_bag).props('outline dense')
+                                UI['loc_bag_result'] = ui.label('未选择历史记录，不影响 PCD 在线定位。').classes('text-xs text-slate-400 break-all')
+                                _lbl('这里只核验历史记录，不回放、不发布 TF / 位姿。离线重建需使用独立回放入口，不能将历史数据混入当前实机链路。', 'text-xs text-slate-400')
                             with ui.row().classes("gap-2 items-center flex-wrap"):
                                 UI["ip_x"] = ui.number("x", value=0.0, format="%.2f").classes("w-24")
                                 UI["ip_y"] = ui.number("y", value=0.0, format="%.2f").classes("w-24")
                                 UI["ip_yaw"] = ui.number("yaw", value=0.0, format="%.2f").classes("w-24")
                                 UI["ip_frame"] = ui.input("frame", value="map").classes("w-24")
-                                ui.button("④ 发送初始位姿", on_click=send_initialpose) \
+                                ui.button("④ 发送初始位姿", on_click=send_initialpose)\
                                     .props("outline dense")
                             with ui.row().classes("gap-2 flex-wrap"):
-                                ui.button("⑤ 进入跟踪", on_click=request_enter_tracking) \
+                                ui.button("⑤ 进入跟踪", on_click=request_enter_tracking)\
                                     .props("outline dense")
                             _lbl("初始位姿：重定位阶段需要发布以初始化搜索；进入 tracking 后不需要。",
                                  "text-xs text-slate-500")
@@ -4992,13 +6274,14 @@ def build_console_page() -> None:
                             with ui.grid(columns=4).classes("w-full gap-x-3 gap-y-1 status-grid"):
                                 UI["life_loc"] = _kv("生命周期")
                                 UI["loc_session"] = _kv("定位会话")
-                                UI["loc_match"] = _kv("匹配状态")
+                                UI["loc_match"] = _kv("位姿状态")
                                 UI["loc_pose"] = _kv("当前位姿")
                                 UI["l_fresh"] = _kv("数据新鲜度")
                                 UI["loc_rviz"] = _kv("RViz")
                             UI["loc_track_result"] = _kv("跟踪结果")
                             with ui.expansion("高级定位状态", icon="tune").classes(
-                                    "w-full compact-expansion"):
+                                    "w-full compact-expansion") as offline_advanced:
+                                UI['offline_loc_advanced'] = offline_advanced
                                 with ui.grid(columns=4).classes("w-full gap-x-3 gap-y-1"):
                                     UI["loc_desk"] = _kv("定位进程")
                                     UI["loc_map_loaded"] = _kv("地图加载")
@@ -5015,7 +6298,14 @@ def build_console_page() -> None:
                                 UI["loc_map_path"] = _kv("地图路径")
 
             with ui.tab_panel("导航"):
-                with _card2("③ 导航模块（只规划，不直接驱动底盘）"):
+                with _card2("③ 导航模块"):
+                    UI['navigation_mode']=ui.select(['地图选点移动','手动记录路线'],value=TASK_STATE.mode,
+                        on_change=lambda e:change_navigation_mode(e.value),label='导航模式').classes('w-64')
+                    _lbl('地图模式：选点后规划并开始行驶。路线模式：遥控到点停车→记录→保存→加载→开始运行（先到起点）。','text-xs text-slate-400')
+                    with ui.row().classes("gap-2"):
+                        ui.button('结束当前任务',icon='stop_circle',on_click=stop_slow_motion).props('outline dense color=negative')
+                        ui.button("导航 RViz", icon="visibility", on_click=start_nav_visualization).props("outline dense")
+                        ui.button("关闭导航 RViz", on_click=stop_nav_visualization).props("flat dense")
                     with ui.row().classes("w-full gap-4 items-start"):
                         with ui.column().classes("w-full lg:w-[430px] gap-2"):
                             UI["nav_pcd"] = ui.input(
@@ -5024,33 +6314,37 @@ def build_console_page() -> None:
                                        if os.path.isfile(DEFAULT_MAP_PATH) else ""),
                             ).classes("w-full")
                             UI["nav_ground_z"] = ui.number(
-                                "导航地面 z", value=0.139, format="%.2f").classes("w-28")
+                                "导航地面 z", value=DEFAULT_NAV_GROUND, format="%.2f").classes("w-28")
                             with ui.row().classes("gap-2 flex-wrap"):
-                                ui.button("同步 PCD", on_click=sync_nav_pcd) \
+                                ui.button("同步 PCD", on_click=sync_nav_pcd)\
                                     .props("outline dense")
-                                ui.button("同步地面", on_click=sync_nav_ground) \
+                                ui.button("同步地面", on_click=sync_nav_ground)\
                                     .props("outline dense")
-                            with ui.row().classes("gap-2 items-center flex-wrap"):
+                            with ui.row().classes("gap-2 items-center flex-wrap").bind_visibility_from(UI['navigation_mode'],'value',backward=lambda v:v=='地图选点移动'):
                                 UI["goal_x"] = ui.number("目标 x", value=0.0, format="%.2f").classes("w-28")
                                 UI["goal_y"] = ui.number("目标 y", value=0.0, format="%.2f").classes("w-28")
                                 UI["goal_yaw"] = ui.number("目标 yaw", value=0.0, format="%.2f").classes("w-28")
-                                ui.button("发送导航目标", on_click=send_goal) \
+                                ui.button("发送导航目标", on_click=send_goal)\
                                     .props("color=primary")
                             _lbl("规划成功后，确认条件就绪再点“开始沿路径行驶”；不会自动动。",
                                  "text-xs text-amber-300")
+                            _lbl('速度上限支持0.01～0.8 m/s；更改后重新启动导航。实际速度还受路径、制动距离和轮转向约束限制。','text-xs text-slate-400')
                             UI["drive_ready"] = _kv("行驶条件")
                             with ui.row().classes("gap-2 items-center flex-wrap"):
                                 UI["slow_speed"] = ui.number(
-                                    "慢速 m/s", value=0.05, format="%.3f",
-                                    min=0.01, max=0.08).classes("w-28")
+                                    "速度上限 m/s", value=0.05, format="%.3f",
+                                    min=0.01, max=0.8).classes("w-28")
+                                UI['slow_cbf'] = ui.checkbox('启用 CBF', value=False)
                                 UI["drive_button"] = ui.button(
-                                    "开始沿路径行驶（慢速）",
-                                    on_click=start_slow_motion) \
-                                    .props("color=negative")
-                                ui.button("停止行驶（零速）", on_click=stop_slow_motion) \
+                                    "开始沿路径行驶",
+                                    on_click=start_slow_motion)\
+                                    .props("color=negative").bind_visibility_from(UI['navigation_mode'],'value',backward=lambda v:v=='地图选点移动')
+                                ui.button("停止行驶（零速）", on_click=stop_slow_motion)\
                                     .props("outline dense")
                             UI["slow_status"] = _kv("行驶状态")
+                            UI["motion_result"] = _kv("执行结果")
                             UI["goal_result"] = _kv("目标结果")
+                            build_teaching_panel()
                         with ui.column().classes("w-full grow gap-2"):
                             with ui.grid(columns=4).classes("w-full gap-x-3 gap-y-1 status-grid"):
                                 UI["life_nav"] = _kv("生命周期")
@@ -5059,7 +6353,7 @@ def build_console_page() -> None:
                                 UI["nav_global_plan"] = _kv("导航路径（动态更新）")
                                 UI["nav_feasibility"] = _kv("可行性")
                             UI["nav_blockers"] = _kv("阻塞项")
-                            UI["nav_start_summary"] = ui.label("导航生命周期：尚未操作") \
+                            UI["nav_start_summary"] = ui.label("导航生命周期：尚未操作")\
                                 .classes("text-xs whitespace-pre-wrap break-all w-full")
                             with ui.expansion("高级导航状态", icon="tune").classes(
                                     "w-full compact-expansion"):
@@ -5082,7 +6376,7 @@ def build_console_page() -> None:
                             ["全部", *NODE_CATEGORIES], value="全部", label="功能分类",
                             on_change=lambda _: refresh_health()).props("dense outlined").classes("w-52")
                         UI["node_search"] = ui.input(
-                            "搜索节点 / 进程 / 关键话题", on_change=lambda _: refresh_health()) \
+                            "搜索节点 / 进程 / 关键话题", on_change=lambda _: refresh_health())\
                             .props("dense outlined clearable").classes("grow")
                         ui.button("刷新节点", icon="refresh", on_click=refresh_census_now).props("flat dense")
                     UI["node_category_summary"] = ui.label("等待节点普查…").classes("text-xs text-slate-400")
@@ -5098,12 +6392,12 @@ def build_console_page() -> None:
                             ("category", "分类"), ("name", "节点"), ("role", "功能"),
                             ("count", "同名数"), ("state", "状态"),
                             ("owner", "进程/归属"), ("management", "管理入口"),
-                            ("topics", "关键发布话题"))], rows=[], row_key="name", pagination=10) \
+                            ("topics", "关键发布话题"))], rows=[], row_key="name", pagination=10)\
                         .props("dense flat bordered wrap-cells").classes("w-full")
                     UI["node_detail_select"] = ui.select(
-                        [], label="选择节点查看完整接口 / 填入停止计划", on_change=select_node_detail) \
+                        [], label="选择节点查看完整接口 / 填入停止计划", on_change=select_node_detail)\
                         .props("dense outlined clearable use-input").classes("w-full")
-                    UI["node_detail"] = ui.label("选择节点查看发布/订阅接口。") \
+                    UI["node_detail"] = ui.label("选择节点查看发布/订阅接口。")\
                         .classes("text-xs font-mono whitespace-pre-wrap max-h-52 overflow-auto w-full")
                     with ui.expansion("关键话题发布者", icon="hub").classes("w-full compact-expansion"):
                         UI["health_topics"] = ui.table(columns=[
@@ -5123,9 +6417,9 @@ def build_console_page() -> None:
                         UI["kill_target"] = ui.input("停止节点名").classes("w-full")
                         UI["kill_result"] = _kv("停止结果")
                         with ui.row().classes("gap-2"):
-                            ui.button("查看停止计划", on_click=show_kill_plan) \
+                            ui.button("查看停止计划", on_click=show_kill_plan)\
                                 .props("outline dense")
-                            ui.button("执行停止", on_click=kill_selected) \
+                            ui.button("执行停止", on_click=kill_selected)\
                                 .props("color=negative dense")
                     with ui.expansion("完整诊断信息", icon="monitor_heart").classes(
                             "w-full compact-expansion"):
@@ -5147,9 +6441,18 @@ def build_console_page() -> None:
         with ui.row().classes("w-full items-center gap-3"):
             ui.label("运行日志").classes("text-xs text-slate-400 shrink-0")
             UI["log"] = ui.log(max_lines=300).classes("w-full max-h-32 text-xs")
+    refresh_backend_descriptions()
 
 def build_page() -> None:
+    client=ui.context.client
+    view=UI.attach(client)
+    client.on_delete(lambda: UI.release(view))
     build_console_page()
+    # Element timers belong to this page and are cancelled on deletion. The
+    # process-wide worker and owned ROS nodes survive browser reconnects.
+    for interval,callback in ((.5,refresh_console),(.5,refresh_panels),(.5,refresh_chain),
+                              (1.,refresh_health),(.2,draw_grid),(.3,drain_logs)):
+        view.timers.append(ui.timer(interval,callback))
 
 
 _SHUTDOWN_DONE = False
@@ -5163,7 +6466,8 @@ def _shutdown_app() -> None:
     with STATE.lock:
         mode = PROCS.desk_mode
         session = str(STATE.mapping.get("session", "")).lower()
-    if mode == "mapping" and session == "mapping":
+    if (mode == "mapping" and session == "mapping" and PROCS.running("desk")
+            and getattr(PROCS, "slam_selection", {}).get("record_bag", True)):
         # 与交互路径 _close_mapping_session 对齐：同样是 60 s 保存超时。
         ok, text = PROCS.deactivate_mapping(timeout=60)
         push_log("ok" if ok else "err",
@@ -5227,13 +6531,7 @@ def main() -> None:
     atexit.register(_shutdown_app)
     app.on_shutdown(_shutdown_app)
     WORKER.start()
-    build_page()
-    ui.timer(0.5, refresh_console)
-    ui.timer(0.5, refresh_panels)
-    ui.timer(0.5, refresh_chain)
-    ui.timer(1.0, refresh_health)
-    ui.timer(2.0, lambda: draw_grid())
-    ui.timer(0.3, drain_logs)
+    ui.page('/')(build_page)
     host = os.environ.get("SLAM_GUI_HOST", "0.0.0.0")
     port = int(os.environ.get("SLAM_GUI_PORT", "8123"))
     ament = os.environ.get("AMENT_PREFIX_PATH", "")

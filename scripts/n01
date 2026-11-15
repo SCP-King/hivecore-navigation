@@ -21,8 +21,11 @@ Environment and read-only diagnostics:
   robot-pose-audit       Audit /robot_pose publisher endpoints and timing
 
 Live planning lifecycle:
-  gui [PORT]            Start the integrated SLAM3D Lite + Navigation GUI
+  gui [PORT]            Only start GUI + monitoring; modules start manually
   navigation start|status|stop
+  localization [ARGS]    Manually start vendor localization (requires chassis)
+  fast-lio-backend localization|mapping|realtime [ARGS]
+  motion [ROS ARGS]      Executor helper (disabled by default; use GUI normally)
   deploy                 Build and safely deploy N-01 live planning stack
   planning-smoke [ARGS]  READY-gated one-shot planning smoke test
   planning-acceptance    Goal-aware live planning acceptance; auto-stop stack
@@ -64,6 +67,9 @@ case "$COMMAND" in
   robot-pose-audit) exec bash "$ROOT/scripts/run_n01_robot_pose_source_audit.sh" "$@" ;;
   gui) exec bash "$ROOT/apps/n01_slam_gui/run_slam_lite_gui.sh" "$@" ;;
   navigation) exec bash "$ROOT/scripts/n01_navigation.sh" "$@" ;;
+  localization) exec bash "$ROOT/scripts/runtime/start_localization_stack.sh" "$@" ;;
+  fast-lio-backend) exec bash "$ROOT/scripts/runtime/start_fast_lio_gui_backend.sh" "$@" ;;
+  motion) exec bash "$ROOT/scripts/runtime/start_slow_motion.sh" "$@" ;;
   deploy) exec bash "$ROOT/scripts/deploy_n01_planning_fixes.sh" "$@" ;;
   planning-smoke) exec bash "$ROOT/scripts/run_n01_planning_smoke_test.sh" "$@" ;;
   planning-acceptance) exec bash "$ROOT/scripts/run_n01_planning_acceptance.sh" "$@" ;;

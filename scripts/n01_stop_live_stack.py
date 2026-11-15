@@ -13,7 +13,10 @@ import time
 from pathlib import Path
 
 MANAGED_EXECUTABLES = {
+    "n01_robot_footprint",
     "n01_navigation_path",
+    "n01_environment_display",
+    "n01_realtime_reference",
     "static_map_node",
     "n01_shadow_path_follower",
     "n01_live_runtime_supervisor",

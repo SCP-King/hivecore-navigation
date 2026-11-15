@@ -10,8 +10,15 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${DIR}/../.." && pwd -P)"
 export N01_NAV_REPO="${N01_NAV_REPO:-${REPO_ROOT}}"
+export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-55}"
+export OPENBLAS_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export OMP_NUM_THREADS=1
+export OMP_WAIT_POLICY=PASSIVE
 # 可通过 SLAM_ROSK 指向另一份兼容的 SLAM3D Lite 综合包。
-ROSK="${SLAM_ROSK:-/opt/slam3d_release}"
+source "$REPO_ROOT/scripts/lib/slam_runtime.sh"
+n01_select_slam_runtime
+ROSK="$SLAM_ROSK"
 export SLAM_ROSK="${ROSK}"
 SETUP="${ROSK}/setup_runtime.sh"
 
@@ -36,6 +43,7 @@ if [[ "${N01_GUI_CLEAN_ENV:-0}" != "1" ]]; then
               FASTDDS_DEFAULT_PROFILES_FILE ROS_SECURITY_ENABLE \
               ROS_SECURITY_STRATEGY ROS_SECURITY_KEYSTORE ROS_LOG_DIR \
               SLAM_GUI_HOST SLAM_GUI_PORT N01_NAV_REPO N01_RUNTIME_DIR \
+              N01_RUNTIME_RMW N01_CYCLONE_PREFIX N01_TRANSPORT_ROOT N01_RUNTIME_ROOT \
               N01_MAPPING_BAG_DIR N01_MAPPING_BAG_TOPICS; do
     if [[ -n "${!name:-}" ]]; then
       clean_env+=("${name}=${!name}")
@@ -51,7 +59,7 @@ fi
 
 # 关键：source Lite runtime，确保加载正确的 Lite 消息类型与动态库
 # shellcheck disable=SC1090
-source "${SETUP}"
+n01_source_slam_runtime
 
 # Fail closed if the runtime still resolves any old/FROZEN release prefix.
 while IFS= read -r prefix; do
@@ -77,7 +85,8 @@ echo "[INFO] localization prefix: ${LOC_PREFIX}"
 # Two-stage graph census: refresh ROS CLI discovery, then stop only a stale
 # N-01 navigation stack through its own ownership-aware lifecycle entrypoint.
 # Active Lite SLAM and robot drivers are protected and never killed here.
-python3 "${DIR}/tools/startup_preflight.py"
+# Opening the console must not stop/start navigation or refresh ROS daemons.
+# Module lifecycle operations are explicit GUI actions.
 
 # 避免 matplotlib 在只读 HOME 下报 cache 警告（nicegui 会带起 matplotlib）
 export MPLCONFIGDIR="${HOME}/.cache/matplotlib"
@@ -103,6 +112,8 @@ if [[ -z "${ROS_LOG_DIR:-}" ]]; then
 fi
 mkdir -p "${ROS_LOG_DIR}" 2>/dev/null || export ROS_LOG_DIR="${TMPDIR:-/tmp}/ros_log_gui"
 mkdir -p "${ROS_LOG_DIR}" 2>/dev/null || true
+source "${REPO_ROOT}/scripts/lib/ros_transport.sh"
+n01_configure_project_transport
 echo "[INFO] ROS_LOG_DIR=${ROS_LOG_DIR}  ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}  RMW=${RMW_IMPLEMENTATION:-默认}"
 
 export SLAM_GUI_HOST="${SLAM_GUI_HOST:-0.0.0.0}"
@@ -113,6 +124,7 @@ else
 fi
 
 echo "[INFO] SLAM lite GUI 启动: http://${SLAM_GUI_HOST}:${SLAM_GUI_PORT}"
+echo "[INFO] 仅启动界面与监控；建图/定位/导航由按钮手动启动，底盘和雷达由桌面底盘入口独立管理。"
 echo "[INFO] 浏览器打开上面地址（远程机器可做端口转发：ssh -L ${SLAM_GUI_PORT}:127.0.0.1:${SLAM_GUI_PORT} ...）"
 echo "[INFO] Ctrl+C 退出"
 exec python3 -u "${DIR}/slam_lite_gui.py"

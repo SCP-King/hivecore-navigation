@@ -2,35 +2,38 @@
   ros__parameters:
     tracking_backend: mola
     input_scan_topic: /livox/lidar/geo_filtered
-    pose_topic: /robot_pose
+    pose_topic: /n01/vendor_localization/pose_raw
     localization_map_topic: /localization_map
     # Observe: timer (not per-scan). Pose/TF stay on-scan.
     enable_publish_localization_map: true
     map_publish_period: 2.0
     map_publish_voxel_leaf_size: 0.2
     loc_status_topic: /loc_status
-    initial_pose_topic: /initialpose
+    initial_pose_topic: /n01/vendor_localization/initialpose
     imu_topic: /imu/data
-    tracking_frame: base_footprint
+    tracking_frame: lidar_link
     map_frame: map
     scan_frame: lidar_link
     imu_frame: imu_link
-    mola_vehicle_frame: base_link
+    mola_vehicle_frame: lidar_link
     # SSOT for prior PCD; ~/load_map re-reads this param. Launch map_path:= overrides only if non-empty.
-    map_path: /home/demo/lyy/slam_data/maps/mapping_lite_20261109_140536_087.pcd
+    # Selected explicitly through GUI; do not auto-load a deleted/stale site map.
+    map_path: ""
     auto_activate_localization: true
-    enable_imu_fusion: true
+    # Low-speed localization profile: linear LiDAR deskew avoids the vendor
+    # synchronous IMU release stall observed during real motion. IMU tilt
+    # preprocessing remains enabled. High-dynamics IMU fusion is not validated.
+    enable_imu_fusion: false
     # false: keep YAML vehicle_to_scan_* / IMU mounts; true: one-shot TF adopt
-    enable_extrinsic_tf_override: false
+    enable_extrinsic_tf_override: true
     # Resolved via hivecore_slam3d_lite_mapping share (same cookbook as mapping lite)
     mola_pipeline_yaml: config/mola/lidar3d_livox_geo_filtered.yaml
     mola_state_estimator_yaml: ""
-    lidar_imu_params_file: ""
-    vehicle_to_scan_xyz: [0.295, 0.0, 0.0]
+    lidar_imu_params_file: /home/demo/lyy/hivecore-navigation/config/n01_static_tf_params.yaml
+    # Relocalizer returns map<-scan. Use the same sensor frame for FE deltas.
+    # The N-01 adapter composes the declared lidar->body TF exactly once.
+    vehicle_to_scan_xyz: [0.0, 0.0, 0.0]
     vehicle_to_scan_rpy: [0.0, 0.0, 0.0]
-    # Unified with the Hive2 motion RSP: base_footprint is 0.90 below base_link.
-    tracking_to_vehicle_xyz: [0.0, 0.0, 0.9]
-    tracking_to_vehicle_rpy: [0.0, 0.0, 0.0]
     # Tracking milestone scan-to-map refine (slam3d loc defaults)
     milestone_linear_m: 2.0
     milestone_angular_deg: 15.0

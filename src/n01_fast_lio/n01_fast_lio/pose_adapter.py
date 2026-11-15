@@ -2,10 +2,10 @@
 
 FAST-LIO2 publishes its own map->imu_link odometry and does not publish TF.
 This adapter composes that pose with the existing static TF chain
-(imu_link -> base_footprint) and publishes the N-01 localization contract:
-  /robot_pose (map -> base_footprint)
+(imu_link -> base_link) and publishes the N-01 localization contract:
+  /robot_pose (map -> base_link)
   /loc_status (synthetic tracking status while FAST-LIO is running)
-  map -> base_footprint TF
+  map -> base_link TF
 It never broadcasts map->imu_link, so the existing TF tree keeps one parent.
 """
 from __future__ import annotations
@@ -62,7 +62,7 @@ class FastLioPoseAdapter(Node):
         self.declare_parameter("status_topic", "/loc_status")
         self.declare_parameter("map_frame", "map")
         self.declare_parameter("fastlio_map_frame", "n01_fast_lio_map")
-        self.declare_parameter("base_frame", "base_footprint")
+        self.declare_parameter("base_frame", "base_link")
         self.declare_parameter("imu_frame", "imu_link")
         self.declare_parameter("alignment_topic", "/n01/fast_lio/map_alignment")
         self.declare_parameter("require_alignment", True)
@@ -93,7 +93,7 @@ class FastLioPoseAdapter(Node):
         self.published = 0
         self.tf_misses = 0
         self.get_logger().warn(
-            "FAST-LIO2 N-01 adapter: map->base_footprint composition; "
+            "FAST-LIO2 N-01 adapter: map->base_link composition; "
             "synthetic tracking status; no relocalization")
 
     def _compose(self, msg):

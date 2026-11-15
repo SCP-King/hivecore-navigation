@@ -50,11 +50,18 @@ namespace scan_planner
 
   std::vector<Eigen::Vector3d> globalAStar2D(
       const pcl::PointCloud<pcl::PointXYZ> &cloud,
+      const std::vector<Eigen::Vector3d> &live_points,
       const Eigen::Vector3d &source_min, const Eigen::Vector3d &source_max,
       double resolution, double inflation,
       double min_z, double max_z,
       double waypoint_spacing,
-      const Eigen::Vector3d &start, const Eigen::Vector3d &end)
+      const Eigen::Vector3d &start, const Eigen::Vector3d &end,
+      const std::vector<Eigen::Vector2d> &footprint_centers = {Eigen::Vector2d::Zero()},
+      const Eigen::Vector3d &ground_cutoff = Eigen::Vector3d(0,0,-1e9),
+      bool static_reference_local = false,
+      const Eigen::Vector3d &reference_min = Eigen::Vector3d::Zero(),
+      const Eigen::Vector3d &reference_max = Eigen::Vector3d::Zero(),
+      const std::vector<Eigen::Vector2d> &footprint_polygon = {})
   {
     if (cloud.empty() || resolution <= 1e-6)
       return {};
@@ -74,33 +81,72 @@ namespace scan_planner
       return iy * width + ix;
     };
     std::vector<uint8_t> occupied(static_cast<size_t>(width) * height, 0);
+    std::vector<uint8_t> reference(occupied.size(),0);
     for (const auto &p : cloud.points)
     {
-      if (p.z < min_z || p.z > max_z) continue;
+      if (p.z < min_z || p.z > max_z || p.z <= ground_cutoff.x()*p.x+ground_cutoff.y()*p.y+ground_cutoff.z()) continue;
       const int id = index(p.x, p.y);
-      if (id >= 0) occupied[id] = 1;
+      if (id >= 0) {
+        if(static_reference_local && p.x>=reference_min.x() && p.x<=reference_max.x() &&
+           p.y>=reference_min.y() && p.y<=reference_max.y()) reference[id]=1;
+        else occupied[id]=1;
+      }
     }
-    std::vector<uint8_t> inflated = occupied;
-    const int r = std::max(0, static_cast<int>(std::ceil(inflation / resolution)));
+    // The static map is the global baseline; current sensor hits can block a
+    // corridor and force a different route instead of repeatedly initializing
+    // local optimization through the same newly occupied space.
+    for (const auto &p : live_points) {
+      if (p.z()<min_z || p.z()>max_z || p.z() <= ground_cutoff.x()*p.x()+ground_cutoff.y()*p.y()+ground_cutoff.z()) continue;
+      const int id=index(p.x(),p.y());
+      if (id>=0) occupied[id]=1;
+    }
+    // Rasterize the configured metric radius, not ceil(radius/resolution)
+    // cells. Keep fractional footprint offsets in metres as well: rounding
+    // each disk's centre adds up to another half-cell of unintended clearance.
+    std::vector<Eigen::Vector2i> inflation_offsets;
+    for (const auto &center : footprint_centers) {
+      const int min_dx = static_cast<int>(std::ceil((-inflation-center.x())/resolution-1e-9));
+      const int max_dx = static_cast<int>(std::floor((inflation-center.x())/resolution+1e-9));
+      const int min_dy = static_cast<int>(std::ceil((-inflation-center.y())/resolution-1e-9));
+      const int max_dy = static_cast<int>(std::floor((inflation-center.y())/resolution+1e-9));
+      for (int dy=min_dy;dy<=max_dy;++dy)
+        for (int dx=min_dx;dx<=max_dx;++dx)
+          if ((Eigen::Vector2d(dx*resolution,dy*resolution)+center).squaredNorm()
+              <= inflation*inflation+1e-12)
+            inflation_offsets.emplace_back(dx,dy);
+    }
+    std::sort(inflation_offsets.begin(),inflation_offsets.end(),
+        [](const Eigen::Vector2i &a,const Eigen::Vector2i &b) {
+          return a.y()!=b.y() ? a.y()<b.y() : a.x()<b.x();
+        });
+    inflation_offsets.erase(std::unique(inflation_offsets.begin(),inflation_offsets.end(),
+        [](const Eigen::Vector2i &a,const Eigen::Vector2i &b) { return a==b; }),
+        inflation_offsets.end());
+    if(!footprint_polygon.empty()) {
+      inflation_offsets=plan_env_detail::polygonOffsets(footprint_polygon,inflation,resolution);
+      for(auto &v:inflation_offsets)v=-v;
+    }
+    const auto inflate_layer=[&](const std::vector<uint8_t>& source) {
+    std::vector<uint8_t> result=source;
     for (int iy = 0; iy < height; ++iy)
     {
       for (int ix = 0; ix < width; ++ix)
       {
-        if (!occupied[static_cast<size_t>(iy) * width + ix]) continue;
-        for (int dy = -r; dy <= r; ++dy)
+        if (!source[static_cast<size_t>(iy) * width + ix]) continue;
+        for (const auto &offset : inflation_offsets)
         {
-          const int yy = iy + dy;
+          const int yy = iy + offset.y();
           if (yy < 0 || yy >= height) continue;
-          for (int dx = -r; dx <= r; ++dx)
-          {
-            const int xx = ix + dx;
-            if (xx < 0 || xx >= width) continue;
-            if (dx * dx + dy * dy > r * r) continue;
-            inflated[static_cast<size_t>(yy) * width + xx] = 1;
-          }
+          const int xx = ix + offset.x();
+          if (xx < 0 || xx >= width) continue;
+          result[static_cast<size_t>(yy) * width + xx] = 1;
         }
       }
     }
+    return result;
+    };
+    const auto inflated=inflate_layer(occupied);
+    const auto reference_inflated=static_reference_local ? inflate_layer(reference) : std::vector<uint8_t>();
     const int start_id = index(start.x(), start.y());
     const int goal_id = index(end.x(), end.y());
     if (start_id < 0 || goal_id < 0) return {};
@@ -142,8 +188,12 @@ namespace scan_planner
         if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
         const int nid = ny * width + nx;
         if (inflated[nid] || closed[nid]) continue;
+        if (d[0] != 0 && d[1] != 0 &&
+            (inflated[cy * width + nx] || inflated[ny * width + cx]))
+          continue;
         const double step = (d[0] != 0 && d[1] != 0) ? std::sqrt(2.0) : 1.0;
-        const double tentative = g_score[current] + step;
+        const double prior_cost=static_reference_local && reference_inflated[nid] ? 12.0 : 1.0;
+        const double tentative = g_score[current] + step*prior_cost;
         if (tentative + 1e-9 < g_score[nid])
         {
           g_score[nid] = tentative;
@@ -277,7 +327,9 @@ namespace scan_planner
     cout << "start: " << start_pt.transpose() << ", " << start_vel.transpose() << "\ngoal:" << local_target_pt.transpose() << ", " << local_target_vel.transpose()
          << endl;
 
-    if ((start_pt - local_target_pt).norm() < 0.2)
+    // The FSM arrival tolerance is 0.1 m. A 0.2 m rejection leaves an
+    // unreachable annulus where every replan fails before optimization.
+    if ((start_pt - local_target_pt).norm() < 0.02)
     {
       cout << "Close to goal" << endl;
       continuous_failures_count_++;
@@ -603,17 +655,23 @@ namespace scan_planner
     // sliding local GridMap and not a hard-coded pool size).
     std::vector<Eigen::Vector3d> inter_points;
     const auto t_global_start = std::chrono::steady_clock::now();
+    if(grid_map_ && !grid_map_->footprintReady()) {
+      RCLCPP_ERROR(node_->get_logger(),"Global planning blocked: urdf_footprint_missing_or_stale");
+      return false;
+    }
     if (grid_map_ && grid_map_->hasStaticSource())
     {
       inter_points = globalAStar2D(
           grid_map_->getStaticSourceCloud(),
+          grid_map_->getLiveObstaclePoints(),
           grid_map_->getStaticSourceMin(),
           grid_map_->getStaticSourceMax(),
-          grid_map_->getResolution(), 0.35,
-          std::min(start_pos.z(), end_pos.z()) - 0.55,
-          std::max(start_pos.z(), end_pos.z()) + 0.55,
+          grid_map_->getResolution(), grid_map_->getFootprintRadius(),
+          std::min(start_pos.z(), end_pos.z()) - grid_map_->getBodyDown(),
+          std::max(start_pos.z(), end_pos.z()) + grid_map_->getBodyUp(),
           pp_.global_waypoint_spacing_,
-          start_pos, end_pos);
+          start_pos, end_pos, grid_map_->getFootprintCenters(), grid_map_->getGroundCutoffPlane(),
+          grid_map_->usesStaticReferenceCost(),grid_map_->getLocalMinimum(),grid_map_->getLocalMaximum(),grid_map_->getFootprintPolygon());
       if (inter_points.size() < 2)
       {
         RCLCPP_ERROR(node_->get_logger(),

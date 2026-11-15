@@ -36,8 +36,8 @@ class FourStageDeliveryTests(unittest.TestCase):
         self.assertNotIn("create_client(", source)
 
     def test_four_stage_runbook_exists(self):
-        source = (ROOT / "docs/n01_four_stage_navigation_delivery.md").read_text()
-        for marker in ("## A.", "## B.", "## C.", "## D."):
+        source = (ROOT / "docs/validation.md").read_text()
+        for marker in ("A：只规划", "B：影子控制", "C：低速闭环", "D：完整路线"):
             self.assertIn(marker, source)
 
     def test_dynamic_tracker_uses_sensor_time_and_publishes_invalid_status(self):

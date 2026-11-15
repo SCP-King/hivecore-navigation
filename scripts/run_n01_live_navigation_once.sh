@@ -10,8 +10,10 @@ RUNTIME_ROOT="${N01_RUNTIME_ROOT:-$HOME/lyy/n01_runtime}"
 LOG_DIR="$RUNTIME_ROOT/logs"
 RUN_DIR="$RUNTIME_ROOT/runs/live_navigation"
 STAMP="$(date +%Y%m%d_%H%M%S)"
-PCD="/opt/slam3d_release/resource/mapping_lite.pcd"
-SLAM_CONFIG="/opt/slam3d_release/install/hivecore_slam3d_lite_localization/share/hivecore_slam3d_lite_localization/config/localization_lite.yaml"
+source "$ROOT/scripts/lib/slam_runtime.sh"
+n01_select_slam_runtime
+PCD="${N01_NAV_PCD:-$SLAM_ROSK/resource/mapping_lite.pcd}"
+SLAM_CONFIG="${N01_SLAM_CONFIG:-$SLAM_ROSK/install/hivecore_slam3d_lite_localization/share/hivecore_slam3d_lite_localization/config/localization_lite.yaml}"
 BUILD_LOG="$LOG_DIR/n01_live_navigation_build_$STAMP.log"
 LAUNCH_LOG="$LOG_DIR/n01_live_navigation_launch_$STAMP.log"
 TF_LOG="$LOG_DIR/n01_live_navigation_tf_$STAMP.log"
@@ -27,7 +29,8 @@ if [[ ! -f "$ROOT/install/setup.bash" ]]; then
   echo "ERROR: workspace install/setup.bash missing; build the workspace first."
   exit 2
 fi
-source "$ROOT/install/setup.bash"
+n01_source_slam_runtime
+n01_source_setup "$ROOT/install/local_setup.bash"
 set -u
 
 if [[ ! -f "$PCD" || ! -r "$PCD" ]]; then
@@ -60,7 +63,8 @@ if ! colcon build --symlink-install \
 fi
 # ROS/colcon setup scripts read optional variables that may be unset.
 set +u
-source "$ROOT/install/setup.bash"
+n01_source_slam_runtime
+n01_source_setup "$ROOT/install/local_setup.bash"
 set -u
 
 echo

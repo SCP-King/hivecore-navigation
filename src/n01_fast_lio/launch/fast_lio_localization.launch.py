@@ -28,7 +28,7 @@ def generate_launch_description():
             "map_file_path": LaunchConfiguration("saved_map_path"),
             "map_frame": "map",
             "fastlio_map_frame": "n01_fast_lio_map",
-            "base_frame": "base_footprint",
+            "base_frame": "base_link",
             "imu_frame": "imu_link",
             "cloud_topic": "/n01/fast_lio/cloud_registered_body",
             "odom_topic": "/n01/fast_lio/odometry",
@@ -47,7 +47,7 @@ def generate_launch_description():
             "status_topic": "/loc_status",
             "map_frame": "map",
             "fastlio_map_frame": "n01_fast_lio_map",
-            "base_frame": "base_footprint",
+            "base_frame": "base_link",
             "imu_frame": "imu_link",
             "alignment_topic": "/n01/fast_lio/map_alignment",
             "require_alignment": True,
@@ -66,7 +66,7 @@ def generate_launch_description():
         LogInfo(msg=(
             "[N-01 FAST-LIO2] independent mapping+localization: saved PCD ICP "
             "requires /initialpose; only after ICP success publish /robot_pose, "
-            "/loc_status=tracking and map->base_footprint TF.")),
+            "/loc_status=tracking and map->base_link TF.")),
         mapping,
         relocalizer,
         adapter,

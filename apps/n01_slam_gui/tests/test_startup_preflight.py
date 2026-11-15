@@ -30,7 +30,8 @@ check("bridge is not a static navigation marker",
       m.SCAN_BRIDGE not in m.NAV_MARKERS)
 
 # --- scoped cleanup trigger set ---------------------------------------------
-with patch.object(m, "run") as run:
+with patch.object(m, "active_managed_navigation_pid", return_value=None), \
+     patch.object(m, "run") as run:
     run.return_value.returncode = 0
     run.return_value.stdout = "stopped\n"
     rc = m.stop_scoped_navigation(["/scan_planner_node"])

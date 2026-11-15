@@ -8,8 +8,10 @@ RUNTIME_ROOT="${N01_RUNTIME_ROOT:-$HOME/lyy/n01_runtime}"
 LOG_DIR="$RUNTIME_ROOT/logs"
 RUN_DIR="$RUNTIME_ROOT/runs/planning_acceptance"
 STAMP="$(date +%Y%m%d_%H%M%S)"
-PCD="/opt/slam3d_release/resource/mapping_lite.pcd"
-SLAM_CONFIG="/opt/slam3d_release/install/hivecore_slam3d_lite_localization/share/hivecore_slam3d_lite_localization/config/localization_lite.yaml"
+source "$ROOT/scripts/lib/slam_runtime.sh"
+n01_select_slam_runtime
+PCD="${N01_NAV_PCD:-$SLAM_ROSK/resource/mapping_lite.pcd}"
+SLAM_CONFIG="${N01_SLAM_CONFIG:-$SLAM_ROSK/install/hivecore_slam3d_lite_localization/share/hivecore_slam3d_lite_localization/config/localization_lite.yaml}"
 LOG="$LOG_DIR/n01_planning_acceptance_run_$STAMP.log"
 BUILD_LOG="$LOG_DIR/n01_planning_build_$STAMP.log"
 REPORT="$RUN_DIR/n01_planning_acceptance_$STAMP.json"
@@ -44,7 +46,8 @@ if [[ ! -f "$ROOT/install/setup.bash" ]]; then
   exit 2
 fi
 set +u
-source "$ROOT/install/setup.bash"
+n01_source_slam_runtime
+n01_source_setup "$ROOT/install/local_setup.bash"
 set -u
 
 echo "===== 1. REPOSITORY CONTRACT ====="
@@ -106,7 +109,8 @@ if ! colcon build --symlink-install \
   exit 4
 fi
 set +u
-source "$ROOT/install/setup.bash"
+n01_source_slam_runtime
+n01_source_setup "$ROOT/install/local_setup.bash"
 set -u
 
 echo

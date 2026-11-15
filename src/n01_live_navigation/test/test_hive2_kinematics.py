@@ -4,11 +4,24 @@ import unittest
 from unittest.mock import patch
 import numpy as np
 from n01_live_navigation.hive2_kinematics import (
-    Hive2Geometry, contact_points, forward, inverse, _native)
+    Hive2Geometry, contact_points, forward, inverse, _native, screen_sequence)
 from n01_live_navigation.core import four_wheel_steer_screen
 
 
 class Hive2KinematicsTests(unittest.TestCase):
+    def test_batch_matches_scalar_native_with_branch_history(self):
+        rng=np.random.default_rng(33);g=Hive2Geometry()
+        twists=rng.uniform(-.2,.2,(80,3));dt=rng.uniform(.05,.5,80);q=np.zeros(4)
+        a,d,r=screen_sequence(twists,dt,q,g)
+        for i,v in enumerate(twists):
+            target,_=inverse(v,q,geometry=g)
+            rate=np.zeros(4) if i==0 else (target-q)/dt[i]
+            _,drive=inverse(v,target,rate,g)
+            np.testing.assert_allclose(a[i],target,atol=1e-12)
+            np.testing.assert_allclose(d[i],drive,atol=1e-12)
+            np.testing.assert_allclose(r[i],rate,atol=1e-12)
+            q=target
+
     def test_zero_steer_contact_is_controller_not_urdf_proxy(self):
         np.testing.assert_allclose(contact_points([0.]*4),
             [[.28,.220],[.28,-.220],[-.28,.220],[-.28,-.220]])
@@ -81,13 +94,27 @@ class Hive2KinematicsTests(unittest.TestCase):
 
     def test_screen_exposes_limit_conflict_and_actual_contact(self):
         pts=np.column_stack((np.linspace(0,2,40),np.zeros((40,2))))
-        result=four_wheel_steer_screen(pts)
+        result=four_wheel_steer_screen(pts,steering_limit=math.pi/2)
         self.assertTrue(result['necessary_conditions_pass'])
         self.assertTrue(result['controller_model_verified'])
         self.assertTrue(result['steering_limit_conflict'])
         self.assertFalse(result['wheel_contact_geometry_verified'])
         self.assertFalse(result['execution_authorized'])
         self.assertAlmostEqual(result['wheel_positions_m']['fl'][1],.220)
+
+    def test_future_over_limit_curve_does_not_reject_safe_execution_prefix(self):
+        from n01_live_navigation.navigation_path import execution_prefix
+        straight=np.column_stack((np.linspace(0.,1.5,100),np.zeros((100,2))))
+        t=np.linspace(0.,2.,150)
+        turn=np.column_stack((1.5+np.sin(t),1.-np.cos(t),np.zeros_like(t)))
+        path=np.vstack((straight,turn[1:]))
+        whole=four_wheel_steer_screen(path,max_speed=.03,body_yaw=0.,steering_limit=math.pi/2)
+        self.assertFalse(whole['necessary_conditions_pass'])
+        self.assertIn('steering_angle_limit',[f['reason'] for f in whole['kinematic_failures']])
+        preview=execution_prefix(path,(0.,0.),1.)
+        local=four_wheel_steer_screen(preview,max_speed=.03,body_yaw=0.)
+        self.assertTrue(local['necessary_conditions_pass'])
+        self.assertLessEqual(local['max_abs_steering_angle_rad'],1.5708)
 
     def test_conflicting_navigation_geometry_is_rejected(self):
         pts=np.column_stack((np.linspace(0,2,40),np.zeros((40,2))))

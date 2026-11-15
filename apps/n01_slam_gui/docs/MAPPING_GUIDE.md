@@ -7,12 +7,12 @@
 - 确认定位工作流已停止，`localization_lite_node` 不在运行。
 - 确认 Livox 驱动及点云预处理链路已提供 `/livox/lidar/geo_filtered`。
 - 确认 IMU 等 desk 所需输入已准备好。
-- 确认使用的是 `/opt/slam3d_release` 环境。
+- 确认使用的是 `/home/demo/lyy/slam3d_lite_20261106_test` 环境。
 
 ## 启动
 
 ```bash
-source /opt/slam3d_release/setup_runtime.sh
+source /home/demo/lyy/slam3d_lite_20261106_test/setup_runtime.sh
 ros2 launch hivecore_slam3d_lite_console mapping_lite_desk.launch.py
 ```
 

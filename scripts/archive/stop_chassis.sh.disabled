@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+echo '已停用：请从底盘原启动入口停止，GUI只管理自己的模块。' >&2
+exit 2
+set -eo pipefail
+set +u
+exec python3 /home/demo/lyy/hivecore-navigation/scripts/n01_stop_chassis.py

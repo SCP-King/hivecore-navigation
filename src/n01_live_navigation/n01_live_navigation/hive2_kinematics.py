@@ -78,6 +78,8 @@ def _native():
         ptr = ctypes.POINTER(ctypes.c_double)
         lib.hive2_inverse.argtypes = [ptr]*6
         lib.hive2_forward.argtypes = [ptr]*5
+        lib.hive2_screen.argtypes = [ptr,ptr,ptr,ptr,ctypes.c_int,ptr,ptr,ptr]
+        lib.hive2_screen.restype = ctypes.c_int
         lib.hive2_inverse.restype = lib.hive2_forward.restype = ctypes.c_int
         return lib
     except OSError as exc:
@@ -117,3 +119,17 @@ def contact_points(steering, geometry=None):
     x=np.array((1.,1.,-1.,-1.))*geometry.wheel_base_x/2-side*geometry.delta_y*np.sin(q)
     y=side*geometry.wheel_base_y/2+side*geometry.delta_y*np.cos(q)
     return np.column_stack((x,y))
+
+
+def screen_sequence(twists,dt,steering,geometry):
+    v=np.ascontiguousarray(twists,dtype=np.float64)
+    if v.ndim!=2 or v.shape[1]!=3 or len(v)<1 or not np.isfinite(v).all():
+        raise ValueError('invalid_screen_twists')
+    intervals=_array(dt,len(v));q=_array(steering,4);p=geometry.array()
+    if (intervals<=0).any():raise ValueError('invalid_screen_intervals')
+    a=np.zeros((len(v),4));d=np.zeros_like(a);r=np.zeros_like(a)
+    ptr=lambda x:x.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+    if _native().hive2_screen(ptr(p),ptr(v),ptr(intervals),ptr(q),len(v),ptr(a),ptr(d),ptr(r))!=0:
+        raise ValueError('native_screen_failed')
+    if not all(np.isfinite(x).all() for x in (a,d,r)):raise ValueError('native_screen_nonfinite')
+    return a,d,r

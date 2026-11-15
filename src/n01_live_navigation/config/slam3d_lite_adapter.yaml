@@ -9,10 +9,16 @@ n01_localization_adapter:
     status_field_paths_json: '{"session":"session","map_loaded":"map_loaded","reloc_ok":"reloc_ok","reloc_fitness":"reloc_fitness"}'
     status_expected_values_json: '{"session":"tracking"}'
     status_discovery_period_s: 1.0
-    pose_input_topic: /robot_pose
+    pose_input_topic: /n01/vendor_localization/pose_raw
     pose_output_topic: /n01/localization/pose
     expected_pose_frame: map
-    expected_pose_child_frame: base_footprint
+    expected_pose_child_frame: lidar_link
+    output_pose_child_frame: base_link
+    pose_mirror_topic: /robot_pose
+    broadcast_pose_tf: true
+    initial_pose_input_topic: /initialpose
+    initial_pose_output_topic: /n01/vendor_localization/initialpose
+    initial_pose_preserve_height: true
     # Reliable KeepLast queue prevents BEST_EFFORT/depth-5 pose loss.
     pose_qos_depth: 50
     pose_stats_period_s: 10.0

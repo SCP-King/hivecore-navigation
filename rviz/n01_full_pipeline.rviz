@@ -1,120 +1,187 @@
 Panels:
-  - Class: rviz_common/Displays
-    Name: Displays
-  - Class: rviz_common/Views
-    Name: Views
+- Class: rviz_common/Displays
+  Name: Displays
+- Class: rviz_common/Views
+  Name: Views
+- Class: rviz_common/Tool Properties
+  Name: Tool Properties
 Visualization Manager:
-  Class: ""
+  Class: ''
   Global Options:
     Fixed Frame: map
-    Background Color: 24; 29; 38
+    Background Color: 16; 22; 30
     Frame Rate: 20
   Displays:
-    - Class: rviz_default_plugins/Grid
-      Enabled: true
-      Name: Ground Reference Grid
-      Cell Size: 1
-      Plane: XY
-      Color: 60; 70; 80
-    - Class: rviz_default_plugins/PointCloud2
-      Enabled: true
-      Name: STATIC PCD BACKGROUND (optional, view-only)
-      Topic:
-        Value: /n01/offline/static_pcd_map
-        Reliability Policy: Reliable
-        Durability Policy: Transient Local
-        History Policy: Keep Last
-        Depth: 1
-      Style: Points
-      Size (Pixels): 2
-      Color Transformer: FlatColor
-      Color: 105; 115; 125
-    - Class: rviz_default_plugins/PointCloud2
-      Enabled: true
-      Name: Livox Historical FRAME (in map coords)
-      Topic:
-        Value: /cloud
-        Reliability Policy: Best Effort
-        Durability Policy: Volatile
-        History Policy: Keep Last
-        Depth: 5
-      Style: Points
-      Size (Pixels): 2
-      Color Transformer: FlatColor
-      Color: 195; 215; 235
-    - Class: rviz_default_plugins/PointCloud2
-      Enabled: true
-      Name: SCAN Inflated Obstacles
-      Topic:
-        Value: /grid_map/occupancy_inflate
-        Reliability Policy: Best Effort
-        Durability Policy: Volatile
-        History Policy: Keep Last
-        Depth: 5
-      Style: Points
-      Size (Pixels): 3
-      Color Transformer: FlatColor
-      Color: 255; 115; 55
-    - Class: rviz_default_plugins/Path
-      Enabled: true
-      Name: SCAN Reference Path
-      Topic:
-        Value: /nav/test/global_path
-        Reliability Policy: Reliable
-        Durability Policy: Volatile
-        History Policy: Keep Last
-        Depth: 5
-      Color: 0; 185; 255
-      Alpha: 1
-      Line Style: Lines
-      Line Width: 0.14
-    - Class: rviz_default_plugins/Path
-      Enabled: true
-      Name: G3 Original Nominal
-      Topic:
-        Value: /n01/offline/demo_nominal_path
-        Reliability Policy: Reliable
-        Durability Policy: Volatile
-        History Policy: Keep Last
-        Depth: 5
-      Color: 255; 210; 80
-      Alpha: 1
-      Line Style: Lines
-      Line Width: 0.17
-    - Class: rviz_default_plugins/Path
-      Enabled: true
-      Name: G3 Optimized Candidate ONLY
-      Topic:
-        Value: /n01/offline/demo_candidate_path
-        Reliability Policy: Reliable
-        Durability Policy: Volatile
-        History Policy: Keep Last
-        Depth: 5
-      Color: 70; 240; 130
-      Alpha: 1
-      Line Style: Lines
-      Line Width: 0.22
-    - Class: rviz_default_plugins/MarkerArray
-      Enabled: true
-      Name: Historical Robot and Moving Hypotheses
-      Marker Topic:
-        Value: /n01/offline/demo_markers
-        Reliability Policy: Reliable
-        Durability Policy: Volatile
-        History Policy: Keep Last
-        Depth: 5
+  - Class: rviz_default_plugins/Polygon
+    Name: URDF 转向碰撞包络（紫）
+    Enabled: true
+    Color: 183; 101; 255
+    Alpha: 0.9
+    Topic:
+      Value: /n01/robot_footprint
+      Reliability Policy: Reliable
+      Durability Policy: Transient Local
+      History Policy: Keep Last
+      Depth: 1
+  - Class: rviz_default_plugins/MarkerArray
+    Name: 参考环境曲面（历史回波，蓝灰）
+    Enabled: true
+    Topic:
+      Value: /n01/navigation/reference_surfaces
+      Reliability Policy: Reliable
+      Durability Policy: Transient Local
+      History Policy: Keep Last
+      Depth: 1
+  - Class: rviz_default_plugins/MarkerArray
+    Name: 实时物体曲面（实测轮廓，青绿）
+    Enabled: true
+    Topic:
+      Value: /n01/navigation/live_surfaces
+      Reliability Policy: Best Effort
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Depth: 1
+  - Class: rviz_default_plugins/Marker
+    Name: 拟合地面网格
+    Enabled: true
+    Topic:
+      Value: /n01/navigation/environment_grid
+      Reliability Policy: Reliable
+      Durability Policy: Transient Local
+      History Policy: Keep Last
+      Depth: 1
+  - Class: rviz_default_plugins/PointCloud2
+    Name: 调试：原始参考点云
+    Enabled: false
+    Topic:
+      Value: /grid_map/static_occupancy
+      Reliability Policy: Reliable
+      Durability Policy: Transient Local
+      History Policy: Keep Last
+      Depth: 1
+    Style: Points
+    Size (Pixels): 2
+    Color Transformer: FlatColor
+    Color: 135; 145; 155
+  - Class: rviz_default_plugins/PointCloud2
+    Name: 调试：实时扫描点云
+    Enabled: false
+    Topic:
+      Value: /cloud
+      Reliability Policy: Best Effort
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Depth: 5
+    Style: Points
+    Size (Pixels): 2
+    Color Transformer: FlatColor
+    Color: 60; 235; 185
+  - Class: rviz_default_plugins/RobotModel
+    Name: Robot geometry
+    Enabled: true
+    Description Source: Topic
+    Description Topic:
+      Value: /robot_description
+      Reliability Policy: Reliable
+      Durability Policy: Transient Local
+      History Policy: Keep Last
+      Depth: 1
+    Visual Enabled: true
+    Collision Enabled: false
+    Alpha: 1.0
+  - Class: rviz_default_plugins/TF
+    Name: TF frames (optional)
+    Enabled: false
+    Show Axes: true
+    Show Names: true
+  - Class: rviz_default_plugins/Path
+    Name: 统一执行路径
+    Enabled: true
+    Topic:
+      Value: /n01/navigation/path
+      Reliability Policy: Reliable
+      Durability Policy: Transient Local
+      History Policy: Keep Last
+      Depth: 1
+    Color: 255; 205; 75
+    Line Style: Billboards
+    Line Width: 0.045
+  - Class: rviz_default_plugins/PointCloud2
+    Name: 调试：规划膨胀区（不是物体外形）
+    Enabled: false
+    Topic:
+      Value: /grid_map/occupancy_inflate
+      Reliability Policy: Best Effort
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Depth: 5
+    Style: Points
+    Size (Pixels): 2
+    Color Transformer: FlatColor
+    Color: 255; 120; 65
+  - Class: rviz_default_plugins/Marker
+    Name: 机器人碰撞包络
+    Enabled: true
+    Topic:
+      Value: /self_inflation
+      Reliability Policy: Reliable
+      Durability Policy: Transient Local
+      History Policy: Keep Last
+      Depth: 1
+  - Class: rviz_default_plugins/Path
+    Name: Global reference (debug)
+    Enabled: false
+    Topic:
+      Value: /planning/global_path
+      Reliability Policy: Reliable
+      Durability Policy: Transient Local
+      History Policy: Keep Last
+      Depth: 1
+    Color: 240; 195; 60
+    Line Width: 0.02
+  - Class: rviz_default_plugins/Path
+    Name: Local candidate (debug)
+    Enabled: false
+    Topic:
+      Value: /n01/live_navigation/hive2_candidate_path
+      Reliability Policy: Best Effort
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Depth: 5
+    Color: 180; 100; 255
+    Line Width: 0.02
   Tools:
-    - Class: rviz_default_plugins/Interact
-    - Class: rviz_default_plugins/Measure
+  - Class: rviz_default_plugins/Interact
+  - Class: rviz_default_plugins/MoveCamera
+  - Class: rviz_default_plugins/Measure
+  - Class: rviz_default_plugins/SetInitialPose
+    Topic:
+      Value: /initialpose
+      Reliability Policy: Reliable
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Depth: 5
+    Covariance x: 0.25
+    Covariance y: 0.25
+    Covariance yaw: 0.0685
+  - Class: rviz_default_plugins/SetGoal
+    Topic:
+      Value: /move_base_simple/goal
+      Reliability Policy: Reliable
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Depth: 5
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 17
-      Focal Point: {X: 0, Y: 0, Z: 0}
-      Pitch: 0.72
+      Target Frame: base_link
+      Distance: 10.0
+      Focal Point:
+        X: 0.0
+        Y: 0.0
+        Z: 0.0
+      Pitch: 0.85
       Yaw: 0.78
 Window Geometry:
-  Width: 1400
-  Height: 850
-  X: 60
-  Y: 40
+  Width: 1440
+  Height: 900

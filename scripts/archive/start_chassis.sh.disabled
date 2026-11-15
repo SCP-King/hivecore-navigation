@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+echo '已停用：底盘由桌面 Hive2底盘启动 独立管理，GUI不启动或清理底盘。' >&2
+exit 2
+# GUI lifecycle: Hive2 chassis driver + steering supervisor.
+# person_follow_controller is intentionally NOT started: it publishes /cmd_vel
+# and would race the N-01 slow executor.
+set -eo pipefail
+set +u
+source /opt/ros/humble/setup.bash
+source /opt/hivecore/hive2-motion/1.0.0/install/setup.bash
+source /home/demo/lyy/hivecore-navigation/install/setup.bash
+if [[ ! -w "$HOME/.ros/log" ]]; then
+  export ROS_LOG_DIR="${ROS_LOG_DIR:-/tmp/n01_ros_chassis_log}"
+  export ROS_HOME="${ROS_HOME:-/tmp/n01_ros_chassis_home}"
+  mkdir -p "$ROS_LOG_DIR" "$ROS_HOME"
+fi
+
+# Start from a single clean chassis graph; stale old Hive2 drivers are the
+# usual source of duplicate steer/preprocessor/RSP nodes.
+bash /home/demo/lyy/hivecore-navigation/scripts/stop_chassis.sh || true
+
+PARAMS="$(ros2 pkg prefix wheel_controller_refactor)/share/wheel_controller_refactor/config/hive2_chassis_params.yaml"
+echo "chassis params: $PARAMS"
+ros2 launch hive2_driver hive2_driver.launch.py imu_enabled:=${HIVE2_IMU_ENABLED:-false} &
+DRIVER=$!
+STEER=""
+PREP=""
+cleanup() {
+  trap - INT TERM EXIT
+  kill -INT "$DRIVER" ${STEER:+"$STEER"} ${PREP:+"$PREP"} 2>/dev/null || true
+  sleep 1
+  kill -TERM "$DRIVER" ${STEER:+"$STEER"} ${PREP:+"$PREP"} 2>/dev/null || true
+  wait 2>/dev/null || true
+}
+trap cleanup INT TERM EXIT
+# Do not start the supervisor against a half-configured EtherCAT controller:
+# that latches a motion fault before the first yaw feedback arrives.
+python3 - <<'PY'
+import rclpy,time,math
+from sensor_msgs.msg import JointState
+from rclpy.qos import qos_profile_sensor_data
+rclpy.init();node=rclpy.create_node('n01_wait_chassis_feedback');ready=[False]
+required={x+'_ankle_yaw' for x in ('fl','fr','rl','rr')}
+def receive(msg):
+    values=dict(zip(msg.name,msg.position))
+    age=(node.get_clock().now().nanoseconds-msg.header.stamp.sec*10**9-msg.header.stamp.nanosec)/1e9
+    ready[0]=required.issubset(values) and all(math.isfinite(values[x]) for x in required) and -.2<=age<=.3
+node.create_subscription(JointState,'/joint_states',receive,qos_profile_sensor_data)
+deadline=time.monotonic()+30.
+while time.monotonic()<deadline and not ready[0]:rclpy.spin_once(node,timeout_sec=.1)
+ok=ready[0];node.destroy_node();rclpy.shutdown()
+if not ok:raise SystemExit('Chassis feedback unavailable; supervisor not started')
+PY
+ros2 run wheel_controller_refactor steer_drive_node --ros-args --params-file "$PARAMS" &
+STEER=$!
+PREP=""
+# Navigation owns /cmd_vel. Teleop is an explicit separate mode, never an idle
+# competing publisher that can wake up during an autonomous test.
+if [[ "${N01_CHASSIS_TELEOP:-false}" == "true" ]]; then
+  ros2 run wheel_controller_refactor cmd_wheel_preprocessor_node --ros-args --params-file "$PARAMS" &
+  PREP=$!
+fi
+
+wait

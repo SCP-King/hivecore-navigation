@@ -28,9 +28,9 @@ checks = {
         '"N01_NAV_PCD"', '"N01_NAV_GROUND_Z"', '"N01_NAV_RVIZ"', 'nav_pcd', 'nav_ground_z')),
     "GUI shows map/ground consistency": "nav_pcd_match" in gui
                                        and "nav_ground_match" in gui,
-    "localization config map exists": any(
-        line.split("map_path:", 1)[1].strip()
-        and Path(line.split("map_path:", 1)[1].strip()).is_file()
+    "localization default map is valid or explicitly selected at runtime": any(
+        (line.split("map_path:", 1)[1].strip() in ('""',"''")
+         or Path(line.split("map_path:", 1)[1].strip()).is_file())
         for line in loc_cfg.splitlines() if "map_path:" in line),
 }
 failed = []

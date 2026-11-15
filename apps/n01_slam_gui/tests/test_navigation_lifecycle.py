@@ -34,10 +34,10 @@ class NavigationLifecycleTests(unittest.TestCase):
                               text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                               timeout=10, check=False)
 
-    def test_start_runs_stop_then_status_then_start(self):
+    def test_start_does_not_preemptively_stop_existing_modules(self):
         cp = self.run_helper("start")
         self.assertEqual(cp.returncode, 0, cp.stdout)
-        self.assertEqual(self.calls.read_text().splitlines(), ["stop", "status", "start"])
+        self.assertEqual(self.calls.read_text().splitlines(), ["start"])
 
     def test_stop_only_calls_managed_stop(self):
         cp = self.run_helper("stop")

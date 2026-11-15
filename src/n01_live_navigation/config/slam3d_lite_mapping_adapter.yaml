@@ -1,0 +1,15 @@
+n01_localization_adapter:
+  ros__parameters:
+    # Mapping readiness has its own semantics; no fabricated reloc_ok/map_loaded.
+    status_forwarding_enabled: true
+    status_mode: mapping
+    status_input_topic: /mapping_status
+    pose_input_topic: /n01/vendor_mapping/pose_raw
+    pose_output_topic: /n01/localization/pose
+    expected_pose_frame: map
+    expected_pose_child_frame: lidar_link
+    output_pose_child_frame: base_link
+    pose_mirror_topic: /robot_pose
+    broadcast_pose_tf: true
+    pose_qos_depth: 50
+    pose_stats_period_s: 10.0

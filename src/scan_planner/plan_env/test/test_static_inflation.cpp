@@ -55,7 +55,10 @@ void checkCase(
         offsets, z_down, z_up);
   }
 
-  if (expected != actual) {
+  std::vector<char> merged(actual.size(),0);
+  plan_env_detail::markMergedStaticInflationRows(
+      merged,occupied,nx,ny,nz,min_x,min_y,min_z,max_x,max_y,max_z,offsets,z_down,z_up);
+  if (expected != actual || expected != merged) {
     std::cerr << "static inflation row-span output differs from reference\n";
     std::exit(EXIT_FAILURE);
   }
@@ -79,6 +82,8 @@ int main()
       {{{3, -5, -4}}, {{7, -1, 1}}, {{5, -3, 0}}, {{10, 0, 0}}});
 
   // Zero-radius/empty XY kernel must not mark any voxel.
+  checkCase(8,7,12,-3,-2,-6,disk,2,2,
+      {{{0,0,-6}},{{0,0,-5}},{{0,0,-2}},{{0,0,4}},{{0,0,5}},{{0,0,6}},{{-1,-1,0}}});
   checkCase(
       4, 4, 4, -2, -2, -2, {}, 0, 0,
       {{{-2, -2, -2}}, {{0, 0, 0}}});

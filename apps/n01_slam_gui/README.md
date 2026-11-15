@@ -31,7 +31,7 @@ GUI 实时模式操作：选择“自部署 FAST-LIO2”与“实时（边建图
 ## 运行环境
 
 - Ubuntu + ROS 2 Humble
-- 已安装的 `/opt/slam3d_release` Lite 综合包
+- 已安装的 `/home/demo/lyy/slam3d_lite_20261106_test` Lite 综合包
 - Python 依赖：`nicegui`、`numpy`、`Pillow`，以及 Lite 消息包和 ROS 2 Python 接口
 
 ## 启动与退出
@@ -219,7 +219,7 @@ GUI 退出、desk 异常退出或“停止全部 GUI 托管模块”都会先尝
 ## 检查
 
 ```bash
-source /opt/slam3d_release/setup_runtime.sh
+source /home/demo/lyy/slam3d_lite_20261106_test/setup_runtime.sh
 python3 -m py_compile slam_lite_gui.py tools/*.py tests/*.py
 bash -n run_slam_lite_gui.sh tools/*.sh
 python3 tests/test_lifecycle.py

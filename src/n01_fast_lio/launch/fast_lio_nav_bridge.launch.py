@@ -35,7 +35,7 @@ def generate_launch_description():
             "pose_input_topic": "/robot_pose",
             "pose_output_topic": "/n01/localization/pose",
             "expected_pose_frame": "map",
-            "expected_pose_child_frame": "base_footprint",
+            "expected_pose_child_frame": "base_link",
         }],
     )
     bridge = Node(
@@ -52,11 +52,19 @@ def generate_launch_description():
             "odom_frame": "odom",
             "odom_child_frame": "base_link",
             "map_frame": "map",
-            "body_frame": "base_footprint",
+            "body_frame": "base_link",
             "planner_body_frame": "base_link",
         }],
     )
+    ground = Node(package="n01_live_navigation", executable="n01_ground_reference",
+                  name="n01_ground_reference", output="screen",
+                  parameters=[{"map_topics": ["/cloud"],
+                               "fit_radius_m": 6.0,
+                               "latched_map_topics": ["/n01/fast_lio/reference_map"]}])
+    wheels = Node(package='n01_live_navigation', executable='n01_wheel_joint_state',
+                  name='n01_wheel_joint_state', output='screen')
     return LaunchDescription([
+        wheels,
         DeclareLaunchArgument(
             "saved_map_path",
             default_value="/home/demo/lyy/slam_data/maps/mapping_lite_20261109_140536_087.pcd"),
@@ -69,4 +77,5 @@ def generate_launch_description():
         localization,
         adapter,
         bridge,
+        ground,
     ])

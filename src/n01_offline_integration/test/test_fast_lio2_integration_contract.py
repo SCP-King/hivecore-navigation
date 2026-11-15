@@ -17,7 +17,7 @@ class FastLio2IntegrationContract(unittest.TestCase):
         self.assertIn("hku-mars/FAST_LIO.git", repos)
         self.assertIn("cc3c9e8b1469b33b8072764d6db2348ed6dc597f", repos)
         self.assertIn("e2e3f4e9d3b95a9e66b1ba83dc98d4a05ed8a3c4", self.read(
-            "docs/n01_fast_lio2_integration.md"))
+            "docs/navigation.md"))
         self.assertIn("patch_n01_fast_lio2.py", importer)
         self.assertIn("IKD_PIN=\"e2e3f4e9d3b95a9e66b1ba83dc98d4a05ed8a3c4\"", importer)
         self.assertTrue((ROOT / "src/n01_fast_lio/package.xml").is_file())

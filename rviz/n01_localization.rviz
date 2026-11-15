@@ -1,0 +1,86 @@
+Panels:
+- Class: rviz_common/Displays
+  Name: Displays
+- Class: rviz_common/Views
+  Name: Views
+- Class: rviz_common/Tool Properties
+  Name: Tool Properties
+Visualization Manager:
+  Class: ''
+  Global Options:
+    Fixed Frame: map
+    Background Color: 20; 26; 36
+    Frame Rate: 20
+  Displays:
+  - Class: rviz_default_plugins/PointCloud2
+    Name: Map (map coordinates)
+    Enabled: true
+    Topic:
+      Value: /localization_map
+      Reliability Policy: Best Effort
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Depth: 1
+    Style: Points
+    Size (Pixels): 2
+    Color Transformer: FlatColor
+    Color: 135; 145; 155
+  - Class: rviz_default_plugins/PointCloud2
+    Name: Live lidar (TF transformed)
+    Enabled: true
+    Topic:
+      Value: /livox/lidar/geo_filtered
+      Reliability Policy: Best Effort
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Depth: 5
+    Style: Points
+    Size (Pixels): 2
+    Color Transformer: FlatColor
+    Color: 60; 235; 185
+  - Class: rviz_default_plugins/RobotModel
+    Name: Robot geometry
+    Enabled: true
+    Description Source: Topic
+    Description Topic:
+      Value: /robot_description
+      Reliability Policy: Reliable
+      Durability Policy: Transient Local
+      History Policy: Keep Last
+      Depth: 1
+    Visual Enabled: true
+    Collision Enabled: false
+    Alpha: 0.7
+  - Class: rviz_default_plugins/TF
+    Name: TF frames (optional)
+    Enabled: false
+    Show Axes: true
+    Show Names: true
+  Tools:
+  - Class: rviz_default_plugins/Interact
+  - Class: rviz_default_plugins/MoveCamera
+  - Class: rviz_default_plugins/Measure
+  - Class: rviz_default_plugins/SetInitialPose
+    Topic:
+      Value: /initialpose
+      Reliability Policy: Reliable
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Depth: 5
+    Covariance x: 0.25
+    Covariance y: 0.25
+    Covariance yaw: 0.0685
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Target Frame: base_link
+      Distance: 8.0
+      Focal Point:
+        X: 0.0
+        Y: 0.0
+        Z: 0.0
+      Pitch: 0.7
+      Yaw: 0.78
+Window Geometry:
+  Width: 1280
+  Height: 800

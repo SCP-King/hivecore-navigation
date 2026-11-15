@@ -14,13 +14,14 @@ from geometry_msgs.msg import Vector3Stamped
 from scan_planner_msgs.msg import Bspline
 
 from .core import stamped_data_is_fresh
+from .pose_policy import control_pose_fresh
 
 
 class LiveRuntimeSupervisor(Node):
     def __init__(self):
         super().__init__("n01_live_runtime_supervisor")
-        self.declare_parameter("max_body_pose_age_s", 0.25)
-        self.declare_parameter("max_body_pose_rx_age_s", 0.35)
+        self.declare_parameter("max_body_pose_age_s", 0.4)
+        self.declare_parameter("max_body_pose_rx_age_s", 0.5)
         self.declare_parameter("max_dynamic_diagnostic_age_s", 0.9)
         self.declare_parameter("status_topic", "/n01/live_navigation/readiness")
         self.declare_parameter("static_ready_topic", "/grid_map/static_overlay_ready")
@@ -115,7 +116,7 @@ class LiveRuntimeSupervisor(Node):
         for transform in msg.transforms:
             parent = transform.header.frame_id.lstrip("/")
             child = transform.child_frame_id.lstrip("/")
-            if parent == "map" and child == "base_footprint":
+            if parent == "map" and child == "base_link":
                 stamp_ns = (
                     int(transform.header.stamp.sec) * 1000000000
                     + int(transform.header.stamp.nanosec))
@@ -173,9 +174,7 @@ class LiveRuntimeSupervisor(Node):
             and self.bridge.get("cloud_output_fresh") is True
         )
         body_fresh = (
-            body_stamp_age is not None and body_rx_age is not None
-            and -0.2 <= body_stamp_age <= self.max_body_age
-            and 0.0 <= body_rx_age <= self.max_body_rx_age
+            control_pose_fresh(body_stamp_age, body_rx_age,self.max_body_age,self.max_body_rx_age)
         )
         dynamic_age = (
             now_mono - self.dynamic_obstacle_rx_monotonic
@@ -208,7 +207,7 @@ class LiveRuntimeSupervisor(Node):
             blockers.append("static_pcd_overlay_not_ready_in_current_window")
         if not body_fresh:
             blockers.append("body_pose_missing_or_stale")
-        # A direct map->base_footprint TF edge is optional: the vendor's
+        # A direct map->base_link TF edge is optional: the vendor's
         # /robot_pose Odometry is the global pose source. The bridge only marks
         # itself ready after odometry-assisted scan-time pose compensation and
         # body<-LiDAR extrinsic lookup both succeed.

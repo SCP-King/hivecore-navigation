@@ -1,0 +1,8 @@
+# Shared mapping/localization overlay. The host waits 250 ms for scan_ref.
+# Its default 500 ms IMU wait
+# can release a scan only after the host has already discarded its result.
+# Keep IMU deskew when coverage is available; MOLA falls back to LiDAR-only
+# for a late IMU window and resumes fusion automatically on fresh IMU.
+params:
+  max_time_to_wait_for_imu: 0.05
+  max_lidar_queue_before_drop: 2

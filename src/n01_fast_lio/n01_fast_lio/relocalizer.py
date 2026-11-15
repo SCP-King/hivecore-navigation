@@ -113,7 +113,7 @@ class FastLioRelocalizer(Node):
         self.declare_parameter("map_file_path", "/home/demo/lyy/slam_data/maps/mapping_lite_20261109_140536_087.pcd")
         self.declare_parameter("map_frame", "map")
         self.declare_parameter("fastlio_map_frame", "n01_fast_lio_map")
-        self.declare_parameter("base_frame", "base_footprint")
+        self.declare_parameter("base_frame", "base_link")
         self.declare_parameter("imu_frame", "imu_link")
         self.declare_parameter("cloud_topic", "/n01/fast_lio/cloud_registered_body")
         self.declare_parameter("odom_topic", "/n01/fast_lio/odometry")

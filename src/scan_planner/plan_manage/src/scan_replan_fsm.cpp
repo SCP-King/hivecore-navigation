@@ -31,10 +31,23 @@ namespace scan_planner
     need_hover_stop_ = false;
     replan_fail_count_ = 0;
     last_freeze_update_time_ = node_->now();
+    goal_reached_sub_ = node_->create_subscription<geometry_msgs::msg::PointStamped>(
+        "/n01/navigation/goal_reached",10,
+        [this](const geometry_msgs::msg::PointStamped::ConstSharedPtr msg) {
+          if (!have_target_ || !have_odom_ || msg->header.frame_id!="map") return;
+          const Eigen::Vector3d goal(msg->point.x,msg->point.y,msg->point.z);
+          const double age=(node_->now()-rclcpp::Time(msg->header.stamp)).seconds();
+          if (!goal.allFinite() || (goal-end_pt_).norm()>.02 ||
+              (odom_pos_-end_pt_).head<2>().norm()>.12 || age<-.2 || age>1.) return;
+          have_target_=false;have_new_target_=false;replan_fail_count_=0;
+          changeFSMExecState(WAIT_TARGET,"EXECUTOR_CONFIRMED_ARRIVAL");
+        });
 
     /*  fsm param  */
     navi_mode_ = load_parameter<int>(node_, "fsm.navi_mode", -1);
     replan_thresh_ = load_parameter<double>(node_, "fsm.thresh_replan", -1.0);
+    max_replan_interval_s_ = load_parameter<double>(node_, "fsm.max_replan_interval_s", 0.5);
+    max_replan_interval_s_ = std::max(0.2, max_replan_interval_s_);
     no_replan_thresh_ = load_parameter<double>(node_, "fsm.thresh_no_replan", -1.0);
     planning_horizon_ = load_parameter<double>(node_, "fsm.planning_horizon", -1.0);
     emergency_time_ = load_parameter<double>(node_, "fsm.emergency_time", 1.0);
@@ -44,6 +57,9 @@ namespace scan_planner
     self_inflation_z_down_ = load_parameter<double>(node_, "grid_map.obstacles_inflation_z_down", 0.0);
     self_double_cylinder_radius_ = load_parameter<double>(node_, "grid_map.double_cylinder_radius", 0.0);
     self_double_cylinder_offset_ = load_parameter<double>(node_, "grid_map.double_cylinder_offset", 0.0);
+    self_footprint_centers_x_ = load_parameter<std::vector<double>>(node_, "grid_map.footprint_centers_x", std::vector<double>{});
+    if (self_footprint_centers_x_.empty())
+      self_footprint_centers_x_ = {-self_double_cylinder_offset_, self_double_cylinder_offset_};
     body_height_ = load_parameter<double>(node_, "grid_map.body_height", 0.4);
     self_inflation_frame_id_ = load_parameter<std::string>(node_, "grid_map.frame_id", "world");
 
@@ -316,6 +332,15 @@ namespace scan_planner
     if (final_occ <= 0)
       return true;
 
+    if (navi_mode_ == NAVI_MODE::MANUAL_TARGET)
+    {
+      // A temporary occupied goal is not permission to silently move the
+      // requested destination backwards along the route on each replan.
+      RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 2000,
+          "Requested goal is occupied; preserving destination and refusing this plan");
+      return false;
+    }
+
     for (int i = sample_num; i >= 0; --i)
     {
       const double t = duration * i / sample_num;
@@ -447,6 +472,7 @@ namespace scan_planner
 
   double SCANReplanFSM::estimateYawFromSegment(const Eigen::Vector3d &from, const Eigen::Vector3d &to) const
   {
+    if (planner_manager_->grid_map_->usesFixedBodyHeading()) return getOdomYaw();
     Eigen::Vector2d diff(to(0) - from(0), to(1) - from(1));
     if (diff.squaredNorm() < 1e-8)
       return getOdomYaw();
@@ -455,6 +481,27 @@ namespace scan_planner
 
   void SCANReplanFSM::publishSelfInflationMarker()
   {
+    const auto polygon=planner_manager_->grid_map_->getFootprintPolygon();
+    if(!polygon.empty()) {
+      visualization_msgs::msg::Marker wire;
+      wire.header.frame_id=self_inflation_frame_id_;wire.header.stamp=node_->now();
+      wire.ns="self_inflation";wire.id=0;wire.type=visualization_msgs::msg::Marker::LINE_LIST;
+      wire.action=visualization_msgs::msg::Marker::ADD;wire.pose.orientation.w=1.;
+      wire.scale.x=.012;wire.color.r=.72;wire.color.g=.40;wire.color.b=1.;wire.color.a=.85;
+      wire.lifetime=rclcpp::Duration::from_seconds(.25);
+      const auto point=[&](const Eigen::Vector2d &p,double z) {
+        geometry_msgs::msg::Point q;q.x=odom_pos_.x()+p.x();q.y=odom_pos_.y()+p.y();q.z=z;return q;
+      };
+      for(size_t i=0;i<polygon.size();++i) {
+        const auto &a=polygon[i];const auto &b=polygon[(i+1)%polygon.size()];
+        for(double z:{odom_pos_.z()-self_inflation_z_up_,odom_pos_.z()+self_inflation_z_down_}) {
+          wire.points.push_back(point(a,z));wire.points.push_back(point(b,z));
+        }
+        wire.points.push_back(point(a,odom_pos_.z()-self_inflation_z_up_));
+        wire.points.push_back(point(a,odom_pos_.z()+self_inflation_z_down_));
+      }
+      self_inflation_pub_->publish(wire);return;
+    }
     const double radius = std::max(0.0, self_double_cylinder_radius_);
     const double z_up = std::max(0.0, self_inflation_z_up_);
     const double z_down = std::max(0.0, self_inflation_z_down_);
@@ -477,23 +524,16 @@ namespace scan_planner
     marker.lifetime = rclcpp::Duration::from_seconds(0.2);
 
     Eigen::Vector3d center = odom_pos_;
-    center(2) += 0.5 * (z_up - z_down);
+    // Obstacle inflation is the reflected robot extent.
+    center(2) += 0.5 * (z_down - z_up);
 
     Eigen::Vector3d heading(std::cos(getOdomYaw()), std::sin(getOdomYaw()), 0.0);
-    Eigen::Vector3d front = center + self_double_cylinder_offset_ * heading;
-    Eigen::Vector3d rear = center - self_double_cylinder_offset_ * heading;
-
-    marker.id = 0;
-    marker.pose.position.x = front(0);
-    marker.pose.position.y = front(1);
-    marker.pose.position.z = front(2);
-    self_inflation_pub_->publish(marker);
-
-    marker.id = 1;
-    marker.pose.position.x = rear(0);
-    marker.pose.position.y = rear(1);
-    marker.pose.position.z = rear(2);
-    self_inflation_pub_->publish(marker);
+    for (size_t i=0; i<self_footprint_centers_x_.size(); ++i) {
+      Eigen::Vector3d point=center+self_footprint_centers_x_[i]*heading;
+      marker.id=static_cast<int>(i);
+      marker.pose.position.x=point.x(); marker.pose.position.y=point.y(); marker.pose.position.z=point.z();
+      self_inflation_pub_->publish(marker);
+    }
   }
 
   void SCANReplanFSM::changeFSMExecState(FSM_EXEC_STATE new_state, string pos_call)
@@ -567,6 +607,23 @@ namespace scan_planner
 
     case GEN_NEW_TRAJ:
     {
+      // Arrival is measured from live odometry, never from spline time.
+      // Do not count an already reached target as a planning failure.
+      if (navi_mode_ == NAVI_MODE::MANUAL_TARGET &&
+          (end_pt_ - odom_pos_).norm() <= no_replan_thresh_)
+      {
+        have_target_ = false;
+        have_new_target_ = false;
+        replan_fail_count_ = 0;
+        changeFSMExecState(WAIT_TARGET, "MEASURED_ARRIVAL");
+        break;
+      }
+      // Failed local optimization must not busy-loop at the 100Hz FSM rate.
+      // Keep map/pose/goal callbacks responsive; a new target bypasses backoff.
+      const auto attempt_time=std::chrono::steady_clock::now();
+      if(replan_fail_count_>0 && !have_new_target_ &&
+          std::chrono::duration<double>(attempt_time-last_replan_attempt_).count()<.2)break;
+      last_replan_attempt_=attempt_time;
       setStartStateFromOdomOrCurrentTraj();
 
       // Eigen::Vector3d rot_x = odom_orient_.toRotationMatrix().block(0, 0, 3, 1);
@@ -597,7 +654,10 @@ namespace scan_planner
 
     case REPLAN_TRAJ:
     {
-
+      const auto attempt_time=std::chrono::steady_clock::now();
+      if(replan_fail_count_>0 && !have_new_target_ &&
+          std::chrono::duration<double>(attempt_time-last_replan_attempt_).count()<.2)break;
+      last_replan_attempt_=attempt_time;
       if (planFromCurrentTraj())
       {
         replan_fail_count_ = 0;
@@ -621,6 +681,14 @@ namespace scan_planner
       t_cur = min(info->duration_, t_cur);
 
       Eigen::Vector3d pos = info->position_traj_.evaluateDeBoorT(t_cur);
+      if (navi_mode_ == NAVI_MODE::MANUAL_TARGET &&
+          (end_pt_ - odom_pos_).norm() <= no_replan_thresh_)
+      {
+        have_target_ = false;
+        replan_fail_count_ = 0;
+        changeFSMExecState(WAIT_TARGET, "MEASURED_ARRIVAL");
+        return;
+      }
 
       if (isWaypointSequenceMode() &&
           current_wp_ + 1 < (int)active_waypoints_.size() &&
@@ -675,6 +743,10 @@ namespace scan_planner
 
         changeFSMExecState(WAIT_TARGET, "FSM");
         return;
+      }
+      else if (t_cur >= max_replan_interval_s_)
+      {
+        changeFSMExecState(REPLAN_TRAJ, "LIVE_ENVIRONMENT_REFRESH");
       }
       else if ((end_pt_ - pos).norm() < no_replan_thresh_)
       {
@@ -741,23 +813,7 @@ namespace scan_planner
 
   bool SCANReplanFSM::planFromCurrentTraj()
   {
-    LocalTrajData *info = &planner_manager_->local_data_;
-    rclcpp::Time time_now = node_->now();
-    double t_cur = (time_now - info->start_time_).seconds();
-    t_cur = std::min(std::max(t_cur, 0.0), info->duration_);
-
-    //cout << "info->velocity_traj_=" << info->velocity_traj_.get_control_points() << endl;
-
-    start_pt_ = odom_pos_;
-    start_vel_ = info->velocity_traj_.evaluateDeBoorT(t_cur);
-    start_acc_ = info->acceleration_traj_.evaluateDeBoorT(t_cur);
-
-    const Eigen::Vector2d to_goal = end_pt_.head<2>() - odom_pos_.head<2>();
-    if (to_goal.norm() > 1e-3 && start_vel_.head<2>().dot(to_goal) < 0.0)
-    {
-      start_vel_.setZero();
-      start_acc_.setZero();
-    }
+    setStartStateFromOdomOrCurrentTraj();
 
     if (!planner_manager_->planGlobalTraj(
             start_pt_,
@@ -775,6 +831,7 @@ namespace scan_planner
     if (!adjustGlobalTargetIfOccupied())
       return false;
 
+    publishGlobalPath();
     bool success = callReboundReplan(true, false);
     if (!success)
     {
@@ -791,19 +848,12 @@ namespace scan_planner
     start_pt_ = odom_pos_;
     start_vel_ = odom_vel_;
     start_acc_.setZero();
-
-    LocalTrajData *info = &planner_manager_->local_data_;
-    if (info->start_time_.seconds() < 1e-5 || info->duration_ <= 1e-5)
-      return;
-
-    const double raw_t_cur = (node_->now() - info->start_time_).seconds();
-    if (raw_t_cur < -1e-3 || raw_t_cur > info->duration_ + 0.2)
-      return;
-
-    const double t_cur = std::min(std::max(raw_t_cur, 0.0), info->duration_);
-    start_vel_ = info->velocity_traj_.evaluateDeBoorT(t_cur);
-    start_acc_ = info->acceleration_traj_.evaluateDeBoorT(t_cur);
-
+    // External wheel execution may stop or lag the nominal spline. Pair the
+    // measured start position with measured velocity, never spline-time velocity.
+    const double measured_speed=start_vel_.norm();
+    const double planning_speed_limit=planner_manager_->pp_.max_vel_;
+    if (measured_speed>planning_speed_limit && measured_speed>1e-6)
+      start_vel_*=planning_speed_limit/measured_speed;
     const Eigen::Vector2d to_goal = end_pt_.head<2>() - odom_pos_.head<2>();
     if (to_goal.norm() > 1e-3 && start_vel_.head<2>().dot(to_goal) < 0.0)
     {

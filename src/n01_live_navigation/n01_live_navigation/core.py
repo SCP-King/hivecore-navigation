@@ -6,6 +6,14 @@ import numpy as np
 
 def localization_is_tracking(status):
     """Validate only fields actually represented by the external LocStatus."""
+    if isinstance(status, dict) and status.get('readiness_semantics') == 'mapping_session_and_fresh_pose':
+        if str(status.get('status_mapping_valid', '')).lower() != 'true':
+            return False, 'mapping_status_contract_mismatch'
+        if str(status.get('session', '')).lower() != 'mapping':
+            return False, 'mapping_not_active'
+        if str(status.get('mapping_pose_available', status.get('mapping_pose_fresh', ''))).lower() != 'true':
+            return False, 'mapping_pose_not_available'
+        return True, 'mapping_ready'
     required = ("map_loaded", "session", "reloc_ok", "reloc_fitness")
     if not isinstance(status, dict) or any(key not in status for key in required):
         return False, "localization_status_contract_mismatch"
@@ -22,6 +30,32 @@ def localization_is_tracking(status):
     if not math.isfinite(fitness) or fitness < 0.0:
         return False, "localization_reloc_fitness_invalid"
     return True, "tracking_ready"
+
+
+def mapping_navigation_status(session, source_stamp_ns, now_ns, pose_stamp_ns,
+                              pose_receive_age_s, max_pose_age_s=0.7):
+    """Mapping has no map-loaded, relocation or ICP-quality claims.
+
+    This only reports an active session and a recent normalized SLAM pose;
+    downstream scan, odometry, held-pose and execution checks remain mandatory.
+    """
+    pose_age = (now_ns - pose_stamp_ns) / 1e9 if pose_stamp_ns > 0 else float('inf')
+    valid = (source_stamp_ns > 0 and -0.2 <= (now_ns-source_stamp_ns)/1e9 <= 1.0
+             and isinstance(session, str) and session in ('idle', 'mapping'))
+    fresh = (pose_stamp_ns > 0 and -0.2 <= pose_age <= max_pose_age_s
+             and 0 <= pose_receive_age_s <= max_pose_age_s)
+    # Session readiness must not veto the bridge's measured-odometry prediction
+    # at 0.7s. The bridge independently enforces 5s / 0.12m / 0.20rad budgets,
+    # original timestamps, held-pose rejection, scan age and odometry continuity.
+    available = (pose_stamp_ns > 0 and -0.2 <= pose_age <= 5.0
+                 and 0 <= pose_receive_age_s <= 5.0)
+    return dict(session=session, readiness_semantics='mapping_session_and_fresh_pose',
+                status_mapping_valid=str(valid).lower(),
+                source_stamp_valid=str(source_stamp_ns > 0).lower(),
+                mapping_pose_fresh=str(fresh).lower(),
+                mapping_pose_available=str(available).lower(),
+                mapping_pose_age_s=str(pose_age),
+                mapping_pose_stamp_ns=str(pose_stamp_ns))
 
 
 def select_latest_tf_stamp(requested_stamp_ns, tf_stamp_ns, max_lag_s):
@@ -406,14 +440,15 @@ def cluster_xy_points(points, cell_size=0.30, min_points=6, max_clusters=64):
 
 def four_wheel_steer_screen(path_xyz, max_speed=0.25, max_accel=0.25,
                             wheel_base_x=0.56, track_y=0.27,
-                            wheel_radius=0.095, steering_limit=1.5708,
-                            delta_y=0.085, initial_steering=None):
+                            wheel_radius=0.095, steering_limit=math.pi,
+                            delta_y=0.085, initial_steering=None, body_yaw=None, geometry_override=None,
+                            allow_retime=False, _retime_depth=0):
     """Necessary-condition screen using native controller IK, never actuator output.
 
     Tangent-heading, vy=0 path timing remains a screening assumption. Native IK
     does not certify the URDF geometry, controller dynamics or collision envelope.
     """
-    from .hive2_kinematics import controller_geometry, inverse, contact_points, MODEL_ID
+    from .hive2_kinematics import controller_geometry, screen_sequence, contact_points, MODEL_ID
     pts = np.asarray(path_xyz, dtype=np.float64)
     if pts.ndim != 2 or pts.shape[1] != 3 or pts.shape[0] < 3:
         raise ValueError("path_requires_at_least_three_xyz_points")
@@ -428,6 +463,14 @@ def four_wheel_steer_screen(path_xyz, max_speed=0.25, max_accel=0.25,
     pts = pts[keep]
     if pts.shape[0] < 3:
         raise ValueError("path_has_insufficient_distinct_points")
+    # B-spline tables are uniform in time: stopped endpoints contain micron
+    # steps, whose tangent differences amplify into fictitious steering rates.
+    # Screen at 2 cm arc spacing (below the 5 cm occupancy resolution), retaining
+    # both endpoints. This remains a discrete necessary-condition check.
+    raw_arc=np.r_[0.,np.cumsum(np.linalg.norm(np.diff(pts[:,:2],axis=0),axis=1))]
+    count=max(3,int(math.ceil(raw_arc[-1]/.02))+1)
+    sample_arc=np.linspace(0.,raw_arc[-1],count)
+    pts=np.column_stack([np.interp(sample_arc,raw_arc,pts[:,i]) for i in range(3)])
     ds = np.linalg.norm(np.diff(pts[:, :2], axis=0), axis=1)
     arc = np.concatenate(([0.0], np.cumsum(ds)))
     segment_yaw = np.unwrap(np.arctan2(np.diff(pts[:, 1]), np.diff(pts[:, 0])))
@@ -448,29 +491,23 @@ def four_wheel_steer_screen(path_xyz, max_speed=0.25, max_accel=0.25,
 
     accel = np.abs(np.diff(speed * speed) / np.maximum(2.0 * ds, 1e-9))
     yaw_rate = speed * curvature
-    geometry = controller_geometry()
+    geometry = controller_geometry() if geometry_override is None else geometry_override
     if not np.allclose((wheel_radius,wheel_base_x,track_y,delta_y),
                        (geometry.wheel_radius,geometry.wheel_base_x,geometry.wheel_base_y,geometry.delta_y),
                        rtol=0.,atol=1e-9):
         raise ValueError('navigation_geometry_mismatches_installed_chassis_controller')
     q = np.zeros(4) if initial_steering is None else np.asarray(initial_steering,dtype=float)
-    angles, wheel_rates, steer_rates = [], [], []
-    initial_alignment = 0.0
-    for i in range(len(speed)):
-        twist = (float(speed[i]),0.,float(yaw_rate[i]))
-        target,_ = inverse(twist,q,geometry=geometry)
-        if i == 0:
-            rate = np.zeros(4)
-        else:
-            dt = 2.*ds[i-1]/max(speed[i-1]+speed[i],1e-9)
-            rate = (target-q)/dt
-            if i == 1:
-                initial_alignment = float(np.max(np.abs(target-q)))
-        # Evaluate the ideal aligned trajectory, including its steering motion.
-        _,drive = inverse(twist,target,rate,geometry)
-        angles.append(target); wheel_rates.append(drive); steer_rates.append(rate)
-        q = target
-    angles=np.asarray(angles); wheel_rates=np.asarray(wheel_rates)
+    if body_yaw is None:
+        twists=np.column_stack((speed,np.zeros_like(speed),yaw_rate))
+    else:
+        if not math.isfinite(body_yaw):raise ValueError('invalid_body_yaw')
+        relative=yaw-float(body_yaw)
+        twists=np.column_stack((speed*np.cos(relative),speed*np.sin(relative),np.zeros_like(speed)))
+        yaw_rate=np.zeros_like(speed)
+    twists[(speed<geometry.spin_threshold)&(np.abs(yaw_rate)<.01)]=0.
+    intervals=np.r_[1.,2.*ds/np.maximum(speed[:-1]+speed[1:],1e-9)]
+    angles,wheel_rates,steer_rates=screen_sequence(twists,intervals,q,geometry)
+    initial_alignment=float(np.max(np.abs(angles[1]-angles[0])))
     max_steer = float(np.max(np.abs(angles)))
     max_wheel_angular = float(np.max(np.abs(wheel_rates)))
     max_wheel_linear = max_wheel_angular*float(wheel_radius)
@@ -482,24 +519,48 @@ def four_wheel_steer_screen(path_xyz, max_speed=0.25, max_accel=0.25,
     names = ('fl','fr','rl','rr')
     first_angles = dict(zip(names,map(float,angles[first_idx])))
     wheel_positions = dict(zip(names,contact_points(angles[first_idx],geometry)))
+    checks = (
+        ('steering_angle_limit', max_steer, float(steering_limit), 1e-6),
+        ('wheel_speed_limit', max_wheel_angular, 20., 1e-6),
+        ('steering_rate_limit', max_steer_rate, 1.57, 1e-6),
+        ('body_yaw_rate_limit', float(np.max(np.abs(yaw_rate))), min(.12,geometry.max_angular_speed) if allow_retime else geometry.max_angular_speed, 1e-6),
+        ('path_speed_limit', float(np.max(speed)), float(max_speed), 1e-6),
+        ('path_acceleration_limit', max_path_accel, float(max_accel), 1e-3),
+    )
+    failures = [dict(reason=reason, observed=value, limit=limit)
+                for reason, value, limit, tolerance in checks if value > limit+tolerance]
+    if allow_retime and body_yaw is None and float(np.max(np.abs(curvature)))>1.001:
+        failures.append(dict(reason='path_curvature_requires_stop_and_turn',
+                             observed=float(np.max(np.abs(curvature))),limit=1.0))
+    if allow_retime and failures and _retime_depth<4:
+        rate_limits={'steering_rate_limit','wheel_speed_limit','body_yaw_rate_limit'}
+        if all(f['reason'] in rate_limits for f in failures):
+            factor=min(f['limit']/f['observed'] for f in failures)*.85
+            slower=float(max_speed)*min(.85,factor)
+            # Below this the native chassis may switch translation into spin.
+            if slower>=max(.012,geometry.spin_threshold+.002):
+                result=four_wheel_steer_screen(path_xyz,slower,max_accel,wheel_base_x,track_y,
+                    wheel_radius,steering_limit,delta_y,initial_steering,body_yaw,geometry_override,
+                    allow_retime=True,_retime_depth=_retime_depth+1)
+                result['retiming_applied']=True
+                result['requested_speed_mps']=float(max_speed)
+                return result
     return {
-        "necessary_conditions_pass": bool(
-            max_steer <= float(steering_limit) + 1e-6
-            and max_wheel_angular <= 20.0 + 1e-6
-            and max_steer_rate <= 1.57 + 1e-6
-            and float(np.max(np.abs(yaw_rate))) <= geometry.max_angular_speed + 1e-6
-            and float(np.max(speed)) <= float(max_speed) + 1e-6
-            and max_path_accel <= float(max_accel) + 1e-3
-        ),
+        "retiming_applied": _retime_depth>0,
+        "recommended_speed_mps": float(max_speed),
+        "necessary_conditions_pass": not failures,
+        "kinematic_failures": failures,
         "geometry_basis": "native_controller_contact_point_with_delta_y",
         "kinematics_model": MODEL_ID,
+        "tracking_model": "fixed_heading_translation" if body_yaw is not None else "reduced_v_omega_curvature",
         "steering_limit_conflict": bool(steering_limit < geometry.controller_steering_limit),
         "controller_steering_limit_rad": geometry.controller_steering_limit,
         "physical_steering_screen_limit_rad": float(steering_limit),
         "initial_alignment_required_rad": initial_alignment,
         "max_abs_steering_rate_radps": max_steer_rate,
         "max_abs_yaw_rate_radps": float(np.max(np.abs(yaw_rate))),
-        "path_timing_basis": "retimed_tangent_heading_necessary_condition_only",
+        "path_timing_basis": ("retimed_fixed_heading_translation" if body_yaw is not None else "retimed_tangent_heading_necessary_condition_only"),
+        "kinematic_screen_arc_spacing_m": float(sample_arc[1]-sample_arc[0]),
         "max_path_speed_mps": float(np.max(speed)),
         "max_path_acceleration_mps2": max_path_accel,
         "max_abs_steering_angle_rad": max_steer,
@@ -632,6 +693,17 @@ def stamped_data_is_fresh(stamp_ns, now_ns, max_age_s, future_tolerance_s=0.2):
     if not math.isfinite(age_s):
         return False, None
     return bool(-future_tolerance <= age_s <= max_age), float(age_s)
+
+
+def ground_plane_height_band(points, ground_z, body_height, slope_x=0.0, slope_y=0.0):
+    """Filter each point above its local floor; return JSON-safe display bounds."""
+    points = np.asarray(points)
+    floor = ground_z+slope_x*points[:, 0]+slope_y*points[:, 1]
+    lower, upper = floor+.03, floor+body_height+.30
+    band = points[(points[:, 2] >= lower) & (points[:, 2] <= upper)]
+    bounds = ([float(np.min(lower)), float(np.max(upper))] if len(points)
+              else [float(ground_z+.03), float(ground_z+body_height+.30)])
+    return band, bounds
 
 
 def ground_z_from_body_pose(body_z, body_to_ground):

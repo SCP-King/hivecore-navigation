@@ -6,10 +6,15 @@ configured field paths. Unknown or unmapped status fields always fail closed.
 import json
 import math
 import time
+import copy
 
 import rclpy
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
 from nav_msgs.msg import Odometry
+from geometry_msgs.msg import TransformStamped, PoseWithCovarianceStamped
+from tf2_ros import Buffer, TransformListener, TransformBroadcaster
+from .core import invert_transform, mapping_navigation_status, localization_is_tracking
+from .pose_frame import change_pose_child, change_twist_child
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.qos import qos_profile_sensor_data
@@ -42,7 +47,7 @@ def strict_bool(value):
 
  
 def pose_contract_issues(message, expected_frame, expected_child_frame):
-    """Return diagnostics only; never decide whether an Odometry sample is forwarded."""
+    """Diagnose passthrough data, or validate source semantics before conversion."""
     issues = []
     stamp_ns = int(message.header.stamp.sec) * 1000000000 + int(message.header.stamp.nanosec)
     frame = str(message.header.frame_id).lstrip("/")
@@ -60,6 +65,8 @@ class N01LocalizationAdapter(Node):
     def __init__(self):
         super().__init__("n01_localization_adapter")
         defaults = {
+            "status_forwarding_enabled": True,
+            "status_mode": "localization",
             "status_input_topic": "/loc_status",
             "status_output_topic": "/n01/localization/status",
             "status_header_path": "header",
@@ -70,13 +77,23 @@ class N01LocalizationAdapter(Node):
             "pose_input_topic": "/robot_pose",
             "pose_output_topic": "/n01/localization/pose",
             "expected_pose_frame": "map",
-            "expected_pose_child_frame": "base_footprint",
+            "expected_pose_child_frame": "base_link",
+            "output_pose_child_frame": "",
+            "pose_mirror_topic": "",
+            "broadcast_pose_tf": False,
+            "initial_pose_input_topic": "",
+            "initial_pose_output_topic": "",
+            "initial_pose_preserve_height": False,
             "pose_qos_depth": 50,
             "pose_stats_period_s": 10.0,
         }
         for name, value in defaults.items():
             self.declare_parameter(name, value)
         get = lambda name: self.get_parameter(name).value
+        self.status_forwarding_enabled = bool(get('status_forwarding_enabled'))
+        self.status_mode = str(get('status_mode'))
+        if self.status_mode not in ('localization', 'mapping'):
+            raise ValueError('unknown_status_mode')
         self.status_input_topic = str(get("status_input_topic"))
         self.status_output_topic = str(get("status_output_topic"))
         self.status_header_path = str(get("status_header_path"))
@@ -87,6 +104,13 @@ class N01LocalizationAdapter(Node):
         self.pose_output_topic = str(get("pose_output_topic"))
         self.expected_pose_frame = str(get("expected_pose_frame")).lstrip("/")
         self.expected_pose_child_frame = str(get("expected_pose_child_frame")).lstrip("/")
+        self.output_child = str(get("output_pose_child_frame")).lstrip("/")
+        self.mirror_topic = str(get("pose_mirror_topic"))
+        self.broadcast_pose_tf = bool(get("broadcast_pose_tf"))
+        self.initial_preserve_height = bool(get('initial_pose_preserve_height'))
+        self.last_output_height = None
+        self.last_output_stamp_ns = 0
+        self.last_output_receive_time = 0.0
         pose_qos_depth = int(get("pose_qos_depth"))
         pose_stats_period_s = float(get("pose_stats_period_s"))
         period = float(get("status_discovery_period_s"))
@@ -116,6 +140,19 @@ class N01LocalizationAdapter(Node):
             DiagnosticArray, self.status_output_topic, 10)
         self.pose_pub = self.create_publisher(
             Odometry, self.pose_output_topic, self.pose_qos)
+        self.pose_mirror = (self.create_publisher(Odometry, self.mirror_topic, self.pose_qos)
+                            if self.mirror_topic else None)
+        if self.mirror_topic == self.pose_input_topic:
+            raise ValueError('pose_mirror_must_not_loop_back_to_input')
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
+        self.tf_broadcaster = TransformBroadcaster(self) if self.broadcast_pose_tf else None
+        initial_input, initial_output = str(get('initial_pose_input_topic')), str(get('initial_pose_output_topic'))
+        if initial_input and initial_output:
+            if initial_input == initial_output:
+                raise ValueError('initialpose_must_not_loop_back_to_input')
+            self.initial_pub = self.create_publisher(PoseWithCovarianceStamped, initial_output, 10)
+            self.initial_sub = self.create_subscription(PoseWithCovarianceStamped, initial_input, self.on_initial_pose, 10)
         self.pose_sub = self.create_subscription(
             Odometry, self.pose_input_topic, self.on_pose, self.pose_qos)
         self.status_sub = None
@@ -132,11 +169,18 @@ class N01LocalizationAdapter(Node):
             "N-01 backend adapter: status %s -> %s; pose %s -> %s"
             % (self.status_input_topic, self.status_output_topic,
                self.pose_input_topic, self.pose_output_topic))
-        self.get_logger().warning(
-            "Verified LocStatus field mapping loaded; unknown fields fail closed. "
-            "No absent TF, IMU or general quality fields are inferred.")
+        if self.status_mode == 'mapping':
+            self.get_logger().info('Mapping session and normalized pose readiness; no relocation/fitness inferred.')
+        elif self.status_forwarding_enabled:
+            self.get_logger().warning(
+                "Verified LocStatus field mapping loaded; unknown fields fail closed. "
+                "No absent TF, IMU or general quality fields are inferred.")
+        else:
+            self.get_logger().info("Mapping pose adapter: localization readiness forwarding disabled.")
 
     def discover_status_type(self):
+        if not self.status_forwarding_enabled:
+            return
         matches = [types for name, types in self.get_topic_names_and_types()
                    if name == self.status_input_topic]
         if not matches or len(matches[0]) != 1:
@@ -164,6 +208,9 @@ class N01LocalizationAdapter(Node):
         return int(stamp.sec) * 1000000000 + int(stamp.nanosec)
 
     def on_status(self, message):
+        if self.status_mode == 'mapping':
+            self.on_mapping_status(message)
+            return
         self.status_counts["received"] += 1
         values = {}
         errors = []
@@ -219,8 +266,23 @@ class N01LocalizationAdapter(Node):
         if errors:
             self.status_counts["mapping_errors"] += 1
 
+    def on_mapping_status(self, message):
+        self.status_counts['received'] += 1
+        stamp = message.header.stamp
+        values = mapping_navigation_status(
+            message.session, self.stamp_ns(stamp), self.get_clock().now().nanoseconds,
+            self.last_output_stamp_ns, time.monotonic() - self.last_output_receive_time)
+        ready, reason = localization_is_tracking(values)
+        status = DiagnosticStatus(name='localization',
+                                  level=DiagnosticStatus.OK if ready else DiagnosticStatus.ERROR,
+                                  message=reason,
+                                  values=[KeyValue(key=k, value=v) for k, v in values.items()])
+        output = DiagnosticArray(header=copy.deepcopy(message.header), status=[status])
+        self.status_pub.publish(output)
+        self.status_counts['published'] += 1
+
     def on_pose(self, message):
-        """Forward every source Odometry unchanged; validation is diagnostic-only."""
+        """Normalize the configured physical child; default mode remains passthrough."""
         self.pose_counts["received"] += 1
         issues = pose_contract_issues(
             message, self.expected_pose_frame, self.expected_pose_child_frame)
@@ -231,10 +293,71 @@ class N01LocalizationAdapter(Node):
                 self.pose_counts["unexpected_frame"] += 1
             elif issue.startswith("unexpected_child_frame_id:"):
                 self.pose_counts["unexpected_child_frame"] += 1
-        # Do not gate forwarding on localization readiness or message validation.
-        # Downstream readiness/temporal guards decide whether a sample is usable.
+        if self.output_child and self.output_child != self.expected_pose_child_frame:
+            if issues:
+                return  # Cannot transform a sample with an unknown frame/time.
+            try:
+                mount = self.source_from_output()
+                message = copy.deepcopy(message)
+                self.convert_pose(message.pose, mount)
+                v, w = message.twist.twist.linear, message.twist.twist.angular
+                linear, angular, cov = change_twist_child(
+                    (v.x,v.y,v.z), (w.x,w.y,w.z), message.twist.covariance, mount)
+                v.x,v.y,v.z = linear
+                w.x,w.y,w.z = angular
+                message.twist.covariance = cov
+                message.child_frame_id = self.output_child
+            except Exception as exc:
+                self.get_logger().warning('Pose frame conversion waiting: '+str(exc), throttle_duration_sec=5.)
+                return
         self.pose_pub.publish(message)
+        self.last_output_height = float(message.pose.pose.position.z)
+        self.last_output_stamp_ns = self.stamp_ns(message.header.stamp)
+        self.last_output_receive_time = time.monotonic()
+        if self.pose_mirror:
+            self.pose_mirror.publish(message)
+        if self.tf_broadcaster:
+            tf = TransformStamped()
+            tf.header = copy.deepcopy(message.header)
+            tf.child_frame_id = message.child_frame_id
+            p = message.pose.pose.position
+            tf.transform.translation.x,tf.transform.translation.y,tf.transform.translation.z = p.x,p.y,p.z
+            tf.transform.rotation = copy.deepcopy(message.pose.pose.orientation)
+            self.tf_broadcaster.sendTransform(tf)
         self.pose_counts["published"] += 1
+
+    def source_from_output(self):
+        tf = self.tf_buffer.lookup_transform(
+            self.expected_pose_child_frame, self.output_child, rclpy.time.Time())
+        t, q = tf.transform.translation, tf.transform.rotation
+        return (t.x,t.y,t.z), (q.x,q.y,q.z,q.w)
+
+    @staticmethod
+    def convert_pose(pose_with_covariance, mount):
+        p, q = pose_with_covariance.pose.position, pose_with_covariance.pose.orientation
+        t, r, cov = change_pose_child((p.x,p.y,p.z), (q.x,q.y,q.z,q.w),
+                                    pose_with_covariance.covariance, mount)
+        p.x,p.y,p.z = t
+        q.x,q.y,q.z,q.w = r
+        pose_with_covariance.covariance = cov
+
+    def on_initial_pose(self, message):
+        if message.header.frame_id.lstrip('/') != self.expected_pose_frame:
+            return
+        try:
+            message = copy.deepcopy(message)
+            # RViz's 2D tool supplies z=0 even in maps whose floor is not zero.
+            # Preserve the current map-referenced height; do not seed +0.9m.
+            if self.initial_preserve_height and abs(message.pose.pose.position.z) < 1e-8:
+                age = (self.get_clock().now().nanoseconds-self.last_output_stamp_ns)/1e9
+                if self.last_output_height is None or not 0 <= age <= 1.5:
+                    raise ValueError('2D initial pose requires a fresh map-referenced height')
+                message.pose.pose.position.z = self.last_output_height
+            t, q = self.source_from_output()
+            self.convert_pose(message.pose, invert_transform(t,q))
+            self.initial_pub.publish(message)
+        except Exception as exc:
+            self.get_logger().warning('Initial pose conversion waiting: '+str(exc), throttle_duration_sec=5.)
 
     def report_status_stats(self):
         counts = self.status_counts

@@ -36,3 +36,26 @@ def project_speed(position, heading, desired, obstacles, radius=.55, alpha=1.0):
             return 0., 'CBF_INFEASIBLE_STOP'
     speed = max(0.,min(desired,high))
     return speed, ('CBF_LIMIT' if speed<desired-1e-9 else 'CBF_CLEAR')
+def point_obstacles(points, tracks):
+    """Measured cloud support, with valid tracked velocities on matching points.
+
+    Unknown-velocity candidates remain stationary instantaneous cloud constraints;
+    do not invent a 0.75m solid disk around a cluster centroid. A valid moving
+    track requires observed bounds so its velocity can be assigned to support.
+    """
+    import numpy as np
+    xyz=np.asarray(points,dtype=float)
+    if xyz.ndim!=2 or xyz.shape[1]!=3 or not np.isfinite(xyz).all():
+        raise ValueError('invalid_obstacle_points')
+    velocities=np.zeros((len(xyz),2))
+    for t in tracks:
+        if t.get('velocity_valid') is not True:
+            continue
+        low=np.asarray(t.get('minimum_map',[]),dtype=float)
+        high=np.asarray(t.get('maximum_map',[]),dtype=float)
+        velocity=np.asarray(t.get('velocity_map_mps',[]),dtype=float)
+        if low.shape!=(3,) or high.shape!=(3,) or velocity.shape!=(3,) or not all(np.isfinite(a).all() for a in (low,high,velocity)) or (high<low).any():
+            raise ValueError('invalid_dynamic_track_support')
+        selected=((xyz>=low)&(xyz<=high)).all(axis=1)
+        velocities[selected]=velocity[:2]
+    return [(float(p[0]),float(p[1]),float(v[0]),float(v[1]),0.) for p,v in zip(xyz,velocities)]

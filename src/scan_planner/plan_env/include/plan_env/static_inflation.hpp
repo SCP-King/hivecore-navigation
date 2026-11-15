@@ -69,4 +69,31 @@ inline void markStaticInflationRows(
   }
 }
 
+// Identical union, merging overlapping vertical spans before XY dilation.
+template<class Point>
+inline void markMergedStaticInflationRows(
+    std::vector<char>& mask, std::vector<Point> points,
+    int nx,int ny,int nz,int min_x,int min_y,int min_z,int max_x,int max_y,int max_z,
+    const std::vector<StaticInflationXYOffset>& offsets,int down,int up)
+{
+  points.erase(std::remove_if(points.begin(),points.end(),[=](const Point& p) {
+    return p[0]<min_x || p[0]>max_x || p[1]<min_y || p[1]>max_y || p[2]<min_z || p[2]>max_z;
+  }),points.end());
+  std::sort(points.begin(),points.end(),[](const Point& a,const Point& b) {
+    if(a[0]!=b[0]) return a[0]<b[0];
+    if(a[1]!=b[1]) return a[1]<b[1];
+    return a[2]<b[2];
+  });
+  std::size_t i=0;
+  while(i<points.size()) {
+    const int x=points[i][0],y=points[i][1],low=points[i][2];
+    int high=low;++i;
+    while(i<points.size() && points[i][0]==x && points[i][1]==y &&
+          points[i][2]-high<=std::max(0,down)+std::max(0,up)+1) {
+      high=points[i][2];++i;
+    }
+    markStaticInflationRows(mask,nx,ny,nz,min_x,min_y,min_z,max_x,max_y,max_z,
+                           x,y,low,offsets,down,high-low+std::max(0,up));
+  }
+}
 }  // namespace plan_env_detail
