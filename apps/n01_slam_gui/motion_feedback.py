@@ -17,6 +17,7 @@ class MotionFeedback:
         self.timeout_reported = False
 
     def feed(self, data, now):
+        if self.terminal:return []
         state = str(data.get('state', 'UNKNOWN'))
         changed = state != self.state
         self.state = state
@@ -34,7 +35,7 @@ class MotionFeedback:
                   'COMMAND_SOURCE_CONFLICT': '行驶受阻：速度指令源冲突',
                   'ESTOP': '行驶暂停：急停生效', 'SESSION_COMPLETE': '执行结束，未确认到达目标',
                   'DISABLED': '执行器未启用', 'DRY_RUN': '模拟执行，未输出底盘速度'}
-        labels.update({'ROTATING':'正在原地对齐站点朝向','ROTATION_BLOCKED':'旋转暂停：扫掠空间或感知条件不满足','ROTATION_INPUT_STALE':'旋转暂停：里程计过期','ROTATION_POSE_MISMATCH':'旋转暂停：地图与里程计航向不一致','MANUAL_OVERRIDE': '手动控制已接管，导航已让出速度输出；结束手动操作后点击开始恢复导航',
+        labels.update({'ROTATION_CHECKING':'正在检查当前转向扫掠空间','ROTATING':'正在原地对齐站点朝向','ROTATION_BLOCKED':'旋转暂停：扫掠空间或感知条件不满足','ROTATION_INPUT_STALE':'旋转暂停：里程计过期','ROTATION_POSE_MISMATCH':'旋转暂停：地图与里程计航向不一致','MANUAL_OVERRIDE': '手动控制已接管，导航已让出速度输出；结束手动操作后点击开始恢复导航',
                        'WAITING_COMMAND_OBSERVER': '等待速度指令来源监控就绪，暂不输出运动指令',
                        'NO_POSE': '行驶暂停：定位位姿过期或缺失',
                        'NO_ODOM': '行驶暂停：底盘里程计过期或缺失',
@@ -54,6 +55,8 @@ class MotionFeedback:
                        'CBF_SENSOR_STALE': '行驶暂停：CBF 所需传感器数据过期',
                        'CBF_INVALID_TRACK': '行驶暂停：CBF 障碍物跟踪数据无效',
                        'ALIGN': '正在调整朝向'})
+        if state=='MOVING' and (data.get('navigation_degraded') or data.get('steering_degraded')):
+            labels['MOVING']='降速行驶'
         text = labels.get(state, '行驶暂停/等待：' + state)
         if reason:
             text += '；原因：' + reason

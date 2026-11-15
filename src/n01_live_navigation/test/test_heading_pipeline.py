@@ -25,8 +25,11 @@ def test_search_detour_passes_native_four_wheel_screen():
 
 
 def monitor():
+    from n01_live_navigation.hive2_kinematics import Hive2Geometry
     now=time.monotonic()
-    n=S(obstacles=np.empty((0,3)),obstacles_rx=now,obstacles_stamp_ns=10**10,
+    n=S(footprint_client=S(get=lambda:np.array([[-.5,-.2],[.5,-.2],[.5,.2],[-.5,.2]])),
+        native_model_sync=S(geometry=lambda:Hive2Geometry()), max_speed=.03,
+        joint_positions={f'{leg}_ankle_yaw':0. for leg in ('fl','fr','rl','rr')},obstacles=np.empty((0,3)),obstacles_rx=now,obstacles_stamp_ns=10**10,
         ground_plane=[0,0,0],plane_rx=now,map_window=[[-4,-4],[4,4]],
         measured_twist=(0.,0.),odom_rx=now,frame='map',body_pose_rx=now,body_pose_stamp_ns=10**10,
         body_pose=S(header=S(frame_id='map'),pose=S(pose=S(position=S(x=0.,y=0.,z=.775),

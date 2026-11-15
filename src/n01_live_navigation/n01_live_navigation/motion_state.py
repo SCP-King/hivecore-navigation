@@ -23,7 +23,7 @@ class MotionStateMachine:
         elif status in ('RECOVERY_FAILED','ROTATION_TIMEOUT','ROTATION_DRIFT','SESSION_COMPLETE','GOAL_CHANGED'):target=Phase.FAILED
         elif status=='MANUAL_OVERRIDE':target=Phase.MANUAL
         elif status=='MOVING':target=Phase.TRACKING
-        elif status in ('ROTATING','ALIGN','ALIGN_PATH','STOPPING_FOR_TURN'):target=Phase.TURNING
+        elif status in ('ROTATING','ROTATION_CHECKING','ALIGN','ALIGN_PATH','STOPPING_FOR_TURN'):target=Phase.TURNING
         elif status in ('REPLANNING_AFTER_ROTATION_BLOCKED','NO_PATH','WAITING_FOR_REPLAN','WAITING_FOR_PATH_EXTENSION'):target=Phase.REPLANNING
         elif status=='VERIFYING_ARRIVAL':target=Phase.VERIFYING
         else:target=Phase.WAITING

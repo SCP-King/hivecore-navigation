@@ -25,14 +25,22 @@ def prefix_requires_extension(position,prefix_end,goal,has_suffix):
 
 
 def reduced_yaw_rate(speed, heading_error, target_distance, max_yaw,
-                     spin_threshold=.01, max_curvature=1.):
-    values=(speed,heading_error,target_distance,max_yaw,spin_threshold,max_curvature)
-    if not all(math.isfinite(v) for v in values) or min(speed,max_yaw,spin_threshold,max_curvature)<0:
+                     spin_threshold=.01, max_curvature=None):
+    values=(speed,heading_error,target_distance,max_yaw,spin_threshold)
+    if max_curvature is not None:values=(*values,max_curvature)
+    if not all(math.isfinite(v) for v in values) or (speed<0 or max_yaw<0 or spin_threshold<0 or (max_curvature is not None and max_curvature<0)):
         raise ValueError('invalid_reduced_tracking_input')
     # Native IK snaps sub-threshold translation to zero. Never pair that with
     # nonzero yaw: it would request a spin while the speed ramp is starting.
     if speed < spin_threshold:
         return 0.
     curvature=2.*math.sin(heading_error)/max(.25,target_distance)
-    curvature=max(-max_curvature,min(max_curvature,curvature))
+    if max_curvature is not None:
+        curvature=max(-max_curvature,min(max_curvature,curvature))
     return max(-max_yaw,min(max_yaw,speed*curvature))
+
+
+def forward_speed_factor(heading_error):
+    """Continuous slowdown without a zero-speed hole before realignment."""
+    if not math.isfinite(heading_error):raise ValueError('invalid_heading_error')
+    return max(0.,math.cos(heading_error))

@@ -19,7 +19,7 @@ def rotation_clear(points, position, plane, radius=.80, min_observations=30):
     return not bool(np.any(obstacle & (distance<=radius)))
 
 
-def rotation_arc_clear(points, position, plane, start_yaw, target_yaw, min_observations=30, footprint=None):
+def rotation_arc_clear(points, position, plane, start_yaw, target_yaw, min_observations=30, footprint=None, position_margin=0.):
     """Check the shortest commanded turn with the shared runtime footprint.
 
     Sample every <= 2 degrees, covering between samples by expanding each
@@ -32,11 +32,21 @@ def rotation_arc_clear(points, position, plane, start_yaw, target_yaw, min_obser
     p = p[np.isfinite(p).all(axis=1)]
     if len(p) < min_observations:
         raise ValueError('insufficient rotation obstacle observations')
+    if not math.isfinite(position_margin) or not 0<=position_margin<=.05:
+        raise ValueError('invalid rotation position margin')
+    if footprint is not None:
+        # Outside the circumscribed swept disk cannot collide at any yaw.
+        rho=float(np.linalg.norm(footprint,axis=1).max())+.06+position_margin+.02
+        floor=p[:,:2]@np.asarray(plane)[:2]+plane[2]
+        near=(np.hypot(p[:,0]-position[0],p[:,1]-position[1])<=rho)
+        near&=(p[:,2]>floor+.03)&(p[:,2]>=position[2]-.90-position_margin)&(p[:,2]<=position[2]+.25+position_margin)
+        p=p[near]
     angle = math.atan2(math.sin(target_yaw-start_yaw), math.cos(target_yaw-start_yaw))
     count = max(1, math.ceil(abs(angle)/math.radians(2)))
     yaw = np.linspace(start_yaw, start_yaw+angle, count+1)
     bounds = [[position[0]-2., position[1]-2.], [position[0]+2., position[1]+2.]]
-    collision = FootprintCollision(p, plane, position[2], bounds, footprint=footprint)
+    collision = FootprintCollision(p, plane, position[2], bounds, footprint=footprint,height_margin=position_margin)
+    collision.radius+=position_margin
     if footprint is not None:
         # Cover the continuous body rotation between sampled poses.
         collision.radius += np.linalg.norm(footprint,axis=1).max()*2*math.sin(abs(angle)/count/4)

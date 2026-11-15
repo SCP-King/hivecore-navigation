@@ -28,7 +28,7 @@ def test_blocked_rotation_replans_same_goal_with_bounded_retries():
         get_clock=lambda:S(now=lambda:S(to_msg=lambda:Time(sec=10))),replan_goal_pub=Mock(),_zero=Mock())
     for t in (10.,11.,18.,19.,26.,34.):
         SlowMotionExecutor._request_turn_replan(n,t)
-    assert n.replan_goal_pub.publish.call_count==3
+    assert n.replan_goal_pub.publish.call_count==4
     msg=n.replan_goal_pub.publish.call_args.args[0]
     assert msg.header.frame_id=='map' and msg.pose.position.x==1. and msg.pose.position.y==2.
     assert msg.pose.position.z==0.
@@ -36,7 +36,8 @@ def test_blocked_rotation_replans_same_goal_with_bounded_retries():
 
 def test_recovery_suppresses_immediate_repeat_rotation_and_missing_goal_fails():
     n=node((-1,0));n.turn_recovery_until=40.
-    assert not SlowMotionExecutor._face_global_path(n,10.)
+    assert SlowMotionExecutor._face_global_path(n,10.)  # Recovery countdown alone must not ban a new checked turn.
+    n.path_turn_active=False
     n.turn_recovery_until=0.;n.turn_suppressed_until=40.
     assert not SlowMotionExecutor._face_global_path(n,10.)
     n=S(requested_goal_xy=None,expected_goal=None,_zero=Mock())
@@ -65,3 +66,15 @@ def test_planned_rotation_prefix_is_executed_without_translation_permission():
     assert n.path_turn_active and n.target_yaw==math.pi
     n=node((-1,0));n.require_maneuver_review=True
     assert not SlowMotionExecutor._face_global_path(n,10.1) # unreviewed global hint never spins
+
+
+def test_feedback_gap_recovery_does_not_become_obstacle_rotation_ban(monkeypatch):
+    from n01_live_navigation import rotation_task
+    monkeypatch.setattr(rotation_task,'control',lambda *args:None)
+    for state,blocked in [('ROTATION_INPUT_STALE',False),('ROTATION_BLOCKED',True)]:
+        n=node((-1,0));n.path_turn_active=True;n.state=state;n.turn_stalled_since=1.
+        n.get_clock=lambda:S(now=lambda:S(nanoseconds=10**10))
+        n._request_turn_replan=Mock()
+        assert SlowMotionExecutor._face_global_path(n,10.)
+        assert (n.turn_suppressed_until>10.) is blocked
+        assert state in n._request_turn_replan.call_args.kwargs['cause']

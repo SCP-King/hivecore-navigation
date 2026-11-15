@@ -27,11 +27,11 @@ def swept_turn(start,target,collision):
     finally:collision.radius=radius
 
 
-def plan_maneuver(start,goal,collision,turn_collision=None,budget_s=.12):
+def plan_maneuver(start,goal,collision,turn_collision=None,budget_s=.12,capability=None):
     began=time.monotonic();desired=math.atan2(goal[1]-start[1],goal[0]-start[0])
     angle=abs(wrap(desired-start[2]));direct=None
     if angle<=math.radians(35):
-        direct=search(start,goal,collision,budget_s=min(.04,budget_s))
+        direct=search(start,goal,collision,budget_s=(min(1.5,budget_s*.8) if budget_s>=.5 else min(.04,budget_s)),capability=capability)
         if direct.states:return Maneuver(direct,[],'forward_heading_path')
     if turn_collision is not None:
         for offset in (0.,math.radians(15),-math.radians(15),math.radians(30),-math.radians(30)):
@@ -41,12 +41,13 @@ def plan_maneuver(start,goal,collision,turn_collision=None,budget_s=.12):
             if abs(wrap(target-start[2]))<math.radians(3):continue
             rotation=swept_turn(start,target,collision)
             if not rotation or not swept_turn(start,target,turn_collision):continue
-            forward=search((start[0],start[1],target,0.),goal,collision,budget_s=left)
+            forward=search((start[0],start[1],target,0.),goal,collision,budget_s=left,capability=capability)
             if forward.states:return Maneuver(forward,rotation,'rotate_then_replan_forward')
     left=budget_s-(time.monotonic()-began)
     if direct is None and left>0:
-        direct=search(start,goal,collision,budget_s=left)
+        direct=search(start,goal,collision,budget_s=left,capability=capability)
         if direct.states:return Maneuver(direct,[],'forward_heading_path')
     return Maneuver(direct or SearchResult([],'no_safe_maneuver',0,(time.monotonic()-began)*1000),[],
                     'rotation_perception_unavailable'if turn_collision is None and angle>math.radians(35)
-                    else'no_collision_checked_turn_or_forward_route')
+                    else ('heading_search_time_budget' if direct is not None and direct.reason=='heading_search_time_budget'
+                          else 'no_collision_checked_turn_or_forward_route'))

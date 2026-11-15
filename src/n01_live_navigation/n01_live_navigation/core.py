@@ -529,9 +529,6 @@ def four_wheel_steer_screen(path_xyz, max_speed=0.25, max_accel=0.25,
     )
     failures = [dict(reason=reason, observed=value, limit=limit)
                 for reason, value, limit, tolerance in checks if value > limit+tolerance]
-    if allow_retime and body_yaw is None and float(np.max(np.abs(curvature)))>1.001:
-        failures.append(dict(reason='path_curvature_requires_stop_and_turn',
-                             observed=float(np.max(np.abs(curvature))),limit=1.0))
     if allow_retime and failures and _retime_depth<4:
         rate_limits={'steering_rate_limit','wheel_speed_limit','body_yaw_rate_limit'}
         if all(f['reason'] in rate_limits for f in failures):

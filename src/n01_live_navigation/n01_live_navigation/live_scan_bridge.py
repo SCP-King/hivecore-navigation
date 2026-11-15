@@ -6,6 +6,8 @@ SLAM corrections, evaluated at the original LiDAR and live odometry timestamps.
 It composes the robot-description extrinsic (body_frame <- lidar_frame).
 It never substitutes latest pose/TF or rewrites the scan timestamp.
 """
+from .output_readiness import compensated_output_ready
+from .odom_qos import odometry_integration_qos
 import json
 import math
 import time
@@ -204,6 +206,7 @@ class LiveScanBridge(Node):
         self.last_odom_error = ""
         self.last_motion_compensation_error = "waiting_odom"
         self.last_motion_compensation = {}
+        self.last_output_compensation = {}
         self.motion_compensation_ready = False
 
         self.pending_clouds = deque()
@@ -240,7 +243,7 @@ class LiveScanBridge(Node):
         self.pose_sub = self.create_subscription(
             Odometry, self.pose_topic, self.on_robot_pose, qos_profile_sensor_data)
         self.odom_sub = self.create_subscription(
-            Odometry, self.odom_topic, self.on_odometry, qos_profile_sensor_data)
+            Odometry, self.odom_topic, self.on_odometry, odometry_integration_qos())
         self.cloud_sub = self.create_subscription(
             PointCloud2, self.cloud_topic, self.on_cloud, qos_profile_sensor_data)
         self.cloud_pub = self.create_publisher(PointCloud2, "/cloud", qos_profile_sensor_data)
@@ -885,6 +888,8 @@ class LiveScanBridge(Node):
             if wait_counted:
                 self.counts["cloud_tf_wait_completed"] += 1
             self.last_processed_scan_stamp_ns = stamp_ns
+            self.last_output_compensation = dict(self.last_motion_compensation,
+                extrinsic_verified=True)
             self.counts["cloud_out"] += 1
 
     def _refresh_pose_publisher_endpoints(self, now_mono):
@@ -975,8 +980,8 @@ class LiveScanBridge(Node):
                     odom_scan_bracket_gap <= self.odom_interpolation_max_gap)
 
         compensation_for_processed_scan = (
-            self.last_motion_compensation
-            if self.last_motion_compensation.get("scan_stamp_ns") == self.last_processed_scan_stamp_ns
+            self.last_output_compensation
+            if self.last_output_compensation.get('scan_stamp_ns')==self.last_processed_scan_stamp_ns
             else {})
         live_body_pose_age = (
             (now_ns - self.last_live_body_pose_stamp_ns) / 1e9
@@ -1007,11 +1012,15 @@ class LiveScanBridge(Node):
         else:
             pose_scan_alignment = "aligned"
 
+        output_compensation_ready=compensated_output_ready(
+            compensation_for_processed_scan,self.last_processed_scan_stamp_ns,
+            scan_output_current,pose_fresh,odom_fresh,self.pose_fusion.fault)
+        latest_input_anchor_available=pose_scan_anchor_available
+        pose_scan_anchor_available=output_compensation_ready
         ready = (
             status_fresh and pose_fresh and odom_fresh and cloud_fresh
             and scan_output_current and live_body_pose_fresh
-            and self.sensor_extrinsic_ready and self.motion_compensation_ready
-            and bool(compensation_for_processed_scan)
+            and output_compensation_ready
         )
         data = {
             "schema": "n01.live_scan_readiness.v7",
@@ -1077,9 +1086,14 @@ class LiveScanBridge(Node):
                 "odom_translation_source": "measured_body_twist_trapezoid",
                 "odom_heading_source": "measured_body_angular_twist_trapezoid",
                 "odom_segment_start_ns": self.twist_odometry.segment_start,
+                "odom_max_integration_gap_s": self.twist_odometry.max_observed_gap,
             },
-            "motion_compensation_ready": bool(
-                self.motion_compensation_ready and bool(compensation_for_processed_scan)),
+            "motion_compensation_ready": output_compensation_ready,
+            "latest_attempt_motion_compensation_ready": self.motion_compensation_ready,
+            "latest_attempt_sensor_extrinsic_ready": self.sensor_extrinsic_ready,
+            "latest_input_pose_scan_anchor_available": latest_input_anchor_available,
+            "readiness_scan_stamp_ns": self.last_processed_scan_stamp_ns,
+            "readiness_basis": "fresh_successfully_compensated_published_scan",
             "motion_compensation_error": self.last_motion_compensation_error or self.last_pose_error,
             "motion_compensation_anchor_stamp_ns": compensation_for_processed_scan.get("anchor_stamp_ns"),
             "motion_compensation_anchor_delta_s": compensation_for_processed_scan.get("anchor_delta_s"),
@@ -1098,7 +1112,8 @@ class LiveScanBridge(Node):
             "pose_scan_anchor_available": pose_scan_anchor_available,
             "sensor_extrinsic_parent_frame": self.body_frame,
             "sensor_extrinsic_child_frame": self.cloud_frame,
-            "sensor_extrinsic_ready": bool(self.sensor_extrinsic_ready),
+            "sensor_extrinsic_ready": bool(scan_output_current and
+                compensation_for_processed_scan.get("extrinsic_verified") is True),
             "body_pose_live_fresh": bool(live_body_pose_fresh),
             "body_pose_live_stamp_age_s": live_body_pose_age,
             "body_pose_live_receive_age_s": live_body_pose_rx_age,

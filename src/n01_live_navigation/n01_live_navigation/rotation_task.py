@@ -1,5 +1,6 @@
 """Collision-checked rotation task sharing the normal executor's hard gates."""
 from .arrival_confirmation import measurement_confirms, prediction_metadata
+from .odom_qos import odometry_integration_qos
 import json,math,time
 from collections import deque
 import numpy as np
@@ -17,6 +18,7 @@ from .angular_travel import AngularTravel
 def setup(node):
     from .footprint_client import FootprintClient
     node.rotation_footprint=FootprintClient(node)
+    node.async_rotation_sweep=True
     node.rotation_anchor=None;node.rotation_settled=None;node.rotation_began=None
     node.rotation_static=None;node.rotation_plane=None;node.rotation_plane_rx=0.
     node.rotation_static_rx=0.;node.rotation_map_ready=False;node.rotation_map_status_rx=0.
@@ -28,13 +30,17 @@ def setup(node):
     node.rotation_tf=Buffer();node.rotation_listener=TransformListener(node.rotation_tf,node)
     latched=QoSProfile(depth=1,reliability=ReliabilityPolicy.RELIABLE,durability=DurabilityPolicy.TRANSIENT_LOCAL)
     def static(msg):
-        node.rotation_static=None
-        if msg.header.frame_id!='map':return
+        if msg.header.frame_id!='map':
+            node.rotation_static=None;return
         try:
-            node.rotation_static=(np.empty((0,3)) if msg.width==0 and len(msg.data)==0
+            decoded=(np.empty((0,3)) if msg.width==0 and len(msg.data)==0
                                   else decode_pointcloud_xyz(msg,1000000,None))
-            node.rotation_static_rx=time.monotonic()
-        except ValueError:pass
+            from contextlib import nullcontext
+            scheduling=getattr(node,'scheduling',None)
+            with scheduling.lock if scheduling is not None else nullcontext():
+                node.rotation_static=decoded
+                node.rotation_static_rx=time.monotonic()
+        except ValueError:node.rotation_static=None
     def map_status(msg):
         node.rotation_map_ready=False
         try:
@@ -78,15 +84,16 @@ def setup(node):
         node.create_subscription(String,'/grid_map/static_overlay_status',map_status,latched),
         node.create_subscription(PointCloud2,'/livox/lidar',raw,qos_profile_sensor_data),
         node.create_subscription(String,'/n01/ground_reference/status',plane,10),
-        node.create_subscription(Odometry,'/odom',odom,qos_profile_sensor_data)]
+        node.create_subscription(Odometry,'/odom',odom,odometry_integration_qos())]
 
 
-def live_points(node):
+def live_points(node,with_stamp=False):
     # Raw full-azimuth data avoids the preprocessor's rear azimuth crop.
     # Delayed TF can match an earlier buffered scan; latest-TF substitution is forbidden.
     for msg in reversed(node.rotation_raw):
         age=(node.get_clock().now().nanoseconds-(msg.header.stamp.sec*10**9+msg.header.stamp.nanosec))/1e9
         if not -.1<=age<=.6:continue
+        stamp=msg.header.stamp.sec*10**9+msg.header.stamp.nanosec
         try:
             predicted=prediction_metadata(getattr(node,'readiness',None)) is not None
             if predicted:
@@ -102,7 +109,8 @@ def live_points(node):
             t,q=tf.transform.translation,tf.transform.rotation
             sensor=((t.x,t.y,t.z),(q.x,q.y,q.z,q.w))
             if predicted:sensor=compose_transform(body[0],body[1],sensor[0],sensor[1])
-            return transform_points(p,sensor[0],sensor[1])
+            points=transform_points(p,sensor[0],sensor[1])
+            return (points,stamp) if with_stamp else points
         except Exception:continue
     raise ValueError('fresh raw lidar with scan-time TF unavailable')
 
@@ -140,10 +148,17 @@ def control(node,now):
                 or not node.rotation_map_ready or node.rotation_plane is None or now-node.rotation_plane_rx>2):
             raise ValueError('static map or ground plane unavailable/stale')
         xyz=(x,y,node.pose_z)
-        if not rotation_arc_clear(node.rotation_static,xyz,node.rotation_plane,yaw,node.target_yaw,min_observations=0,footprint=node.rotation_footprint.get()):
-            raise ValueError('static obstacle inside requested rotation swept footprint')
-        if not rotation_arc_clear(live_points(node),xyz,node.rotation_plane,yaw,node.target_yaw,footprint=node.rotation_footprint.get()):
-            raise ValueError('live obstacle inside requested rotation swept footprint')
+        if getattr(node,'async_rotation_sweep',False):
+            from .rotation_sweep_job import poll
+            clear=poll(node,now,live_points)
+            if clear is None:
+                node._zero('ROTATION_CHECKING','waiting for current swept-space certificate: '+getattr(node,'rotation_sweep_error',''));return
+            if not clear:raise ValueError('obstacle inside requested rotation swept footprint')
+        else:
+            if not rotation_arc_clear(node.rotation_static,xyz,node.rotation_plane,yaw,node.target_yaw,min_observations=0,footprint=node.rotation_footprint.get()):
+                raise ValueError('static obstacle inside requested rotation swept footprint')
+            if not rotation_arc_clear(live_points(node),xyz,node.rotation_plane,yaw,node.target_yaw,footprint=node.rotation_footprint.get()):
+                raise ValueError('live obstacle inside requested rotation swept footprint')
     except ValueError as exc:
         node.rotation_settled=None;node._zero('ROTATION_BLOCKED',str(exc));return
     error=wrap(node.target_yaw-yaw);node.rotation_error=error

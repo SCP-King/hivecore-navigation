@@ -40,6 +40,7 @@ class LiveRuntimeSupervisor(Node):
             raise ValueError("runtime supervisor age bounds invalid")
 
         self.bridge = {}
+        self.bridge_rx_monotonic = None
         self.static_ready = False
         self.static_overlay_status = {"status": "WAITING_FOR_STATIC_OVERLAY_STATUS"}
         self.body_stamp_ns = None
@@ -92,8 +93,10 @@ class LiveRuntimeSupervisor(Node):
         self.create_timer(0.25, self.publish_health)
 
     def on_bridge(self, msg):
+        self.bridge_rx_monotonic=time.monotonic()
         try:
             self.bridge = json.loads(msg.data)
+            if not isinstance(self.bridge,dict):raise ValueError("bridge status must be object")
         except (ValueError, TypeError):
             self.bridge = {"status": "INVALID_BRIDGE_STATUS"}
 
@@ -164,7 +167,9 @@ class LiveRuntimeSupervisor(Node):
         timings_age = (
             (now_ns - self.timings_stamp_ns) / 1e9 if self.timings_stamp_ns is not None else None)
 
-        bridge_ready = (
+        bridge_status_fresh=(self.bridge_rx_monotonic is not None
+            and 0<=now_mono-self.bridge_rx_monotonic<=1.5)
+        bridge_ready = (bridge_status_fresh and
             self.bridge.get("status") == "LIVE_SCAN_INPUTS_READY"
             and self.bridge.get("localization_status_fresh") is True
             and self.bridge.get("robot_pose_receive_fresh") is True
@@ -187,8 +192,8 @@ class LiveRuntimeSupervisor(Node):
             if self.planner_rx_monotonic is not None else None)
         tf_seen = self.map_tf_stamp_ns is not None
         blockers = []
-        if not bridge_ready:
-            blockers.append("live_localization_or_scan_bridge_not_ready")
+        if not bridge_status_fresh:
+            blockers.append("bridge_status_missing_or_stale")
         if self.bridge.get("localization_status_fresh") is not True:
             blockers.append("localization_status_missing_or_stale")
         if self.bridge.get("robot_pose_receive_fresh") is not True:
@@ -207,6 +212,8 @@ class LiveRuntimeSupervisor(Node):
             blockers.append("static_pcd_overlay_not_ready_in_current_window")
         if not body_fresh:
             blockers.append("body_pose_missing_or_stale")
+        if not bridge_ready and not blockers:
+            blockers.append("live_localization_or_scan_bridge_not_ready")
         # A direct map->base_link TF edge is optional: the vendor's
         # /robot_pose Odometry is the global pose source. The bridge only marks
         # itself ready after odometry-assisted scan-time pose compensation and
@@ -230,7 +237,7 @@ class LiveRuntimeSupervisor(Node):
         feasibility_fresh = feasibility_age is not None and 0.0 <= feasibility_age <= 1.0
         stage_c_ready = bool(
             feasibility_fresh
-            and self.robot_feasibility.get("status") == "NECESSARY_CONDITIONS_PASS"
+            and self.robot_feasibility.get("status") in ("NECESSARY_CONDITIONS_PASS", "ROTATION_STAGE_READY")
             and self.robot_feasibility.get("candidate_review_ready") is True
         )
         stages = {
@@ -320,6 +327,9 @@ class LiveRuntimeSupervisor(Node):
             "schema": "n01.live_system_health.v2",
             "status": "READY_FOR_GOAL_PLANNING" if navigation_ready else "BLOCKED",
             "navigation_ready": bool(navigation_ready),
+            "readiness_scan_stamp_ns": self.bridge.get('readiness_scan_stamp_ns'),
+            "bridge_status_receive_age_s": (now_mono-self.bridge_rx_monotonic
+                if self.bridge_rx_monotonic is not None else None),
             "blockers": blockers,
             "bridge": self.bridge,
             "bridge_summary": bridge_summary,

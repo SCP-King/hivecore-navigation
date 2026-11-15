@@ -7,7 +7,7 @@ from .core import normalize_quaternion, rotate_translate, quaternion_multiply
 class TwistOdometry:
     def __init__(self,max_gap=.08):
         self.max_gap=max_gap;self.last=None;self.position=None;self.segment_start=0
-        self.yaw=None;self.last_yaw_rate=None
+        self.yaw=None;self.last_yaw_rate=None;self.max_observed_gap=0.
 
     def update(self,stamp_ns,raw_position,orientation,velocity,angular_velocity=None):
         q=normalize_quaternion(orientation)
@@ -22,6 +22,7 @@ class TwistOdometry:
                 raise ValueError('odom_angular_twist_invalid')
         elif self.last_yaw_rate is not None:
             raise ValueError('odom_angular_twist_missing')
+        if self.last is not None:self.max_observed_gap=max(self.max_observed_gap,(stamp_ns-self.last[0])/1e9)
         restart=self.last is None or (stamp_ns-self.last[0])/1e9>self.max_gap
         if self.last is not None and angular_velocity is None:
             dot=min(1.,abs(float(np.dot(q,self.last[2]))))

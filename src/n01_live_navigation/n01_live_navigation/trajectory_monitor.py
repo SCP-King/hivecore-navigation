@@ -206,6 +206,7 @@ class Hive2TrajectoryMonitor(Node):
         self.accepted_goal_ns=stamp
         self.accepted_goal_xy=(msg.pose.position.x,msg.pose.position.y)
         self.global_reference=None
+        self.maneuver_cache=None
         self.last_bspline=None;self.last_bspline_rx=None;self.last_trajectory_window=None
         self.heading_cache=None;self.heading_search_failure=None
         self._clear_candidate_visualization()
@@ -268,7 +269,7 @@ class Hive2TrajectoryMonitor(Node):
         if abs(v) < .01 and abs(w) > .02:
             raise ValueError('heading_search_waiting_for_rotation_to_stop')
         curvature = w/v if abs(v) >= .01 else 0.
-        if v < -.01 or abs(curvature) > 1.001:
+        if v < -.01:
             raise ValueError('heading_search_waiting_for_forward_compatible_state')
         target = execution_prefix(guide, (pose.position.x, pose.position.y), 2.)
         end = target[-1]
@@ -278,7 +279,11 @@ class Hive2TrajectoryMonitor(Node):
         # point, station orientation is handled by the separate arrival turn.
         goal_yaw = (math.atan2(end[1]-target[-2][1], end[0]-target[-2][0])
                     if math.dist(end[:2], guide[-1][:2]) > .1 else None)
-        start = (pose.position.x, pose.position.y, yaw, max(-1., min(1., curvature)))
+        start = (pose.position.x, pose.position.y, yaw, curvature)
+        from .motion_capability import ForwardCapability
+        capability=ForwardCapability(self.native_model_sync.geometry(),
+            [self.joint_positions[f'{leg}_ankle_yaw']for leg in ('fl','fr','rl','rr')],
+            max(self.max_speed,.012))
         failure=getattr(self,'heading_search_failure',None)
         if (failure and now-failure['at']<.4 and math.dist(start[:2],failure['start'][:2])<.02
                 and abs(math.atan2(math.sin(yaw-failure['start'][2]),math.cos(yaw-failure['start'][2])))<math.radians(2)
@@ -291,13 +296,14 @@ class Hive2TrajectoryMonitor(Node):
                 and math.dist(cache['target'], end[:2]) <= .03
                 and cache['goal_yaw'] == goal_yaw):
             cached = revalidate_cached(cache['states'], start, collision)
+        if cached and not capability.segment_allowed(cached):cached=None
         # Revalidate against every fresh scene; periodically seek a new path.
         # The original cache lifetime is never extended by replaying it.
         if cached and now-getattr(self, 'heading_search_at', 0.) < .8:
             result = SearchResult(cached, 'revalidated_previous_heading_path', 0, 0.)
         else:
             self.heading_search_at = now
-            result = search(start, end[:2], collision, goal_yaw=goal_yaw)
+            result = search(start, end[:2], collision, goal_yaw=goal_yaw, capability=capability)
             if result.states:
                 self.heading_search_failure=None
                 self.heading_cache = dict(states=result.states, created=now,

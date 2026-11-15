@@ -3,10 +3,14 @@ class SteeringRateGuard:
     def __init__(self, limit=1.57, hard_limit=3.14, hold=.15, recovery=.2):
         self.limit=limit; self.hard_limit=hard_limit
         self.hold=hold; self.recovery=recovery
-        self.over_since=None; self.good_since=None; self.blocked=False
+        self.over_since=None; self.good_since=None; self.blocked=False; self.degraded=False
 
     def update(self, rates, now):
+        import math
+        if not rates or not all(math.isfinite(v) for v in rates):
+            self.blocked=True;self.degraded=True;return False
         peak=max(abs(v) for v in rates)
+        self.degraded=peak>self.limit or self.blocked
         if peak>self.hard_limit:
             self.blocked=True; self.good_since=None
         elif peak>self.limit:
@@ -19,6 +23,7 @@ class SteeringRateGuard:
                 if self.good_since is None:self.good_since=now
                 if now-self.good_since>=self.recovery:self.blocked=False
             else:self.good_since=None
+        self.degraded=peak>self.limit or self.blocked
         return not self.blocked
 
 

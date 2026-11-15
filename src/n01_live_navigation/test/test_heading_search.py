@@ -60,3 +60,20 @@ def test_environment_six_centimeters_is_counted_once_in_collision_query():
     assert not c.free([[0,0,0]])
     c=collision([[-.1,.40,.5]])
     assert c.free([[0,0,0]])  # Would be blocked if 6cm were added twice.
+
+
+def test_slew_equivalent_primitives_are_collision_checked_once():
+    from types import SimpleNamespace as S
+    from n01_live_navigation.heading_search import search,primitive
+    import numpy as np
+    class Record:
+        def free(self,states):return True
+        def free_batch(self,segments):
+            self.segments=segments
+            return np.zeros(len(segments),bool)
+    scene=Record();choices=(-50.,-7.,-3.,-1.,-.5,0.,.5,1.,3.,7.,50.)
+    cap=S(max_curvature=100.,choices=choices,segment_allowed=lambda s:True)
+    search((0.,0.,0.,0.),(1.,0.),scene,budget_s=.5,capability=cap)
+    key=lambda s:tuple(np.asarray(s).round(10).ravel())
+    assert {key(s)for s in scene.segments}=={key(primitive((0.,0.,0.,0.),k))for k in choices}
+    assert len(scene.segments)<len(choices)

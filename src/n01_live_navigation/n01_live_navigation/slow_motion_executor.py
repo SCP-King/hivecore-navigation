@@ -8,6 +8,7 @@ manual command source, when it stops publishing entirely.
 """
 from __future__ import annotations
 
+from .odom_qos import odometry_integration_qos
 import json
 import math
 import time
@@ -17,7 +18,8 @@ from ament_index_python.packages import get_package_prefix
 import numpy as np
 
 import rclpy
-from rclpy.executors import ExternalShutdownException
+from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
+from .executor_scheduling import FeedbackScheduling
 from geometry_msgs.msg import Twist, PoseStamped, PointStamped
 from nav_msgs.msg import Odometry, Path
 from rclpy.node import Node
@@ -26,7 +28,9 @@ from std_msgs.msg import Bool, String, UInt8
 from sensor_msgs.msg import PointCloud2, JointState
 from .core import decode_pointcloud_xyz
 from .cbf_velocity import project_speed, point_obstacles
-from .reduced_tracking import reduced_yaw_rate, translation_velocity, prefix_requires_extension, braking_speed_limit
+from .measured_distance import MeasuredDistance
+from .degraded_motion import reviewed_path_continuity, degraded_speed_limit
+from .reduced_tracking import reduced_yaw_rate, translation_velocity, prefix_requires_extension, braking_speed_limit, forward_speed_factor
 from .hive2_kinematics import inverse, MODEL_ID, controller_geometry
 from .path_select import select_source
 from .feedback_continuity import SteeringRateGuard
@@ -49,6 +53,7 @@ def _wrap(a: float) -> float:
 class SlowMotionExecutor(Node):
     def __init__(self) -> None:
         super().__init__("n01_slow_motion_executor")
+        self.scheduling=FeedbackScheduling()
         self.declare_parameter('motion_mode','translate')
         self.declare_parameter('target_yaw_rad',0.)
         self.motion_mode=str(self.get_parameter('motion_mode').value)
@@ -216,7 +221,7 @@ class SlowMotionExecutor(Node):
         self.create_subscription(Bool, ESTOP_TOPIC, self._on_estop, stop_qos)
         self.create_subscription(UInt8, DEC_STOP_STATE_TOPIC, self._on_dec_stop, stop_qos)
         self.create_subscription(Bool, '/n01/slow_motion/enable', self._on_enable, 10)
-        self.create_subscription(Odometry, '/odom', self._on_odom, q)
+        self.create_subscription(Odometry, '/odom', self._on_odom, odometry_integration_qos())
         self.create_subscription(String, '/n01/live_navigation/hive2_feasibility', self._on_feasibility, q)
         self.create_subscription(String, '/n01/navigation/path_status', self._on_path_status, q)
         if self.cbf_enabled:
@@ -227,12 +232,18 @@ class SlowMotionExecutor(Node):
         if self.motion_mode=='rotate' or self.face_path:
             from .rotation_task import setup
             setup(self)
-        self.create_timer(self.period, self._control)
+        self.create_timer(self.period, self._control_tick)
         self.get_logger().warn(
             "SLOW MOTION EXECUTOR: %s; max_speed=%.3f m/s; path_source=%s; control_mode=%s; cbf_enabled=%s; "
             "publishes /cmd_vel only when enabled"
             % ("ENABLED" if self.enabled else "DISABLED", self.max_speed,
                self.path_source, self.control_mode, self.cbf_enabled))
+
+    def create_subscription(self,msg_type,topic,callback,qos_profile,**kwargs):
+        if hasattr(self,'scheduling') and kwargs.get('callback_group') is None:
+            callback,group=self.scheduling.subscription(topic,msg_type,callback)
+            if group is not None:kwargs['callback_group']=group
+        return super().create_subscription(msg_type,topic,callback,qos_profile,**kwargs)
 
     def _on_command_observed(self, source) -> None:
         """Yield on actual external traffic, including a manual stop command.
@@ -440,8 +451,12 @@ class SlowMotionExecutor(Node):
         if (msg.header.frame_id.lstrip('/') != 'odom' or not -0.2 <= stamp_age <= 0.3
                 or not all(math.isfinite(v) for v in (p.x, p.y))):
             return
-        if self.odom_xy is not None:
-            self.travelled_m += math.hypot(p.x-self.odom_xy[0], p.y-self.odom_xy[1])
+        if not hasattr(self,'distance_integrator'):self.distance_integrator=MeasuredDistance()
+        try:
+            self.travelled_m=self.distance_integrator.update(
+                msg.header.stamp.sec*10**9+msg.header.stamp.nanosec,
+                msg.twist.twist.linear.x,msg.twist.twist.linear.y)
+        except ValueError:return
         self.odom_xy = (p.x, p.y)
         self.odom_rx = time.monotonic()
 
@@ -468,6 +483,7 @@ class SlowMotionExecutor(Node):
             return  # A completed bounded session requires a fresh process.
         if requested and not self.enabled:
             self.session_start = self.last_control = time.monotonic()
+            self.distance_integrator=MeasuredDistance()
             self.travelled_m = self.commanded_m = 0.0
         self.enabled = requested
         if not requested and not self.manual_override:
@@ -486,12 +502,40 @@ class SlowMotionExecutor(Node):
             self.cmd_pub.publish(Twist())
         self._status(state, reason)
 
+    def _execution_start_ready(self,now):
+        if not self.observer_ready or self.manual_override or self.estop or self.dec_stop!=0:return False
+        age=(getattr(self,'pose_stamp_age_at_rx',0.) or 0.)+now-self.pose_rx
+        if self.pose is None or not control_pose_fresh(age,now-self.pose_rx):return False
+        if self.steering_feedback is None or now-self.steering_feedback_rx>.5 or now-self.odom_rx>.3:return False
+        if not isinstance(self.readiness,dict) or now-self.readiness_rx>self.readiness_timeout:return False
+        status=self.path_status or {};review=status.get('execution_review',{})
+        if not isinstance(review,dict):return False
+        path_ok=(self.path is not None and status.get('valid') is True
+            and now-self.path_rx<=.4 and now-self.path_status_rx<=.4
+            and review.get('candidate_review_ready') is True)
+        expected=getattr(self,'expected_goal',None);goal=review.get('goal_xy')
+        if not path_ok or (expected is not None and (goal is None or math.dist(goal,expected)>.12)):return False
+        return (self.readiness.get('navigation_ready') is True and not self.readiness.get('blockers')
+                or reviewed_path_continuity(self.readiness,path_ok))
+
     def _status(self, state: str, reason: str = "") -> None:
         now = time.monotonic()
         from .motion_state import MotionStateMachine
         if not hasattr(self,'motion_fsm'):self.motion_fsm=MotionStateMachine()
         phase=self.motion_fsm.observe(state,now)
+        from .task_status import execution_task_state
+        task_state=execution_task_state(state,bool(getattr(self,'navigation_degraded',False)
+            or getattr(self,'steering_degraded',False)))
+        if phase.value in ('ARRIVED','FAILED','MANUAL_OVERRIDE'):
+            task_state={'MANUAL_OVERRIDE':'MANUAL'}.get(phase.value,phase.value)
         payload = {
+            "task_state":task_state,
+            "start_ready":self._execution_start_ready(now),
+            "rotation_sweep_ms": (getattr(self,'rotation_sweep_result',None) or {}).get('elapsed_ms'),
+            "control_last_ms":getattr(self,'control_last_ms',None),
+            "control_max_ms":getattr(self,'control_max_ms',None),
+            "rotation_odom_segment": getattr(getattr(self,'rotation_travel',None),'segment',None),
+            "rotation_max_odom_stamp_gap_s": getattr(getattr(self,'rotation_travel',None),'max_observed_gap',None),
             "phase":phase.value,
             "phase_elapsed_s":round(now-self.motion_fsm.entered,3) if self.motion_fsm.entered is not None else 0.,
             "phase_transitions":self.motion_fsm.transitions,
@@ -511,6 +555,9 @@ class SlowMotionExecutor(Node):
             "estop": self.estop,
             "dec_stop": self.dec_stop,
             "travelled_m": round(self.travelled_m, 4),
+            "distance_source": "stamped_odom_twist_integral",
+            "navigation_degraded": getattr(self,'navigation_degraded',False),
+            "steering_degraded": getattr(self,'steering_degraded',False),
             "commanded_m": round(self.commanded_m, 4),
             "distance_limit_m": self.distance_limit,
             "cbf_status": self.cbf_state,
@@ -531,21 +578,21 @@ class SlowMotionExecutor(Node):
         }
         self.status_pub.publish(String(data=json.dumps(payload)))
 
-    def _request_turn_replan(self, now):
+    def _request_turn_replan(self, now, cause="rotation swept space blocked"):
         """Replan same goal through normal gate; never use global path as drive permission."""
         goal=getattr(self,'requested_goal_xy',None) or getattr(self,'expected_goal',None)
         if goal is None:
             self.finished=True;self.completion_state='RECOVERY_FAILED'
             self._zero('RECOVERY_FAILED','rotation blocked and no current goal available')
             return
-        if self.turn_replan_count>=3 or (self.turn_replan_at and now-self.turn_replan_at<8.):
+        if self.turn_replan_at and now-self.turn_replan_at<8.:
             return
         msg=PoseStamped();msg.header.frame_id='map';msg.header.stamp=self.get_clock().now().to_msg()
         msg.pose.position.x=float(goal[0]);msg.pose.position.y=float(goal[1]);msg.pose.orientation.w=1.
         self.replan_goal_pub.publish(msg)
         self.turn_replan_at=now;self.turn_replan_count+=1
         self._zero('REPLANNING_AFTER_ROTATION_BLOCKED',
-                   f'rotation swept space blocked; replan {self.turn_replan_count}/3; waiting for validated translation')
+                   f'{cause}; replan attempt {self.turn_replan_count}; waiting for validated translation')
 
     def _face_global_path(self, now):
         """A global tangent may request checked rotation, never authorize translation."""
@@ -565,10 +612,10 @@ class SlowMotionExecutor(Node):
                     self.turn_measurement_after_ns=self.get_clock().now().nanoseconds
                 self.path_turn_active=False
                 self.turn_recovery_until=now+30.
-                self.turn_suppressed_until=now+30.
+                self.turn_suppressed_until=now+30. if self.state=='ROTATION_BLOCKED' else 0.
                 self.turn_replan_at=0.;self.turn_replan_count=0
                 self.path=None;self.path_rx=0.;self.path_valid_at=0.
-                self._request_turn_replan(now)
+                self._request_turn_replan(now,cause='rotation recovery: '+self.state)
                 return True
             if getattr(self,'rotation_complete',False):
                 self.rotation_complete=False
@@ -595,10 +642,10 @@ class SlowMotionExecutor(Node):
             self._zero('ALIGN_PATH','executing the collision-checked rotation stage')
             self.target_yaw=target;self.rotation_anchor=None;self.rotation_settled=None;self.rotation_began=None
             self.rotation_stop_since=None;self.rotation_odom_anchor=None;self.rotation_complete=False
-            self.turn_stalled_since=None;self.path_turn_active=True
+            self.turn_stalled_since=None;self.path_turn_active=True;self.turn_recovery_until=0.
             return True
         if getattr(self,'require_maneuver_review',False):return False
-        if getattr(self,'turn_recovery_until',0.) or now<getattr(self,'turn_suppressed_until',0.):
+        if now<getattr(self,'turn_suppressed_until',0.):
             return False
         # Prefer a fresh, reviewed forward curve over spinning toward a distant
         # global tangent. This is what lets the local planner drive around bends.
@@ -635,6 +682,14 @@ class SlowMotionExecutor(Node):
         self.rotation_complete=False
         self.path_turn_active=True
         return True
+
+    def _control_tick(self):
+        start=time.monotonic()
+        try:
+            with self.scheduling.lock:self._control()
+        finally:
+            self.control_last_ms=(time.monotonic()-start)*1000.
+            self.control_max_ms=max(getattr(self,'control_max_ms',0.),self.control_last_ms)
 
     def _control(self) -> None:
         now = time.monotonic()
@@ -673,6 +728,9 @@ class SlowMotionExecutor(Node):
         if self.pose is None or not control_pose_fresh(estimate_age,receive_age):
             self._zero("NO_POSE", "/body_pose stale/missing")
             return
+        if self.distance_limit>0 and getattr(getattr(self,'distance_integrator',None),'gap',False):
+            self._zero('ODOM_DISTANCE_GAP','cannot confirm travel across odometry gap')
+            return
         if self.distance_limit > 0 and (not self.odom_rx or now-self.odom_rx > 0.3):
             self._zero("NO_ODOM", "bounded test requires fresh local odometry")
             return
@@ -681,12 +739,17 @@ class SlowMotionExecutor(Node):
             self._zero("NOT_READY", "readiness stale/missing")
             return
         blockers = self.readiness.get("blockers") if isinstance(self.readiness, dict) else None
-        if not isinstance(self.readiness, dict) or self.readiness.get("navigation_ready") is not True:
-            self._zero("NOT_READY", "runtime navigation_ready is not true")
-            return
-        if isinstance(blockers, list) and blockers:
-            self._zero("BLOCKED", ",".join(str(x) for x in blockers[:4]))
-            return
+        healthy=(isinstance(self.readiness,dict) and self.readiness.get('navigation_ready') is True
+                 and isinstance(blockers,list) and not blockers)
+        if healthy:self.last_healthy_navigation=now
+        self.navigation_degraded=not healthy
+        if not healthy:
+            path_fresh=(self.path is not None and self.path_status is not None
+                and self.path_status.get('valid') is True
+                and now-self.path_rx<=.4 and now-self.path_status_rx<=.4)
+            if not reviewed_path_continuity(self.readiness,path_fresh):
+                self._zero('NOT_READY', 'fresh execution evidence missing: '+str(blockers))
+                return
         if getattr(self,'motion_mode','translate')=='rotate':
             from .rotation_task import control
             control(self,now)
@@ -696,10 +759,6 @@ class SlowMotionExecutor(Node):
         # on measured arrival; that must not prevent settled arrival verification.
         if self._handle_arrival(now):return
         recovery=getattr(self,'turn_recovery_until',0.)
-        if recovery and now>=recovery:
-            self.finished=True;self.completion_state='RECOVERY_FAILED'
-            self._zero('RECOVERY_FAILED','rotation blocked; no executable translation within 30 seconds')
-            return
         if getattr(self,'face_path',False) and self._face_global_path(now):
             return
         sel = select_source(
@@ -712,10 +771,6 @@ class SlowMotionExecutor(Node):
         if sel is None:
             recovery=getattr(self,'turn_recovery_until',0.)
             if recovery:
-                if now>=recovery:
-                    self.finished=True;self.completion_state='RECOVERY_FAILED'
-                    self._zero('RECOVERY_FAILED','rotation blocked; no validated translation after 3 replans/30 seconds')
-                    return
                 self._request_turn_replan(now)
             global_age = (f"{now - self.global_path_rx:.1f}s"
                           if self.global_path is not None else "missing")
@@ -802,18 +857,26 @@ class SlowMotionExecutor(Node):
         # Fixed-heading translation can also reverse its drive direction; the
         # native module optimizer decides the bounded steering branch.
         if not translation and abs(err) > 1.0:
-            self._zero("ALIGN", f"heading_err={err:.2f}")
+            if not self.turn_recovery_until:self.turn_recovery_until=now+30.
+            self._request_turn_replan(now, cause="heading tracking error requires new route")
+            self._zero("ALIGN_REPLANNING", f"heading_err={err:.2f}; requesting current-state route")
             return
         reviewed_speed=min(self.max_speed,float(review.get('recommended_speed_mps',self.max_speed)))
         if tracking_mode((self.readiness or {}).get('bridge',{}))=='PREDICTED_TRACKING':
             reviewed_speed=min(reviewed_speed,PREDICTION_SPEED)
-        speed_target = reviewed_speed if translation else reviewed_speed * max(0.0, 1.0 - abs(err) / 0.8)
+        steering_degraded=getattr(getattr(self,'steering_rate_guard',None),'degraded',False)
+        if self.steering_feedback is not None:
+            steering_degraded=steering_degraded or max(abs(v)for v in self.steering_feedback[1])>1.57
+        self.steering_degraded=steering_degraded
+        if getattr(self,'navigation_degraded',False) or steering_degraded:
+            reviewed_speed=degraded_speed_limit(reviewed_speed,self.native_spin_threshold)
+        speed_target = reviewed_speed if translation else reviewed_speed * forward_speed_factor(err)
         moving_floor=min(reviewed_speed,self.native_spin_threshold+self.max_accel*self.period)
         speed_target = min(speed_target, max(moving_floor,reviewed_speed*goal_dist/0.5))
         available = math.hypot(poses[closest].pose.position.x-x,poses[closest].pose.position.y-y)
         for a,b in zip(poses[closest:],poses[closest+1:]):
             available += math.hypot(b.pose.position.x-a.pose.position.x,b.pose.position.y-a.pose.position.y)
-        speed_target=min(speed_target,braking_speed_limit(min(available,goal_dist),self.speed,self.max_accel))
+        speed_target=min(speed_target,braking_speed_limit(min(available,goal_dist),self.speed,self.max_accel,margin=.04 if math.hypot(prefix_end.x-goal.x,prefix_end.y-goal.y)<=.08 else .08))
         accel_step = self.max_accel * self.period
         self.speed += max(-accel_step, min(accel_step, speed_target - self.speed))
         # Reduced (v, omega), vy=0 tracking. Curvature, not independent yaw
@@ -868,7 +931,11 @@ class SlowMotionExecutor(Node):
         cmd.angular.z = self.cmd_angular_z
         self.cmd_pub.publish(cmd)
         self.state = "MOVING"
-        self._status("MOVING", f"dist={dist:.2f} goal={goal_dist:.2f}")
+        degradation=(' degraded='+','.join(k for k,active in (
+            ('navigation',getattr(self,'navigation_degraded',False)),
+            ('steering',steering_degraded)) if active)
+            if getattr(self,'navigation_degraded',False) or steering_degraded else '')
+        self._status("MOVING", f"dist={dist:.2f} goal={goal_dist:.2f}"+degradation)
 
 
 def main(args=None) -> None:
@@ -876,8 +943,10 @@ def main(args=None) -> None:
     configure_chassis_transport()
     rclpy.init(args=args)
     node = SlowMotionExecutor()
+    executor=MultiThreadedExecutor(num_threads=3)
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     except RuntimeError:
@@ -886,6 +955,7 @@ def main(args=None) -> None:
         if rclpy.ok():
             raise
     finally:
+        executor.shutdown()
         try:
             if not node.manual_override:
                 node.cmd_pub.publish(Twist())

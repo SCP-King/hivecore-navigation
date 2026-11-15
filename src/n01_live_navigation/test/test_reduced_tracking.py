@@ -36,7 +36,7 @@ class ReducedTrackingTests(unittest.TestCase):
 
     def test_curvature_bounded_through_ramp(self):
         for v in np.linspace(.01,.03,30):
-            w=reduced_yaw_rate(float(v),.8,.55,.04)
+            w=reduced_yaw_rate(float(v),.8,.55,.04,max_curvature=1.)
             self.assertLessEqual(abs(w),v+1e-12)
             target,drive=inverse((v,0.,w),[0.]*4)
             self.assertLess(np.max(np.abs(target)),np.pi/2)
@@ -50,3 +50,17 @@ class ReducedTrackingTests(unittest.TestCase):
         with self.assertRaises(ValueError):reduced_yaw_rate(float('nan'),0.,1.,.04)
 
 if __name__=='__main__':unittest.main()
+
+
+def test_default_tracking_does_not_impose_one_metre_radius():
+    w=reduced_yaw_rate(.03,.4,.55,.08)
+    assert w/.03>1. and abs(w)<=.08
+
+
+def test_heading_slowdown_has_no_dead_zone_before_alignment():
+    from n01_live_navigation.reduced_tracking import forward_speed_factor
+    assert forward_speed_factor(0.)==1.
+    for error in (.79,.8,.9,1.):
+        assert 0.<forward_speed_factor(error)<=1.
+        assert forward_speed_factor(error)==forward_speed_factor(-error)
+    assert forward_speed_factor(np.pi)==0.

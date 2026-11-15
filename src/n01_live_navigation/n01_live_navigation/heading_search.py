@@ -30,18 +30,18 @@ def wrap(a):
 
 
 class FootprintCollision:
-    def __init__(self, points, plane, z, bounds, voxel_size=.05, footprint=None):
+    def __init__(self, points, plane, z, bounds, voxel_size=.05, footprint=None, height_margin=0.):
         p = np.asarray(points, float).reshape((-1, 3))
         plane = np.asarray(plane, float)
         self.bounds = np.asarray(bounds, float)
         if (plane.shape != (3,) or self.bounds.shape != (2, 2)
                 or not np.isfinite(plane).all() or not np.isfinite(self.bounds).all()
-                or not math.isfinite(z) or not 0 <= voxel_size <= .1
+                or not math.isfinite(z) or not math.isfinite(height_margin) or not 0<=height_margin<=.05 or not 0 <= voxel_size <= .1
                 or np.any(self.bounds[1] <= self.bounds[0])):
             raise ValueError('invalid_collision_geometry')
         p = p[np.isfinite(p).all(axis=1)]
         floor = p[:, :2] @ plane[:2] + plane[2]
-        p = p[(p[:, 2] > floor+.03) & (p[:, 2] >= z-.90) & (p[:, 2] <= z+.25)]
+        p = p[(p[:, 2] > floor+.03) & (p[:, 2] >= z-.90-height_margin) & (p[:, 2] <= z+.25+height_margin)]
         self.points=p[:,:2]
         self.polygon=None if footprint is None else np.asarray(footprint,float)
         if self.polygon is not None:
@@ -123,7 +123,7 @@ class SearchResult:
     elapsed_ms: float
 
 
-def search(start, goal, collision, goal_yaw=None, budget_s=.12, max_expansions=2500):
+def search(start, goal, collision, goal_yaw=None, budget_s=.12, max_expansions=2500, capability=None):
     """Reach a local waypoint within 6 cm, without snapping the final pose.
 
     Failure never returns a partial path for execution. Search is bounded in
@@ -131,7 +131,7 @@ def search(start, goal, collision, goal_yaw=None, budget_s=.12, max_expansions=2
     """
     began = time.monotonic()
     start = tuple(map(float, start))
-    if len(start) != 4 or not all(math.isfinite(v) for v in (*start, *goal)) or abs(start[3]) > MAX_CURVATURE:
+    if len(start) != 4 or not all(math.isfinite(v) for v in (*start, *goal)) or abs(start[3]) > (capability.max_curvature if capability is not None else MAX_CURVATURE):
         raise ValueError('invalid_search_start_or_goal')
     if not collision.free([start]):
         return SearchResult([], 'start_footprint_occupied_or_outside_window', 0, 0.)
@@ -151,11 +151,22 @@ def search(start, goal, collision, goal_yaw=None, budget_s=.12, max_expansions=2
         expanded += 1
         if distance(state) <= .06 and idx != 0 and (goal_yaw is None or abs(wrap(state[2]-goal_yaw)) <= math.radians(25)):
             found = idx; break
-        choices = (-1., -.5, 0., .5, 1.)
+        choices = capability.choices if capability is not None else (-1., -.5, 0., .5, 1.)
         segments = [primitive(state, k, length=min(.20, max(.04, distance(state)))) for k in choices]
+        # Curvature slew makes many distant target curvatures produce the
+        # exact same short primitive. Check its geometry once, keeping the
+        # lowest original cost; never discard a distinct swept trajectory.
+        unique={}
+        for k,segment in zip(choices,segments):
+            signature=tuple(np.asarray(segment).round(10).ravel())
+            penalty=.01*abs(k)+.02*abs(k-state[3])
+            if signature not in unique or penalty<unique[signature][0]:
+                unique[signature]=(penalty,k,segment)
+        choices=[v[1] for v in unique.values()]
+        segments=[v[2] for v in unique.values()]
         safe = collision.free_batch(segments)
         for curvature, segment, is_free in zip(choices, segments, safe):
-            if not is_free:
+            if not is_free or (capability is not None and not capability.segment_allowed(segment)):
                 continue
             end = segment[-1]
             new_cost = cost+len(segment)*.02+.01*abs(curvature)+.02*abs(curvature-state[3])

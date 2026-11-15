@@ -6,6 +6,7 @@ from unittest.mock import Mock
 import threading
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from navigation_session import NavigationSession
+from n01_live_navigation.task_status import NavigationTaskView
 from teach_routes import map_identity,waypoint,SCHEMA
 from localization_recovery import RecoveryGate
 SOURCE=(Path(__file__).resolve().parents[1]/'slam_lite_gui.py').read_text()
@@ -15,7 +16,7 @@ def harness(tmp_path,outcome='ARRIVED'):
  root=tmp_path/'repo';(root/'config').mkdir(parents=True);geo=root/'config/n01_sensor_geometry.json';geo.write_text('{}')
  pcd=tmp_path/'map.pcd';pcd.write_bytes(b'map');identity=map_identity(pcd,geo)
  route={'schema':SCHEMA,'name':'route','map':identity,'points':[waypoint(str(i),i,0,0,0)for i in (1,2,3)],'return_to_start':False}
- state=S(lock=threading.Lock(),loc={'session':'tracking','reloc_ok':True,'map_path':str(pcd)},pose=(10,0,0),
+ state=S(navigation_task=NavigationTaskView(),lock=threading.Lock(),loc={'session':'tracking','reloc_ok':True,'map_path':str(pcd)},pose=(10,0,0),
          nav_speed_mps=.05,age_of=lambda k:.1,goal_seq=0,plan_goal_ns=0,plan_success_ns=0,plan_active=False,goal_failed=False,
          motion_feedback=S(terminal=False),pose_stamp_age_at_rx=.2,pose_revision=1)
  goals=[];started=[];active=[False]

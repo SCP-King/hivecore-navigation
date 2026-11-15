@@ -52,6 +52,8 @@ from navigation_ui import localization_help, inspect_bag, route_summary, is_real
 from navigation_session import SESSION as TASK_STATE
 from ground_model import estimate_ground, GroundPlane
 sys.path.insert(0, str(REPO_ROOT / "src" / "n01_live_navigation"))
+from n01_live_navigation.task_status import NavigationTaskView
+from n01_live_navigation.degraded_motion import reviewed_path_continuity
 from n01_live_navigation.pose_policy import tracking_mode, control_pose_fresh
 from n01_live_navigation.calibration_store import load_map_ground, save_map_ground
 sys.path.insert(0, str(REPO_ROOT / "src" / "n01_static_map"))
@@ -567,6 +569,7 @@ class AppState:
         self.nav_ready = None
         self.nav_speed_mps = .05
         self.motion_feedback = MotionFeedback()
+        self.navigation_task = NavigationTaskView()
         self.motion_events = queue.Queue()
         self.motion_result = "尚未执行"
         self.goal_status: dict = {}
@@ -772,6 +775,7 @@ class RosWorker:
             STATE.plan_pending = True
             STATE.plan_goal_ns = time.time_ns()
             STATE.goal_seq += 1
+            STATE.navigation_task.begin_goal(STATE.goal_seq)
             STATE.plan_success_ns = 0
             STATE.plan_success_stamp_ns = 0
             STATE.goal_target = (float(x), float(y))
@@ -1083,6 +1087,8 @@ class RosWorker:
                 return
         except (ValueError, TypeError):
             return
+        with STATE.lock:
+            if not STATE.navigation_task.observe_execution(data,time.monotonic()):return
         TASK_STATE.feedback={**data,'received_at':time.monotonic()}
         with STATE.lock:
             events = STATE.motion_feedback.feed(data, time.monotonic())
@@ -1723,6 +1729,7 @@ class ProcManager:
                                    if 'Error:' in line or 'Exception:' in line),
                                   recent_output[-1] if recent_output else '无进程输出')
                     STATE.motion_result = f'行驶失败：执行器退出 rc={rc}，未确认到达目标；原因：{detail}'
+                    STATE.navigation_task.finish('FAILED',STATE.motion_result)
                     result = STATE.motion_result
             if unexpected and unfinished:
                 publish_motion_events([dict(text=result, level='err', notify=True, terminal=True)])
@@ -2893,10 +2900,15 @@ class RoutePaused(RuntimeError):
 async def _start_owned_motion(method,*args):
     if TASK_STATE.switching or TASK_STATE.cancel:
         raise RuntimeError('任务正在结束，请等待停止完成')
+    task_id=args[0] if len(args)==2 else args[2]
+    with STATE.lock:STATE.navigation_task.begin_execution(task_id,time.monotonic())
     pending=asyncio.create_task(asyncio.to_thread(method,*args))
     TASK_STATE.pending_spawn=pending
     try:
-        return await asyncio.shield(pending)
+        ok=await asyncio.shield(pending)
+        if not ok:
+            with STATE.lock:STATE.navigation_task.finish('FAILED','执行器启动失败')
+        return ok
     finally:
         if pending.done() and TASK_STATE.pending_spawn is pending:
             TASK_STATE.pending_spawn=None
@@ -2991,7 +3003,7 @@ async def _wait_route_motion(task_id,target,phase,token=None):
         await asyncio.sleep(.1)
 
 
-async def _start_route_motion_when_ready(task_id,token=None):
+async def _start_route_motion_when_ready(task_id,token=None,executor_authority=False):
     began=time.monotonic()
     while True:
         if TASK_STATE.pause:raise RoutePaused('用户暂停')
@@ -3003,13 +3015,14 @@ async def _start_route_motion_when_ready(task_id,token=None):
             if f.get('state') in ('MANUAL_OVERRIDE','ESTOP'):
                 raise RoutePaused(f'启动期间 {f["state"]}')
             if f.get('state')=='DISABLED' and time.monotonic()-f.get('received_at',0)<1:
-                break
+                if not executor_authority or f.get('start_ready') is True:break
         if time.monotonic()-began>20:
             raise RoutePaused('执行器初始化20秒未就绪；保持未启用，不发送运动指令')
         await asyncio.sleep(.1)
     # No commands can be emitted before construction and observer discovery finish.
-    await _await_route_stable()
-    _route_live()
+    if not executor_authority:
+        await _await_route_stable()
+        _route_live()
     if token is not None and STATE.goal_seq!=token:raise RuntimeError('运行目标已更改')
     WORKER.set_route_enabled(True)
     push_log('info',f'执行器已就绪且定位稳定，启用本次任务 {task_id}')
@@ -3114,7 +3127,7 @@ async def _execute_recorded_route(route,context,speed):
         if math.hypot(pose[0]-target['x'],pose[1]-target['y'])>.08:
             WORKER.request_goal(target['x'],target['y'],pose[2],'map')
             token=STATE.goal_seq;goal_ns=STATE.plan_goal_ns
-            deadline=time.monotonic()+80
+            deadline=time.monotonic()+180
             while True:
                 _route_live()
                 if STATE.goal_seq!=token:raise RuntimeError('目标被其他来源更改')
@@ -3200,6 +3213,7 @@ async def run_recorded_route(resume=False):
         if TASK_STATE.task is asyncio.current_task():TASK_STATE.task=None
         with STATE.lock:
             STATE.motion_result=message
+            STATE.navigation_task.finish('ARRIVED' if success else ('PAUSED' if paused else 'FAILED'),message)
             STATE.motion_feedback.terminal=True
         _teach_view(message)
         push_log('ok' if success else 'err',message)
@@ -3278,7 +3292,7 @@ async def start_slow_motion() -> None:
         loc = dict(STATE.loc)
     ready = _nav_ready_state()
     mapping = PROCS.desk_mode == 'mapping' and PROCS.running('desk')
-    if (mapping and not _mapping_navigation_ready()) or (not mapping and str(loc.get("session", "")).lower() != "tracking"):
+    if (mapping and not _mapping_navigation_ready() and not _reviewed_execution_inputs()) or (not mapping and str(loc.get("session", "")).lower() != "tracking"):
         _slow_notice("拒绝运行：建图位姿尚未就绪或定位尚未 tracking。", "err"); return
     body_age = STATE.age_of("body_pose")
     path_age = STATE.age_of("plan_path")
@@ -3290,8 +3304,8 @@ async def start_slow_motion() -> None:
         _slow_notice(f"拒绝慢速运行：/body_pose age={body_age}, "
                      f"local path age={path_age}, 活动路径={STATE.plan_active}；"
                      f"需要新鲜输入。", "err"); return
-    if ready is not True:
-        _slow_notice("拒绝慢速运行：导航 runtime 尚未 READY。", "err"); return
+    if ready is not True and not _reviewed_execution_inputs():
+        _slow_notice("拒绝慢速运行：缺少当前有效路径或实时执行依据。", "err"); return
     try:
         speed = float(UI["slow_speed"].value if UI.get("slow_speed") else 0.05)
     except (TypeError, ValueError):
@@ -3318,14 +3332,16 @@ async def start_slow_motion() -> None:
     ok=False
     try:
         from navigation_ui import rear_goal_heading
-        _,current_pose=_route_live()
         target=STATE.goal_target
         if target is None:raise RuntimeError('缺少本次目标坐标，请重新选点')
         token=STATE.goal_seq
         with STATE.lock:
             maneuver_review=dict(STATE.feasibility)
-        planned_maneuver=(maneuver_review.get('path_model')=='rotate_then_forward_se2'
-                          and maneuver_review.get('candidate_review_ready')is True)
+        planned_maneuver=(maneuver_review.get('path_model') in
+            ('rotate_then_forward_se2','forward_se2_curvature_lattice')
+            and maneuver_review.get('candidate_review_ready')is True)
+        current_pose=None
+        if not planned_maneuver:_,current_pose=_route_live()
         heading=None if planned_maneuver else (alignment_heading if alignment_heading is not None else rear_goal_heading(current_pose,target))
         if heading is not None:
             push_log('info','先检查实际转角扫掠空间并原地对齐，再重新规划前进')
@@ -3333,7 +3349,7 @@ async def start_slow_motion() -> None:
             if STATE.goal_seq!=token:raise RuntimeError('转向期间目标已改变，请重新启动行驶')
             WORKER.request_goal(target[0],target[1],heading,'map')
             token=STATE.goal_seq;goal_ns=STATE.plan_goal_ns
-            deadline=time.monotonic()+80
+            deadline=time.monotonic()+180
             while True:
                 _route_live()
                 if STATE.goal_seq!=token:raise RuntimeError('重新规划期间目标已改变')
@@ -3343,13 +3359,16 @@ async def start_slow_motion() -> None:
                 if time.monotonic()>deadline:raise RuntimeError('转向后等待规划超时')
                 await asyncio.sleep(.1)
         ok=await _start_owned_motion(PROCS.start_slow_motion,speed,cbf_enabled,task_id,target,True)
-        if ok:await _start_route_motion_when_ready(task_id,STATE.goal_seq)
+        if ok:
+            if planned_maneuver:await _start_route_motion_when_ready(task_id,STATE.goal_seq,executor_authority=True)
+            else:await _start_route_motion_when_ready(task_id,STATE.goal_seq)
     except asyncio.CancelledError:
         await _stop_owned_motion()
         raise
     except (RuntimeError,ValueError,OSError) as exc:
         ok=False
         await _stop_owned_motion()
+        with STATE.lock:STATE.navigation_task.finish('FAILED',str(exc))
         _slow_notice(f'本次行驶未启动：{exc}','err');return
     finally:
         if TASK_STATE.task is asyncio.current_task():TASK_STATE.task=None
@@ -3376,6 +3395,7 @@ async def stop_slow_motion() -> None:
     with STATE.lock:
         STATE.motion_feedback.terminal = True
         STATE.motion_result = message
+        STATE.navigation_task.cancel()
         STATE.goal_seq += 1
         STATE.plan_pending=False;STATE.global_pending=False
         STATE.pending_goal=None
@@ -3529,6 +3549,16 @@ async def stop_managed_all() -> None:
     # “停止全部”后所有 desk 都已关闭，隐藏模式复位，避免残留“建图 desk”。
     if UI.get("mg_mode"):
         UI["mg_mode"].value = "定位 desk"
+
+def _reviewed_execution_inputs():
+    age=STATE.age_of('plan_path');health_age=STATE.age_of('nav_health')
+    with STATE.lock:
+        health=dict(STATE.nav_health)
+        path_ok=(STATE.plan_active and STATE.plan_success_ns>=STATE.plan_goal_ns
+                 and age is not None and age<=.4)
+    return (health_age is not None and health_age<=1.
+            and reviewed_path_continuity(health,path_ok))
+
 
 def _nav_ready_state() -> bool | None:
     """navigation_ready 是 nav runtime 的 4 Hz 心跳；心跳停下后缓存值不能再当 READY。"""
@@ -4676,7 +4706,7 @@ def _grid_overlay(img, view, pose, trail, goal_xy, plan_xy=None,
             (px + r * math.cos(yaw + 2.5), py - r * math.sin(yaw + 2.5)),
             (px + r * math.cos(yaw - 2.5), py - r * math.sin(yaw - 2.5)),
         ], fill=GRID_COLORS["robot"])
-    if global_xy:
+    if global_xy and not plan_xy:
         global_px = [_map_xy_to_pixel(x, y, view) for x, y in global_xy]
         if len(global_px) >= 2:
             draw.line(global_px,
@@ -4879,7 +4909,7 @@ def _goal_failure_reason() -> str:
         if status:
             return (f"规划器反馈：{status}"
                     + (f" / {reason}" if reason and reason != status else ""))
-    return "目标已接受，但 20 s 内没有新路径（规划器无输出）"
+    return "目标已接受，但 180 s 内没有新路径（规划器无输出）"
 
 
 async def send_goal() -> None:
@@ -4910,10 +4940,11 @@ async def send_goal() -> None:
     with STATE.lock:
         token = STATE.goal_seq
         goal_ns = STATE.plan_goal_ns
-    # A* itself is fast (~15 ms) but the planner may queue behind a previous
-    # smoothing job; observed end-to-end path latency is ~18-21 s.
-    global_timeout = float(os.environ.get("N01_GLOBAL_TIMEOUT_S", "35"))
-    local_timeout = float(os.environ.get("N01_LOCAL_TIMEOUT_S", "40"))
+    # One shared three-minute deadline; global and local stages do not each
+    # receive another three minutes. Searches continue on fresh snapshots.
+    planning_deadline=time.monotonic()+180.
+    global_timeout = float(os.environ.get("N01_GLOBAL_TIMEOUT_S", "180"))
+    local_timeout = float(os.environ.get("N01_LOCAL_TIMEOUT_S", "180"))
     tol = float(os.environ.get("N01_PATH_GOAL_TOL_M", "0.30"))
     UI["goal_result"].set_text(
         f"目标已发布；全局 A* 阶段（≤{global_timeout:.0f} s，失败立即清除允许下一个点）…")
@@ -4934,7 +4965,7 @@ async def send_goal() -> None:
     # Phase 1: global A* path. Fail fast; do not keep the goal pending.
     global_ok = False
     global_ms = 0.0
-    global_deadline = time.monotonic() + max(3.0, global_timeout)
+    global_deadline = min(planning_deadline,time.monotonic() + max(3.0, global_timeout))
     while time.monotonic() < global_deadline:
         await asyncio.sleep(0.1)
         with STATE.lock:
@@ -4971,7 +5002,7 @@ async def send_goal() -> None:
         f"全局 A* 成功（{global_ms:.0f} ms）；局部 SCAN/CBF 阶段（≤{local_timeout:.0f} s）…")
     local_ok = False
     local_ms = 0.0
-    local_deadline = time.monotonic() + max(3.0, local_timeout)
+    local_deadline = min(planning_deadline,time.monotonic() + max(3.0, local_timeout))
     while time.monotonic() < local_deadline:
         await asyncio.sleep(0.1)
         with STATE.lock:
@@ -5417,10 +5448,12 @@ def refresh_console() -> None:
 
     loc_session = "SLAM位姿估计" if _slam_uses_live_map() else str(loc.get("session", "—"))
     map_session = str(mapping.get("session", "—"))
-    nav_text = "就绪" if nav_ready is True else (
-        "阻塞" if nav_ready is False else "未启动")
-    nav_color = COL_OK if nav_ready is True else (
-        COL_ERR if nav_ready is False else MUTED)
+    with STATE.lock:
+        task_phase=STATE.navigation_task.phase
+        nav_text=STATE.navigation_task.label
+    if TASK_STATE.active and task_phase=='ARRIVED':nav_text='路线执行中 · 站点停留'
+    nav_color=COL_OK if task_phase in ('READY','RUNNING','ARRIVED') else (
+        COL_ERR if task_phase=='FAILED' else COL_WARN)
     loc_running = _slam_uses_live_map() or STATE.loc_node_up or (
         PROCS.desk_mode in ("fast_lio_loc", "fast_lio_realtime")
         and PROCS.running("desk"))
@@ -6032,7 +6065,7 @@ def refresh_panels() -> None:
          _fresh_color(STATE.age_of("body_pose")))
     if UI.get("drive_ready"):
         mapping_mode = PROCS.running('desk') and PROCS.desk_mode == 'mapping'
-        tracking = _mapping_navigation_ready() if mapping_mode else str(loc.get("session", "")).lower() == "tracking"
+        tracking = (_mapping_navigation_ready() or _reviewed_execution_inputs()) if mapping_mode else str(loc.get("session", "")).lower() == "tracking"
         body_age = STATE.age_of("body_pose")
         path_age = STATE.age_of("plan_path")
         # 空 Path（轨迹清空）会刷新 age，单看 age 会把"已清空"当新鲜；
@@ -6047,14 +6080,27 @@ def refresh_panels() -> None:
             reasons.append("/body_pose 过期")
         if not path_ok:
             reasons.append("本地路径未就绪")
-        if _nav_ready_state() is not True:
-            reasons.append("runtime 未 READY")
+        if _nav_ready_state() is not True and not _reviewed_execution_inputs():
+            reasons.append("当前执行依据未就绪")
         can_drive = not reasons
-        _set(UI["drive_ready"],
-             "可开始沿路径行驶" if can_drive else "未就绪：" + "、".join(reasons),
-             COL_OK if can_drive else COL_WARN)
+        nav_live=_nav_ready_state() is not None
+        with STATE.lock:
+            task=STATE.navigation_task
+            task.observe_plan(can_drive,path_ok,STATE.goal_failed,nav_live,
+                              '、'.join(reasons))
+            task.check_feedback(time.monotonic())
+            task_label=task.label;task_reason=task.reason;task_phase=task.phase
+        color=COL_OK if task_phase in ('READY','RUNNING','ARRIVED') else COL_WARN
+        if task_phase=='FAILED':color=COL_ERR
+        if TASK_STATE.active and task_phase=='ARRIVED':task_label='路线执行中 · 站点停留'
+        text=task_label+((' · '+task_reason) if task_reason else '')
+        _set(UI['drive_ready'],text,color)
+        if UI.get('nav_ready'):_set(UI['nav_ready'],task_label,color)
         if UI.get("drive_button"):
-            UI["drive_button"].set_enabled(can_drive)
+            restartable=(not PROCS.running('slow_motion') or STATE.motion_feedback.terminal
+                or STATE.motion_feedback.state=='MANUAL_OVERRIDE')
+            UI["drive_button"].set_enabled(can_drive and restartable
+                and not TASK_STATE.active and task_phase not in ('ARRIVED','FAILED','CANCELLED'))
     if UI.get("slow_status"):
         _set(UI["slow_status"], str(getattr(STATE, "slow_status", "") or "—"))
     if UI.get('motion_result'):

@@ -1,4 +1,5 @@
 import json,math,time
+import pytest
 from types import SimpleNamespace as S
 from unittest.mock import Mock
 import numpy as np
@@ -6,6 +7,15 @@ from nav_msgs.msg import Path,Odometry
 from geometry_msgs.msg import PoseStamped
 from builtin_interfaces.msg import Time
 from n01_live_navigation import maneuver_review as m
+from n01_live_navigation.hive2_kinematics import Hive2Geometry
+
+
+@pytest.fixture(autouse=True)
+def synchronous_geometry_search(monkeypatch):
+    # Integration below checks publication semantics; worker lifecycle has its
+    # own nonblocking and stale-result tests.
+    monkeypatch.setattr(m,'poll_maneuver',lambda n,g,s,t,c,r,cap:
+        m.plan_maneuver(s,t,c,r,budget_s=.5,capability=cap))
 
 
 def fixture(target):
@@ -22,7 +32,7 @@ def fixture(target):
         _pitch_reference_match=lambda:True,_yaw_from_quaternion=lambda q:0.,
         footprint_client=S(get=lambda:np.array([[-.4,-.15],[.4,-.15],[.4,.15],[-.4,.15]]),description=lambda:{}),
         joint_positions={f'{leg}_ankle_yaw':0. for leg in ['fl','fr','rl','rr']},
-        native_model_sync=S(geometry=lambda:S(controller_steering_limit=math.pi)),
+        native_model_sync=S(geometry=lambda:Hive2Geometry()),
         execution_preview=1.,max_speed=.03,max_accel=.04,path_pub=Mock(),diag_pub=Mock(),_clear_candidate_visualization=Mock())
 
 
@@ -44,3 +54,49 @@ def test_stale_scene_clears_maneuver_instead_of_replaying_old_permission():
     assert m.publish_guide_maneuver(n)
     n.path_pub.publish.assert_not_called();n._clear_candidate_visualization.assert_called_once()
     assert not json.loads(n.diag_pub.publish.call_args.args[0].data)['candidate_review_ready']
+
+
+def test_old_bound_global_reference_is_rechecked_against_current_scene(monkeypatch):
+    n=fixture((-1.,0.));n.global_reference_rx-=30.
+    monkeypatch.setattr(m,'live_points',lambda n:np.empty((0,3)))
+    assert m.publish_guide_maneuver(n)
+    review=json.loads(n.diag_pub.publish.call_args.args[0].data)
+    assert review['candidate_review_ready']
+    n.obstacles_rx-=2.
+    m.publish_guide_maneuver(n)
+    assert not json.loads(n.diag_pub.publish.call_args.args[0].data)['candidate_review_ready']
+
+
+def test_live_timer_revalidates_existing_path_without_research(monkeypatch):
+    n=fixture((1.,0.))
+    monkeypatch.setattr(m,'live_points',lambda n:np.empty((0,3)))
+    m.publish_guide_maneuver(n)
+    first=json.loads(n.diag_pub.publish.call_args.args[0].data)
+    assert first['candidate_review_ready'] and first['execution_stage']=='forward'
+    def unexpected_search(*args,**kwargs):
+        raise AssertionError('valid current route must not be replaced every tick')
+    monkeypatch.setattr(m,'plan_maneuver',unexpected_search)
+    for _ in range(5):
+        now=time.monotonic()
+        n.body_pose_rx=n.obstacles_rx=n.plane_rx=n.odom_rx=n.joint_rx=now
+        m.publish_guide_maneuver(n)
+        review=json.loads(n.diag_pub.publish.call_args.args[0].data)
+        assert review['path_selection']=='retained_after_fresh_review'
+    n.obstacles_rx-=2.
+    m.publish_guide_maneuver(n)
+    assert not json.loads(n.diag_pub.publish.call_args.args[0].data)['candidate_review_ready']
+
+
+def test_safe_short_prefix_is_not_cleared_while_background_extension_runs(monkeypatch):
+    n=fixture((3.,0.))
+    monkeypatch.setattr(m,'live_points',lambda n:np.empty((0,3)))
+    m.publish_guide_maneuver(n)
+    assert json.loads(n.diag_pub.publish.call_args.args[0].data)['candidate_review_ready']
+    n.body_pose.pose.pose.position.x=.7
+    now=time.monotonic();n.body_pose_rx=n.obstacles_rx=n.plane_rx=n.odom_rx=n.joint_rx=now
+    monkeypatch.setattr(m,'poll_maneuver',lambda *args:None)
+    m.publish_guide_maneuver(n)
+    review=json.loads(n.diag_pub.publish.call_args.args[0].data)
+    assert review['candidate_review_ready']
+    assert review['path_selection']=='retained_after_fresh_review'
+    n._clear_candidate_visualization.assert_not_called()

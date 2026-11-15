@@ -46,3 +46,28 @@ def test_start_orders_checked_turn_replan_then_disabled_translation_and_enable()
     asyncio.run(scope['start_slow_motion']())
     assert actions==['checked_turn','replan','translation_disabled','enable_after_ready']
     assert not scope['_slow_notice'].call_args.args[0].startswith('本次行驶未启动')
+
+
+def test_reviewed_point_uses_backend_arming_without_gui_route_pose_gate():
+    actions=[]
+    state=S(lock=threading.Lock(),loc={'session':'tracking'},plan_active=True,
+        goal_target=(1.,0.),goal_seq=1,feasibility={'path_model':'forward_se2_curvature_lattice','candidate_review_ready':True},
+        age_of=lambda k:.171,nav_speed_mps=.05,motion_feedback=S(terminal=False),plan_goal_ns=1)
+    task=S(switching=False,context=None,active=False,task=None,cancel=False,pause=False,feedback={})
+    proc=S(desk_mode='mapping',running=lambda key:key=='desk',start_slow_motion=Mock())
+    async def owned(*args):
+        assert args[-1] is True;actions.append('spawn_disabled');return True
+    async def ready(*args,executor_authority=False):
+        assert executor_authority;actions.append('backend_arming')
+    route_gate=Mock(side_effect=AssertionError('GUI cached route pose must not veto reviewed point execution'))
+    scope=dict(STATE=state,PROCS=proc,TASK_STATE=task,TEACH_SESSION=S(active=False,busy=False),
+        UI={},asyncio=asyncio,time=time,math=math,uuid=uuid,_nav_ready_state=lambda:True,
+        _mapping_navigation_ready=lambda:True,_route_live=route_gate,
+        _start_owned_motion=owned,_start_route_motion_when_ready=ready,
+        MotionFeedback=lambda:S(last_rx=None),_slow_notice=Mock(),notify_user=Mock(),push_log=Mock())
+    source=(Path(__file__).resolve().parents[1]/'slam_lite_gui.py').read_text()
+    fn=next(n for n in ast.parse(source).body if isinstance(n,ast.AsyncFunctionDef)and n.name=='start_slow_motion')
+    exec(compile(ast.Module(body=[fn],type_ignores=[]),'point_flow','exec'),scope)
+    asyncio.run(scope['start_slow_motion']())
+    assert actions==['spawn_disabled','backend_arming']
+    route_gate.assert_not_called()
