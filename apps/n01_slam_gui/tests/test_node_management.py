@@ -17,7 +17,7 @@ spec.loader.exec_module(preflight)
 
 class NodeManagementTests(unittest.TestCase):
     def test_execution_nodes_are_not_classified_as_planning(self):
-        self.assertEqual(g.node_category('/n01_live_slow_motion_executor')[0], '底盘与执行')
+        self.assertEqual(g.node_category('/n01_navigation_controller')[0], '底盘与执行')
         self.assertEqual(g.node_category('/robot/n01_traj_tracker')[0], '底盘与执行')
         self.assertEqual(g.node_category('/scan_planner_node')[0], '导航规划')
         self.assertEqual(g.node_category('/n01_localization_adapter')[0], '适配器')

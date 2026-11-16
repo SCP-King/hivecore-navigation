@@ -4,7 +4,7 @@ import math
 
 def command_conflicts(publishers):
     return sorted(p for p in publishers if p.rsplit('/', 1)[-1] not in
-                  {'n01_slow_motion_executor', 'n01_bounded_motion_test'})
+                  {'n01_navigation_controller', 'n01_bounded_motion_test'})
 
 
 class MotionFeedback:

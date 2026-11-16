@@ -78,7 +78,7 @@ def test_each_gui_combination_starts_selected_backend_without_starting_navigatio
     scope = dict(PROCS=procs,STATE=state,UI=ui,ProcManager=S(start_fast_lio=fast_start),
                  BACKEND_VENDOR='vendor',BACKEND_FAST_LIO='fast',FAST_MODE_REALTIME='realtime',
                  DEFAULT_FAST_LIO_MAP='/tmp/output.pcd',slam_selection=slam_selection,
-                 start_desk=vendor_start,asyncio=asyncio,ui=S(notify=Mock()),push_log=Mock())
+                 start_desk=vendor_start,asyncio=asyncio,ui=S(notify=Mock()),notify_user=Mock(),push_log=Mock())
     exec(compile(ast.Module(body=[function('lifecycle_start_slam')],type_ignores=[]),'startup','exec'),scope)
     asyncio.run(scope['lifecycle_start_slam']('realtime' if realtime else ('mapping' if task=='建图' else 'loc')))
     assert len(started)==1 and started[0][0]==('fast' if fast else 'vendor')

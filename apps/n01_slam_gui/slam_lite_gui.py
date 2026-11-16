@@ -38,6 +38,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
 from map_presentation import choose_map, occupancy_colors
+from render_policy import path_visual_key, model_visual_key
 from robot_projection import RobotProjection, paint_robot
 from gui_client_lifecycle import ClientUI, ViewCache
 
@@ -127,8 +128,8 @@ FAST_MODE_REALTIME = "实时（边建图边导航）"
 DEFAULT_FAST_LIO_MAP = "/home/demo/lyy/n01_runtime/slam/fast_lio_map.pcd"
 INITIAL_POSE_TOPIC = "/initialpose"
 GOAL_TOPIC = "/move_base_simple/goal"
-GLOBAL_PATH_TOPIC = "/n01/navigation/path"
-LOCAL_PATH_TOPIC = "/n01/live_navigation/hive2_candidate_path"
+GLOBAL_PATH_TOPIC = "/planning/global_path"
+LOCAL_PATH_TOPIC = "/n01/navigation/path"
 # Mapping and its replay bag are one lifecycle: one start, one close.
 MAPPING_BAG_DIR = os.path.abspath(os.path.expanduser(
     os.environ.get("N01_MAPPING_BAG_DIR", "~/lyy/slam_data/bags")))
@@ -774,6 +775,7 @@ class RosWorker:
             STATE.pending_goal = {"x": x, "y": y, "yaw": yaw, "frame": frame}
             STATE.plan_pending = True
             STATE.plan_goal_ns = time.time_ns()
+            STATE.pending_goal["goal_id"]=STATE.plan_goal_ns
             STATE.goal_seq += 1
             STATE.navigation_task.begin_goal(STATE.goal_seq)
             STATE.plan_success_ns = 0
@@ -959,7 +961,7 @@ class RosWorker:
                   self._on_live_map_cloud)
         self._sub(node, "/n01/live_navigation/readiness", String, q_small,
                   self._on_readiness)
-        self._sub(node, "/n01/live_navigation/slow_motion/status", String, q_small,
+        self._sub(node, "/n01/navigation/execution_status", String, q_small,
                   self._on_slow_status)
         self._sub(node, "/grid_map/static_occupancy", PointCloud2, q_static, self._on_nav_static)
         self._sub(node, "/grid_map/occupancy", PointCloud2, q_cloud, self._on_nav_dynamic)
@@ -969,12 +971,12 @@ class RosWorker:
         self._sub(node, GLOBAL_PATH_TOPIC, RosPath, q_path_global,
                   self._on_global_path)
         self._sub(node, LOCAL_PATH_TOPIC, RosPath,
-                  q_status, self._on_plan_path)
+                  q_path_global, self._on_plan_path)
         self._sub(node, "/n01/live_navigation/hive2_feasibility", String,
                   q_status, self._on_feasibility)
         self.pose_pub = node.create_publisher(PoseWithCovarianceStamped, INITIAL_POSE_TOPIC, 3)
         self.goal_pub = node.create_publisher(PoseStamped, GOAL_TOPIC, 3)
-        self.route_enable_pub = node.create_publisher(Bool, '/n01/slow_motion/enable', 10)
+        self.route_enable_pub = node.create_publisher(Bool, '/n01/navigation/enable', 10)
 
         push_log("info", f"ROS 节点 {node.get_name()} 已启动，开始订阅")
 
@@ -1088,6 +1090,8 @@ class RosWorker:
         except (ValueError, TypeError):
             return
         with STATE.lock:
+            if data.get('goal_id')!=STATE.plan_goal_ns and not (data.get('goal_id')==0 and data.get('state')=='DISABLED'):
+                return
             if not STATE.navigation_task.observe_execution(data,time.monotonic()):return
         TASK_STATE.feedback={**data,'received_at':time.monotonic()}
         with STATE.lock:
@@ -1286,7 +1290,9 @@ class RosWorker:
                         math.hypot(points[-1][0] - target[0],
                                    points[-1][1] - target[1])
                         if target is not None else None)
-                    STATE.global_seq += 1
+                    visual=path_visual_key(points)
+                    if visual!=getattr(STATE,'global_visual_key',None):
+                        STATE.global_visual_key=visual;STATE.global_seq+=1
         STATE.recv("global_path")
 
     def _on_plan_path(self, msg: RosPath) -> None:
@@ -1325,7 +1331,9 @@ class RosWorker:
                             points[-1][0] - target[0], points[-1][1] - target[1])
                     else:
                         STATE.plan_goal_distance = None
-                    STATE.plan_seq += 1
+                    visual=path_visual_key(points)
+                    if visual!=getattr(STATE,'plan_visual_key',None):
+                        STATE.plan_visual_key=visual;STATE.plan_seq+=1
             elif STATE.plan_pts:
                 # An empty Path clears the active window. Keep the last
                 # non-empty path for display until the next point/plan.
@@ -1426,7 +1434,8 @@ class RosWorker:
             return
         yaw = float(payload["yaw"])
         msg = PoseStamped()
-        msg.header.stamp = self.node.get_clock().now().to_msg()
+        msg.header.stamp.sec=payload["goal_id"]//10**9
+        msg.header.stamp.nanosec=payload["goal_id"]%10**9
         msg.header.frame_id = str(payload["frame"])
         msg.pose.position.x = float(payload["x"])
         msg.pose.position.y = float(payload["y"])
@@ -1695,6 +1704,7 @@ class ProcManager:
             except ProcessLookupError:
                 pgid = proc.pid
             self.procs[key] = {"proc": proc, "desc": desc, "pgid": pgid}
+            if key=="desk":self.coordinate_session_id=uuid.uuid4().hex
         push_log("info", f"启动 {desc}: {' '.join(cmd)}")
         reader = os.fdopen(out_r, "r", encoding="utf-8", errors="replace")
         threading.Thread(target=self._reader, args=(key, proc, reader),
@@ -1717,7 +1727,7 @@ class ProcManager:
             pass
         rc = proc.poll()
         push_log("info" if rc == 0 else "warn", f"{key} 进程退出 rc={rc}")
-        if key == 'slow_motion':
+        if key == 'execution':
             with self.lock:
                 item = self.procs.get(key)
                 unexpected = bool(item and item['proc'] is proc)
@@ -1985,7 +1995,7 @@ class ProcManager:
             "rviz", ["rviz2", "-d", config],
             "FAST-LIO2 实时建图 RViz" if realtime else "FAST-LIO2 重定位 RViz")
 
-    def start_slow_motion(self, speed: float = 0.05, cbf_enabled: bool = False, task_id: str = '', goal_xy=None, start_disabled=False) -> bool:
+    def start_navigation_execution(self, speed: float = 0.05, cbf_enabled: bool = False, task_id: str = '', goal_xy=None, start_disabled=False, route=False) -> bool:
         """Start the opt-in very-slow /cmd_vel path executor.
 
         只跟随经局部规划验证的统一路径，并使用原生四轮几何检查。
@@ -1995,29 +2005,19 @@ class ProcManager:
         speed = float(speed)
         if not math.isfinite(speed) or not .01<=speed<=.8:
             push_log('err','速度上限必须为0.01～0.8 m/s的有限数值');return False
-        cmd = ["bash", os.path.join(NAV_REPO, "scripts", "runtime", "start_slow_motion.sh"),
+        cmd = ["bash", os.path.join(NAV_REPO, "scripts", "runtime", "start_navigation_execution.sh"),
                "--ros-args", "-p", f"enabled:={str(not start_disabled).lower()}", "-p", f"task_id:={task_id}",
                "-p", f"cbf_enabled:={str(bool(cbf_enabled)).lower()}",
                "-p", f"max_speed_mps:={speed:.3f}",
                "-p", "max_yaw_rate_radps:=0.12",
                "-p", "max_accel_mps2:=0.04",
-               "-p", "path_source:=unified",
-               "-p", "control_mode:=four_wis",
-               "-p", "face_path:=true",
-               "-p", "tracking_model:=reduced_v_omega_curvature"]
+               "-p", f"require_final_yaw:={str(route).lower()}",
+               "-p", f"follow_goal_updates:={str(route).lower()}"]
         if goal_xy is not None:
             cmd += ['-p','require_expected_goal:=true','-p',f'expected_goal_x:={float(goal_xy[0])}',
                     '-p',f'expected_goal_y:={float(goal_xy[1])}']
-        return self._spawn("slow_motion", cmd,
-                           f"慢速运行（max {speed:.3f} m/s，CBF={'开启' if cbf_enabled else '关闭'}，已验证统一路径）")
-
-    def start_rotation(self,task_id,yaw):
-        if not math.isfinite(yaw):return False
-        cmd=['bash',os.path.join(NAV_REPO,'scripts','runtime','start_slow_motion.sh'),
-             '--ros-args','-p','enabled:=false','-p','motion_mode:=rotate',
-             '-p',f'target_yaw_rad:={float(yaw)}','-p',f'task_id:={task_id}',
-             '-p','max_speed_mps:=0.03','-p','max_yaw_rate_radps:=0.08']
-        return self._spawn('slow_motion',cmd,'路线朝向对齐（完整扫掠检查）')
+        return self._spawn("execution", cmd,
+                           f"导航控制（max {speed:.3f} m/s，SCAN闭环）")
 
     def start_nav_rviz(self) -> bool:
         if not os.path.isfile(NAV_RVIZ_CONFIG):
@@ -2107,7 +2107,7 @@ class ProcManager:
     def stop_all(self) -> None:
         # Stop actuation first, then finalize rosbag2 before its backend exits.
         # All targets are GUI-owned process groups.
-        for key in ("slow_motion", "bag", "desk", "rviz", "nav_rviz", "foxglove"):
+        for key in ("execution", "bag", "desk", "rviz", "nav_rviz", "foxglove"):
             self.stop(key)
 
 
@@ -2715,6 +2715,7 @@ def _slow_notice(msg: str, sev: str = "warn", terminal: bool = False) -> None:
 
 
 def _teach_view(message=''):
+    if not UI.available:return
     route = TEACH_SESSION.loaded
     points = TEACH_SESSION.points if TEACH_SESSION.active else (route['points'] if route else [])
     if UI.get('teach_table'):
@@ -2733,7 +2734,7 @@ def _teach_view(message=''):
 
 def _teach_map_path():
     if PROCS.desk_mode in ('mapping','fast_lio_mapping','fast_lio_realtime') and PROCS.running('desk'):
-        raise ValueError('实时建图坐标系尚未绑定已保存地图；请先保存地图并进入该地图定位，再保存或回放跨会话路线')
+        return 'session://'+PROCS.coordinate_session_id
     with STATE.lock:
         loc=dict(STATE.loc)
     selected=str(UI['map_path'].value or '') if UI.get('map_path') else ''
@@ -2745,8 +2746,14 @@ def _teach_map_path():
 
 def _teach_context():
     if PROCS.desk_mode in ('mapping','fast_lio_mapping','fast_lio_realtime') and PROCS.running('desk'):
-        raise ValueError('当前为实时建图导航；持久化路线需先保存地图并进入该地图定位')
-    if PROCS.running('slow_motion'):
+        if PROCS.running('execution'):raise ValueError('请先停止自动行驶再记录路线')
+        with STATE.lock:
+            pose=STATE.pose;z=STATE.pose_z;frame=STATE.pose_frame;child=getattr(STATE,'pose_child_frame','')
+        if (pose is None or z is None or frame!='map' or child!='base_link' or
+                (STATE.age_of('pose') or 999)>.5 or not _mapping_navigation_ready()):
+            raise ValueError('本次实时地图位姿尚未就绪')
+        return 'session://'+PROCS.coordinate_session_id,(pose[0],pose[1],z,pose[2])
+    if PROCS.running('execution'):
         raise ValueError('请先停止自动执行器，再进行路线记录或更换路线')
     with STATE.lock:
         loc=dict(STATE.loc);pose=STATE.pose;z=STATE.pose_z
@@ -2920,7 +2927,7 @@ async def _stop_owned_motion():
         try:await asyncio.shield(pending)
         except Exception as exc:push_log('warn',f'启动任务未成功，继续清理：{exc}')
         if TASK_STATE.pending_spawn is pending:TASK_STATE.pending_spawn=None
-    await asyncio.to_thread(PROCS.stop,'slow_motion')
+    await asyncio.to_thread(PROCS.stop,'execution')
 
 
 class RouteLocalizationWait(RuntimeError):
@@ -2935,7 +2942,7 @@ async def _await_route_stable():
     with STATE.lock:STATE.motion_result='路线等待定位连续稳定，保持停车；稳定后自动重新检查并规划'
     while True:
         if STATE.goal_seq!=goal_seq:raise RuntimeError('等待定位期间目标被更改')
-        if PROCS.running('slow_motion'):
+        if PROCS.running('execution'):
             f=dict(TASK_STATE.feedback)
             if f.get('state') in ('MANUAL_OVERRIDE','ESTOP'):
                 raise RoutePaused(f'{f["state"]}：等待期间已手动接管或急停')
@@ -2957,7 +2964,7 @@ async def _await_route_stable():
 
 async def _hold_route_for_localization(reason):
     push_log('warn',str(reason)+'；停驶等待定位稳定，暂不结束路线')
-    if PROCS.running('slow_motion'):
+    if PROCS.running('execution'):
         began=time.monotonic()
         while True:
             if TASK_STATE.pause:raise RoutePaused('用户暂停')
@@ -2972,34 +2979,48 @@ async def _hold_route_for_localization(reason):
                 raise RoutePaused('2秒内未确认执行器停驶，已取消自动恢复')
             await asyncio.sleep(.1)
     await _await_route_stable()
-    await asyncio.to_thread(PROCS.stop,'slow_motion')
+    await asyncio.to_thread(PROCS.stop,'execution')
 
 
 async def pause_recorded_route():
     if not TASK_STATE.active:return
     TASK_STATE.pause=True
-    await asyncio.to_thread(PROCS.stop,'slow_motion')
+    await asyncio.to_thread(PROCS.stop,'execution')
     push_log('warn','路线暂停已请求，等待停止确认')
 
 
+def _check_route_binding():
+    binding=TASK_STATE.binding
+    if not binding:return
+    path,assets=binding
+    if path.startswith('session://'):
+        if path!='session://'+getattr(PROCS,'coordinate_session_id',''):
+            raise RuntimeError('运行期间SLAM坐标会话已变化')
+    else:
+        with STATE.lock:current=str(STATE.loc.get('map_path',''))
+        if Path(current).resolve()!=Path(path).resolve():raise RuntimeError('运行期间地图已切换')
+    for filename,size,mtime in assets:
+        info=Path(filename).stat()
+        if (info.st_size,info.st_mtime_ns)!=(size,mtime):raise RuntimeError('运行期间地图或模型文件已变化')
+
+
 async def _wait_route_motion(task_id,target,phase,token=None):
-    began=time.monotonic();last_progress=began
-    from teach_routes import matching_arrival
+    # The controller owns physical validity/arrival; GUI only checks task identity,
+    # explicit operator actions and feedback transport. No second pose veto here.
+    began=time.monotonic()
+    goal_id=STATE.plan_goal_ns
     while True:
-        _,pose=_route_live();f=dict(TASK_STATE.feedback);now=time.monotonic()
+        if TASK_STATE.pause:raise RoutePaused('用户暂停')
+        if TASK_STATE.cancel:raise RuntimeError('用户取消')
+        _check_route_binding()
         if token is not None and STATE.goal_seq!=token:raise RuntimeError('运行目标已更改')
-        if f.get('task_id')==task_id:
-            if matching_arrival(f,task_id,pose,target,phase):return
-            state=f.get('state')
-            if state in ('MANUAL_OVERRIDE','ESTOP'):
-                raise RoutePaused(f'{state} {f.get("reason","")}')
-            if state in ('ARRIVED','SESSION_COMPLETE','GOAL_CHANGED','ROTATION_TIMEOUT','ROTATION_DRIFT'):
-                raise RuntimeError(f'本站未完成：{state} {f.get("reason","")}')
-            if now-f.get('received_at',0)>3:raise RuntimeError('执行反馈中断')
-            if state in ('MOVING','ROTATING','VERIFYING_ARRIVAL'):last_progress=now
-        elif now-began>10:raise RuntimeError('执行器没有返回本次任务反馈')
-        if now-last_progress>30 or now-began>900:raise RuntimeError('本站持续受阻或执行超时')
-        if not PROCS.running('slow_motion'):raise RuntimeError('执行器提前退出')
+        f=dict(TASK_STATE.feedback);now=time.monotonic()
+        if f.get('task_id')==task_id and f.get('goal_id')==goal_id:
+            if f.get('state')=='ARRIVED':return
+            if f.get('state')in('MANUAL_OVERRIDE','ESTOP'):raise RoutePaused(f'{f["state"]}: {f.get("reason","")}')
+            if f.get('state')in('GOAL_CHANGED','FAILED'):raise RuntimeError(f.get('reason')or f['state'])
+        if now-began>3 and now-f.get('received_at',0)>3:raise RuntimeError('执行反馈中断，无法确认运动状态')
+        if not PROCS.running('execution'):raise RuntimeError('控制器提前退出')
         await asyncio.sleep(.1)
 
 
@@ -3009,15 +3030,15 @@ async def _start_route_motion_when_ready(task_id,token=None,executor_authority=F
         if TASK_STATE.pause:raise RoutePaused('用户暂停')
         if TASK_STATE.cancel:raise RuntimeError('路线已由用户取消')
         if token is not None and STATE.goal_seq!=token:raise RuntimeError('运行目标已更改')
-        if not PROCS.running('slow_motion'):raise RuntimeError('执行器在初始化期间退出')
+        if not PROCS.running('execution'):raise RuntimeError('执行器在初始化期间退出')
         f=dict(TASK_STATE.feedback)
         if f.get('task_id')==task_id:
             if f.get('state') in ('MANUAL_OVERRIDE','ESTOP'):
                 raise RoutePaused(f'启动期间 {f["state"]}')
             if f.get('state')=='DISABLED' and time.monotonic()-f.get('received_at',0)<1:
                 if not executor_authority or f.get('start_ready') is True:break
-        if time.monotonic()-began>20:
-            raise RoutePaused('执行器初始化20秒未就绪；保持未启用，不发送运动指令')
+        if time.monotonic()-began>180:
+            raise RoutePaused('控制器在180秒内未获得有效执行依据；保持未启用，保留站点')
         await asyncio.sleep(.1)
     # No commands can be emitted before construction and observer discovery finish.
     if not executor_authority:
@@ -3027,23 +3048,6 @@ async def _start_route_motion_when_ready(task_id,token=None,executor_authority=F
     WORKER.set_route_enabled(True)
     push_log('info',f'执行器已就绪且定位稳定，启用本次任务 {task_id}')
 
-
-async def _align_route_station(target,label,token=None):
-    _,pose=_route_live()
-    err=math.atan2(math.sin(target['yaw']-pose[2]),math.cos(target['yaw']-pose[2]))
-    if abs(err)<=math.radians(1):return
-    task_id='rotate_'+uuid.uuid4().hex
-    anchor={**target,'x':pose[0],'y':pose[1]}
-    _teach_view('对齐朝向：'+label)
-    TASK_STATE.feedback={}
-    with STATE.lock:
-        STATE.motion_feedback=MotionFeedback();STATE.motion_feedback.last_rx=time.monotonic()
-    ok=await _start_owned_motion(PROCS.start_rotation,task_id,target['yaw'])
-    if not ok:raise RuntimeError('旋转任务启动失败')
-    await _start_route_motion_when_ready(task_id)
-    await _wait_route_motion(task_id,anchor,'rotate',token=token)
-    await asyncio.to_thread(PROCS.stop,'slow_motion')
-    push_log('ok','朝向对齐完成：'+label)
 
 
 def _route_uses_prediction():
@@ -3062,7 +3066,7 @@ def _route_live():
     bridge=getattr(STATE,'readiness',{})
     bridge_age=STATE.age_of('readiness')
     predicted_ready=(bridge_age is not None and bridge_age<=.75 and tracking_mode(bridge)!='WAITING')
-    mapping_mode = getattr(PROCS,'desk_mode','loc') == 'mapping' and _slam_uses_live_map()
+    mapping_mode = getattr(PROCS,'desk_mode','loc') in ('mapping','fast_lio_realtime') and _slam_uses_live_map()
     if mapping_mode:
         if not _mapping_navigation_ready() and not predicted_ready:
             raise RouteLocalizationWait('实时建图位姿或状态未就绪，等待稳定')
@@ -3101,58 +3105,51 @@ def _route_live():
             info=Path(path).stat()
             if (info.st_size,info.st_mtime_ns)!=(size,mtime):
                 raise RuntimeError('运行期间地图或安装模型文件已改变')
-    return str(loc.get('map_path','')),pose
+    return (_teach_map_path() if mapping_mode else str(loc.get('map_path',''))),pose
 
 
 async def _execute_recorded_route(route,context,speed):
-    from teach_routes import validate,execution_points,matching_arrival
+    from teach_routes import validate,execution_points
     path,_=_route_live()
     identity=await asyncio.to_thread(map_identity,path,REPO_ROOT/'config/n01_sensor_geometry.json')
     validate(route,identity)
-    files=[path,str(REPO_ROOT/'config/n01_sensor_geometry.json')]
+    files=([path] if not path.startswith('session://') else [])+[str(REPO_ROOT/'config/n01_sensor_geometry.json')]
     TASK_STATE.binding=(path,[(p,Path(p).stat().st_size,Path(p).stat().st_mtime_ns)for p in files])
     points=execution_points(route)
+    task_id='route_'+uuid.uuid4().hex
+    started=False
     for index in range(context['index'],len(points)):
-        context['index']=index
-        target=points[index]
-        path,pose=_route_live()
+        context['index']=index;target=points[index]
+        if TASK_STATE.cancel:raise RuntimeError('用户取消')
+        if TASK_STATE.pause:raise RoutePaused('用户暂停')
         current=await asyncio.to_thread(map_identity,path,REPO_ROOT/'config/n01_sensor_geometry.json')
         validate(route,current)
         label=f'{index+1}/{len(points)} {target["name"]}'
-        _teach_view('路线运行：'+label)
-        push_log('info','路线运行：'+label)
-        align_after=route.get('orientation_timing','before_translation')=='after_arrival'
-        if not align_after:await _align_route_station(target,label)
-        _,pose=_route_live()
-        if math.hypot(pose[0]-target['x'],pose[1]-target['y'])>.08:
-            WORKER.request_goal(target['x'],target['y'],pose[2],'map')
-            token=STATE.goal_seq;goal_ns=STATE.plan_goal_ns
-            deadline=time.monotonic()+180
-            while True:
-                _route_live()
-                if STATE.goal_seq!=token:raise RuntimeError('目标被其他来源更改')
-                if STATE.goal_failed:raise RuntimeError('当前站点规划失败')
-                if (STATE.plan_active and STATE.plan_success_ns>=goal_ns
-                        and (STATE.age_of('plan_path') or 999)<2):break
-                if time.monotonic()>deadline:raise RuntimeError('等待当前站点规划超时')
-                await asyncio.sleep(.1)
-            task_id='route_'+uuid.uuid4().hex;TASK_STATE.feedback={}
-            with STATE.lock:
-                STATE.motion_feedback=MotionFeedback()
-                STATE.motion_feedback.last_rx=time.monotonic()
-            ok=await _start_owned_motion(PROCS.start_slow_motion,speed,
-                bool(UI['slow_cbf'].value),task_id,(target['x'],target['y']),True)
-            if not ok:raise RuntimeError('执行器启动失败')
-            await _start_route_motion_when_ready(task_id,token)
-            await _wait_route_motion(task_id,target,'translate',token)
-            await asyncio.to_thread(PROCS.stop,'slow_motion')
-        if align_after:await _align_route_station(target,label)
-        push_log('ok','到达路线站点并完成朝向：'+label)
+        _teach_view('路线运行：'+label);push_log('info','路线运行：'+label)
+        # Always use the original recorded pose. Controller translates, aligns
+        # final heading and confirms measured stop; no separate rotation process.
+        WORKER.request_goal(target['x'],target['y'],target['yaw'],'map')
+        token=STATE.goal_seq
+        with STATE.lock:
+            STATE.navigation_task.begin_execution(task_id,time.monotonic())
+            STATE.motion_feedback=MotionFeedback()
+        if not started:
+            TASK_STATE.feedback={}
+            ok=await _start_owned_motion(PROCS.start_navigation_execution,speed,False,task_id,None,True,True)
+            if not ok:raise RuntimeError('导航控制器启动失败')
+            await _start_route_motion_when_ready(task_id,token,executor_authority=True)
+            started=True
+        await _wait_route_motion(task_id,target,'translate',token)
+        push_log('ok','到达并完成朝向、停车确认：'+label)
         remaining=target['wait_s'] if context['remaining_wait'] is None else context['remaining_wait']
         end=time.monotonic()+remaining
         while time.monotonic()<end:
+            if TASK_STATE.pause:raise RoutePaused('用户暂停')
+            if TASK_STATE.cancel:raise RuntimeError('用户取消')
+            _check_route_binding()
             context['remaining_wait']=max(0.,end-time.monotonic())
-            _route_live();await asyncio.sleep(.1)
+            if TASK_STATE.feedback.get('state')in('MANUAL_OVERRIDE','ESTOP'):raise RoutePaused('停留期间手动接管或急停')
+            await asyncio.sleep(.1)
         context['remaining_wait']=None;context['index']=index+1
     return len(points)
 
@@ -3167,7 +3164,7 @@ async def run_recorded_route(resume=False):
         notify_user('已有暂停路线，请继续或取消',type='warning');return
     if TEACH_SESSION.loaded is None and context is None:
         notify_user('请先加载已保存路线',type='warning');return
-    if PROCS.running('slow_motion'):
+    if PROCS.running('execution'):
         notify_user('请先停止当前单点行驶',type='warning');return
     try:
         speed=float(UI['slow_speed'].value)
@@ -3180,12 +3177,17 @@ async def run_recorded_route(resume=False):
     action=f'从第{context["index"]+1}个站点继续' if resume else '先回到第一个记录点，再依次移动'
     if not await _confirm(f'运行路线“{route["name"]}”：{action}。速度上限 {speed:.2f} m/s。确认整段现场可通行且可随时急停？'):
         return
-    if TASK_STATE.active or TEACH_SESSION.active or PROCS.running('slow_motion'):
+    if TASK_STATE.active or TEACH_SESSION.active or PROCS.running('execution'):
         return
     TASK_STATE.active=True;TASK_STATE.cancel=False;TASK_STATE.pause=False
-    TASK_STATE.task=asyncio.current_task()
     if not resume:TASK_STATE.context={'route':route,'index':0,'remaining_wait':None}
     context=TASK_STATE.context
+    task=asyncio.create_task(_run_route_mission(route,context,speed))
+    TASK_STATE.task=task
+    UI.keep_task(task)
+
+
+async def _run_route_mission(route,context,speed):
     with STATE.lock:
         STATE.motion_result='路线执行中：先到起点，再按站点顺序移动'
     message='';success=False;paused=False
@@ -3213,11 +3215,11 @@ async def run_recorded_route(resume=False):
         if TASK_STATE.task is asyncio.current_task():TASK_STATE.task=None
         with STATE.lock:
             STATE.motion_result=message
-            STATE.navigation_task.finish('ARRIVED' if success else ('PAUSED' if paused else 'FAILED'),message)
+            STATE.navigation_task.finish('ARRIVED' if success else ('PAUSED' if paused else ('CANCELLED' if TASK_STATE.cancel else 'FAILED')),message)
             STATE.motion_feedback.terminal=True
         _teach_view(message)
         push_log('ok' if success else 'err',message)
-        if not paused:notify_user(message,type='positive' if success else 'negative',timeout=10000)
+        if not paused:publish_motion_events([dict(text=message,level='ok' if success else 'err',notify=True,terminal=True)])
 
 
 def build_teaching_panel():
@@ -3254,28 +3256,14 @@ def build_teaching_panel():
             ui.button('开始运行路线（先到起点）',on_click=lambda:run_recorded_route(False)).props('color=primary')
             ui.button('暂停路线',on_click=pause_recorded_route).props('outline dense')
             ui.button('继续路线',on_click=lambda:run_recorded_route(True)).props('outline dense')
-            ui.button('取消路线',on_click=stop_slow_motion).props('outline dense')
-        _lbl('定位短时波动由有界里程计预测衔接；超预算停车，稳定后重新规划继续；30秒未恢复则暂停并保留站点。','text-xs text-slate-400')
-        _lbl('路线绑定 PCD 和机身坐标模型；历史 bag 不代替实时定位与障碍感知。启动时会重新规划，现场障碍或定位失效仍可能阻止行驶。','text-xs text-slate-400')
+            ui.button('取消路线',on_click=stop_navigation_motion).props('outline dense')
+        _lbl('同一控制器完成各站移动、朝向和停车确认；短时波动按统一状态处理，手动接管后需点击继续。','text-xs text-slate-400')
+        _lbl('离线路线绑定PCD，实时路线仅限本次SLAM会话；两者均绑定坐标模型。bag不能代替当前感知。','text-xs text-slate-400')
         UI['teach_result']=ui.label('尚未开始路线记录').classes('text-xs break-all')
         _teach_view()
 
 
-def _point_alignment_heading():
-    from navigation_ui import alignment_before_replan
-    age=STATE.age_of('body_pose');review_age=STATE.age_of('feasibility')
-    path_age=STATE.age_of('plan_path')
-    if age is None or age>.5 or review_age is None or review_age>.75:return None
-    with STATE.lock:
-        pose=getattr(STATE,'control_pose',None)
-        target=STATE.goal_target
-        points=list(STATE.global_xy)
-        reason=STATE.feasibility.get('reason','')
-        local_ready=bool(STATE.plan_active) and path_age is not None and path_age<=2.
-    return alignment_before_replan(pose,target,points,STATE.age_of('global_path'),local_ready,reason)
-
-
-async def start_slow_motion() -> None:
+async def start_navigation_motion() -> None:
     if PROCS.running('desk') and not getattr(PROCS, 'slam_selection', {}).get('navigation_allowed', True):
         _slow_notice('当前为离线建图，不能启动导航行驶；请保存地图后定位，或停止后选择实时模式。', 'err')
         return
@@ -3288,80 +3276,39 @@ async def start_slow_motion() -> None:
     if TEACH_SESSION.active or TEACH_SESSION.busy:
         _slow_notice('请先保存或放弃当前路线记录，再启动自动行驶。')
         return
-    with STATE.lock:
-        loc = dict(STATE.loc)
-    ready = _nav_ready_state()
-    mapping = PROCS.desk_mode == 'mapping' and PROCS.running('desk')
-    if (mapping and not _mapping_navigation_ready() and not _reviewed_execution_inputs()) or (not mapping and str(loc.get("session", "")).lower() != "tracking"):
-        _slow_notice("拒绝运行：建图位姿尚未就绪或定位尚未 tracking。", "err"); return
-    body_age = STATE.age_of("body_pose")
-    path_age = STATE.age_of("plan_path")
-    # 轨迹被清空时 monitor 会发一条空 Path，recv() 会把 age 重置到约 0，
-    # 只看 age 会把"已清空"误判为"新鲜"。必须同时要求存在活动路径。
-    path_ok = bool(STATE.plan_active) and path_age is not None and path_age <= 2.0
-    alignment_heading=_point_alignment_heading() if not path_ok else None
-    if body_age is None or body_age > 0.5 or (not path_ok and alignment_heading is None):
-        _slow_notice(f"拒绝慢速运行：/body_pose age={body_age}, "
-                     f"local path age={path_age}, 活动路径={STATE.plan_active}；"
-                     f"需要新鲜输入。", "err"); return
-    if ready is not True and not _reviewed_execution_inputs():
-        _slow_notice("拒绝慢速运行：缺少当前有效路径或实时执行依据。", "err"); return
+    if _nav_ready_state() is None:
+        _slow_notice('请先启动导航并设置目标。','err');return
     try:
         speed = float(UI["slow_speed"].value if UI.get("slow_speed") else 0.05)
     except (TypeError, ValueError):
         speed = 0.05
     if not math.isfinite(speed) or not .01<=speed<=.8:
         _slow_notice('速度上限必须为0.01～0.8 m/s','err');return
-    if PROCS.running('slow_motion'):
+    if PROCS.running('execution'):
         with STATE.lock:
             terminal = (STATE.motion_feedback.terminal or
                         STATE.motion_feedback.state == 'MANUAL_OVERRIDE')
         if not terminal:
             _slow_notice('执行器已运行，请查看行驶状态和受阻原因。'); return
-        await asyncio.to_thread(PROCS.stop, 'slow_motion')
+        await asyncio.to_thread(PROCS.stop, 'execution')
     with STATE.lock:
         STATE.motion_feedback = MotionFeedback()
         STATE.motion_feedback.last_rx = time.monotonic()
         STATE.motion_result = '执行已请求，等待执行器反馈'
     if speed>STATE.nav_speed_mps+1e-6:
         _slow_notice('请按新速度重新启动导航，使规划器与执行器速度一致。','err');return
-    cbf_enabled = bool(UI['slow_cbf'].value) if UI.get('slow_cbf') else False
+    cbf_enabled = False
     TASK_STATE.cancel=False;TASK_STATE.pause=False;TASK_STATE.feedback={}
     TASK_STATE.task=asyncio.current_task()
     task_id='point_'+uuid.uuid4().hex
     ok=False
     try:
-        from navigation_ui import rear_goal_heading
         target=STATE.goal_target
         if target is None:raise RuntimeError('缺少本次目标坐标，请重新选点')
         token=STATE.goal_seq
-        with STATE.lock:
-            maneuver_review=dict(STATE.feasibility)
-        planned_maneuver=(maneuver_review.get('path_model') in
-            ('rotate_then_forward_se2','forward_se2_curvature_lattice')
-            and maneuver_review.get('candidate_review_ready')is True)
-        current_pose=None
-        if not planned_maneuver:_,current_pose=_route_live()
-        heading=None if planned_maneuver else (alignment_heading if alignment_heading is not None else rear_goal_heading(current_pose,target))
-        if heading is not None:
-            push_log('info','先检查实际转角扫掠空间并原地对齐，再重新规划前进')
-            await _align_route_station(dict(x=current_pose[0],y=current_pose[1],yaw=heading),'路径起步朝向',token=token)
-            if STATE.goal_seq!=token:raise RuntimeError('转向期间目标已改变，请重新启动行驶')
-            WORKER.request_goal(target[0],target[1],heading,'map')
-            token=STATE.goal_seq;goal_ns=STATE.plan_goal_ns
-            deadline=time.monotonic()+180
-            while True:
-                _route_live()
-                if STATE.goal_seq!=token:raise RuntimeError('重新规划期间目标已改变')
-                if STATE.goal_failed:raise RuntimeError('转向后重新规划失败')
-                if (STATE.plan_active and STATE.plan_success_ns>=goal_ns
-                        and (STATE.age_of('plan_path') or 999)<2):break
-                if time.monotonic()>deadline:raise RuntimeError('转向后等待规划超时')
-                await asyncio.sleep(.1)
-        ok=await _start_owned_motion(PROCS.start_slow_motion,speed,cbf_enabled,task_id,target,True)
+        ok=await _start_owned_motion(PROCS.start_navigation_execution,speed,cbf_enabled,task_id,target,True)
         if ok:
-            if planned_maneuver:await _start_route_motion_when_ready(task_id,STATE.goal_seq,executor_authority=True)
-            else:await _start_route_motion_when_ready(task_id,STATE.goal_seq)
+            await _start_route_motion_when_ready(task_id,STATE.goal_seq,executor_authority=True)
     except asyncio.CancelledError:
         await _stop_owned_motion()
         raise
@@ -3376,11 +3323,11 @@ async def start_slow_motion() -> None:
         with STATE.lock:
             STATE.motion_feedback.terminal = True
             STATE.motion_result = '行驶启动失败，请查看进程日志'
-    _slow_notice(f"已请求慢速运行，最大 {speed:.3f} m/s，CBF={'开启' if cbf_enabled else '关闭（仅 SCAN）'}，等待执行反馈" if ok else "慢速运行启动失败；查看日志",
+    _slow_notice(f"已请求导航运行，最大 {speed:.3f} m/s，CBF={'开启' if cbf_enabled else '关闭（仅 SCAN）'}，等待执行反馈" if ok else "导航运行启动失败；查看日志",
                  "ok" if ok else "err")
 
 
-async def stop_slow_motion() -> None:
+async def stop_navigation_motion() -> None:
     TASK_STATE.cancel=True;TASK_STATE.pause=False
     paused=not TASK_STATE.active and TASK_STATE.context is not None
     owner=TASK_STATE.task
@@ -3413,7 +3360,7 @@ async def change_navigation_mode(mode):
     if TASK_STATE.switching:return
     old=TASK_STATE.mode;TASK_STATE.switching=True
     try:
-        await stop_slow_motion()
+        await stop_navigation_motion()
         TASK_STATE.mode=mode
         push_log('info','已结束旧任务，切换导航模式：'+mode)
     except Exception as exc:
@@ -3429,6 +3376,10 @@ def _slam_uses_live_map():
 
 
 def _mapping_navigation_ready():
+    if PROCS.desk_mode=='fast_lio_realtime' and PROCS.running('desk'):
+        with STATE.lock:loc=dict(STATE.loc)
+        age=STATE.age_of('loc_status')
+        return loc.get('session')=='tracking' and loc.get('reloc_ok')is True and age is not None and age<=1.5
     if PROCS.desk_mode != 'mapping' or not PROCS.running('desk'):
         return False
     with STATE.lock:
@@ -3513,6 +3464,10 @@ async def navigation_action(action: str) -> None:
         }
         if not realtime:
             env_extra["N01_NAV_PCD"] = pcd
+            identity=await asyncio.to_thread(map_identity,pcd,REPO_ROOT/'config/n01_sensor_geometry.json')
+            env_extra['N01_NAV_MAP_ID']=identity['sha256']+':'+identity['geometry_sha256']
+        else:
+            env_extra['N01_NAV_MAP_ID']='session:'+getattr(PROCS,'coordinate_session_id','')
         if mapping:
             env_extra['N01_NAV_REALTIME_REFERENCE_TOPIC'] = '/cloud_map'
         map_desc = ('甲方实时建图（逐帧避障＋累积地图参考）' if mapping else
@@ -3537,7 +3492,7 @@ async def navigation_action(action: str) -> None:
 
 
 async def stop_managed_all() -> None:
-    await asyncio.to_thread(PROCS.stop, "slow_motion")
+    await asyncio.to_thread(PROCS.stop, "execution")
     if not await _close_mapping_session():
         UI["nav_result"].set_text("建图保存失败：已保留 bag 和 desk，停止全部已取消。")
         notify_user("建图保存失败，未执行停止全部", type="negative")
@@ -4002,7 +3957,7 @@ async def start_desk() -> None:
         if rsp_count < 1:
             message=rsp_unavailable_message(await asyncio.to_thread(_ps_snapshot))
             push_log('err', '拒绝启动：'+message)
-            notify_user(message, type="negative", timeout=10000)
+            notify_user(message, type="negative", timeout=5000)
             return
     label = "定位 desk（localization_lite_node）" if mode == "loc" else "建图 desk（mapping_lite_node）"
     rsp_note = ("\n\nRSP：不启动 SLAM 自带 RSP，使用地盘 hive2_driver 的 "
@@ -4097,7 +4052,7 @@ async def stop_desk() -> None:
                 "建图或实时SLAM会话保存PCD并结束bag。\n"
                 "底盘、雷达和桌面RSP保持独立运行。\n\n确认？"):
             return
-        await stop_slow_motion()
+        await stop_navigation_motion()
         await stop_navigation_module()
         if not await _close_mapping_session():
             notify_user("建图保存失败：bag 和 desk 仍保留，请检查后重试", type="negative")
@@ -4307,18 +4262,17 @@ def node_category(name: str) -> tuple[str, str]:
         return "TF与机器人模型", "机体/传感器坐标关系"
     if any(token in short for token in ("rviz", "foxglove", "gui", "console")):
         return "可视化与GUI", "操作与可视化"
-    if "traj_tracker" in short or "slow_motion" in short:
+    if short=="n01_navigation_controller" or "traj_tracker" in short or "execution" in short:
         return "底盘与执行", "轨迹执行（涉及运动输出）"
     if (short.startswith("n01_live_") or short in
-            ("scan_planner_node", "n01_navigation_path", "n01_static_map", "n01_hive2_trajectory_monitor",
-             "n01_shadow_path_follower")):
+            ("scan_planner_node", "n01_trajectory_display", "n01_static_map", "n01_hive2_trajectory_monitor")):
         return "导航规划", "静态地图/规划/门控/轨迹评估"
     if any(token in short for token in ("localization", "mapping", "fastlio", "relocaliz", "slam3d")):
         return "建图定位", "地图构建或地图定位"
     if any(token in short for token in ("livox", "imu", "lpms", "lidar", "complementary", "hipnuc")):
         return "传感器", "雷达/IMU驱动与预处理"
     if any(token in short for token in ("controller", "chassis", "wheel", "steer", "ethercat",
-                                       "joy", "teleop", "battery", "traj_tracker", "slow_motion")):
+                                       "joy", "teleop", "battery", "traj_tracker", "execution")):
         return "底盘与执行", "运控/执行/遥控/底盘状态"
     return "其他", "未识别，按完整节点名核对来源"
 
@@ -4551,7 +4505,8 @@ def drain_logs() -> None:
         except queue.Empty:
             break
     if lines and UI.get("log"):
-        UI["log"].push("\n".join(lines))
+        for line in lines:
+            UI['log'].push(line)
     drain_ui_events()
 
 
@@ -4706,13 +4661,13 @@ def _grid_overlay(img, view, pose, trail, goal_xy, plan_xy=None,
             (px + r * math.cos(yaw + 2.5), py - r * math.sin(yaw + 2.5)),
             (px + r * math.cos(yaw - 2.5), py - r * math.sin(yaw - 2.5)),
         ], fill=GRID_COLORS["robot"])
-    if global_xy and not plan_xy:
+    if global_xy:
         global_px = [_map_xy_to_pixel(x, y, view) for x, y in global_xy]
         if len(global_px) >= 2:
             draw.line(global_px,
                       fill=GRID_COLORS["global_plan" if global_active
                                        else "global_plan_stale"],
-                      width=4 if global_active else 2)
+                      width=2 if global_active else 1)
     if plan_xy:
         plan_px = [_map_xy_to_pixel(x, y, view) for x, y in plan_xy]
         if len(plan_px) >= 2:
@@ -4793,16 +4748,24 @@ async def _draw_grid_async(force: bool = False) -> None:
         global_active = STATE.global_active
         model=STATE.robot_projection;model_error=STATE.robot_projection_error
         joints=dict(STATE.projection_joints);times=dict(STATE.projection_joint_times)
-        model_seq=STATE.projection_seq;tilt=STATE.body_tilt
+        tilt=STATE.body_tilt
         inflated=STATE.nav_inflated_pts;inflated_seq=STATE.nav_inflated_seq
         observed=STATE.nav_dyn_pts
         envelope=dict(STATE.feasibility.get('planning_footprint',{}))
     now=time.monotonic()
     joints={k:v for k,v in joints.items() if now-times.get(k,0)<=.5}
-    model_polygons=[]
-    if model is not None:
-        try:model_polygons=model.polygons(joints,tilt);model_error=''
-        except ValueError as exc:model_error=str(exc)
+    model_key=model_visual_key(model,joints,tilt)
+    if _GRID_CACHE.get('model_key')!=model_key:
+        model_polygons=[]
+        if model is not None:
+            try:model_polygons=await asyncio.to_thread(model.polygons,joints,tilt);model_error=''
+            except ValueError as exc:model_error=str(exc)
+        if not UI.available:return
+        _GRID_CACHE['model_key']=model_key
+        _GRID_CACHE['model_polygons']=model_polygons
+        _GRID_CACHE['model_error']=model_error
+    model_polygons=_GRID_CACHE.get('model_polygons',[])
+    model_error=_GRID_CACHE.get('model_error',model_error)
     inflated_age=STATE.age_of('nav_inflated')
     if inflated_age is None or inflated_age>1.:inflated=None
     review_age=STATE.age_of('feasibility')
@@ -4813,15 +4776,13 @@ async def _draw_grid_async(force: bool = False) -> None:
     nav_path_live, plan_path_live = _nav_paths_live()
     if not plan_path_live:
         plan_active = False
-    # 与 _chain_state / refresh_console 完全一致的谓词：全局路径“任务中”
-    # 必须 锁存位 + nav 心跳 + 局部路径回放 同时成立。只按 nav 心跳放行，
-    # 会在“任务结束但导航栈未停”时把已结束的路径继续画成活动蓝线。
-    # plan_active 需一并纳入：轨迹清空时它立即为 False，而 plan_path_live
-    # 还要等 ≤2 s 回放窗口过期——不查它就出现“地图仍绿、数据链已灰”的窗口。
-    if not (plan_active and nav_path_live and plan_path_live):
+    # 全局参考独立显示；局部前段暂不可用时仍保留完整参考线。
+    if not nav_path_live:
         global_active = False
     if points is None or not len(points):
-        UI["map_image"].set_source(_BLANK_PNG)
+        if _GRID_CACHE.get('image_source')!=_BLANK_PNG:
+            UI["map_image"].set_source(_BLANK_PNG)
+            _GRID_CACHE['image_source']=_BLANK_PNG
         if UI.get("grid_info"):
             UI["grid_info"].set_text("等待当前模式的数据；可从右侧选择建图、定位或导航")
         return
@@ -4845,7 +4806,7 @@ async def _draw_grid_async(force: bool = False) -> None:
     key = (str(UI["src"].value), str(UI["range"].value), round(ground, 3),
            seq, None if pose is None else tuple(round(v, 2) for v in pose),
            len(trail), goal_xy, plan_seq, plan_active, goal_failed,
-           global_seq, global_active,model_seq,model_error,inflated_seq,inflated is not None,bool(envelope),
+           global_seq, global_active,model_key,model_error,inflated_seq,inflated is not None,bool(envelope),
            bool(UI["trail_on"].value) if UI.get("trail_on") else True)
     if not force and key == _GRID_CACHE.get("key"):
         return
@@ -4856,7 +4817,10 @@ async def _draw_grid_async(force: bool = False) -> None:
         plan_active, goal_failed, global_xy, global_active, trail_on)
     if not UI.available:
         return
-    UI["map_image"].set_source(source or _BLANK_PNG)
+    image_source=source or _BLANK_PNG
+    if image_source!=_GRID_CACHE.get('image_source'):
+        UI["map_image"].set_source(image_source)
+        _GRID_CACHE['image_source']=image_source
     if source is None:
         if UI.get("grid_info"):
             UI["grid_info"].set_text(f"{label} 当前高度范围内无点；请检查地面 z")
@@ -5025,15 +4989,6 @@ async def send_goal() -> None:
                 + ("（局部当前有效）" if l_active else "（局部已过期，但本次曾成功）"))
             push_log("ok", f"目标 ({x:.2f}, {y:.2f}) 规划成功：全局 {g_pts} 点/{global_ms:.0f} ms + 局部 {l_pts} 点/{local_ms:.0f} ms")
             return
-        heading=_point_alignment_heading()
-        if heading is not None:
-            with STATE.lock:
-                STATE.plan_pending=False;STATE.global_pending=False;STATE.goal_failed=False
-            text=(f'全局路线已就绪（{global_ms:.0f} ms）；当前朝向需要先对齐。'
-                  '点击“开始沿路径行驶”后，将检查旋转空间、原地转向，再重新规划前进。')
-            UI['goal_result'].set_text(text);push_log('info',text)
-            notify_user('等待启动：先对齐朝向，再规划前进',type='info')
-            return
         if (gate.get("goal_received") and gate.get("last_goal_accepted") is False
                 and gate.get("goal_event_age_s") is not None
                 and float(gate.get("goal_event_age_s") or 99) <= 1.0):
@@ -5044,6 +4999,8 @@ async def send_goal() -> None:
          "局部", local_timeout * 1000.0)
 
 async def apply_map_path() -> None:
+    if TASK_STATE.active or PROCS.running('execution'):
+        notify_user('请先停止当前导航任务，再更换定位地图',type='warning');return
     if PROCS.desk_mode == 'mapping' and PROCS.running('desk'):
         notify_user('甲方实时建图使用本次地图，不加载历史 PCD', type='info')
         return
@@ -6064,29 +6021,15 @@ def refresh_panels() -> None:
     _set(UI["n_fresh"], _age_text("body_pose"),
          _fresh_color(STATE.age_of("body_pose")))
     if UI.get("drive_ready"):
-        mapping_mode = PROCS.running('desk') and PROCS.desk_mode == 'mapping'
-        tracking = (_mapping_navigation_ready() or _reviewed_execution_inputs()) if mapping_mode else str(loc.get("session", "")).lower() == "tracking"
-        body_age = STATE.age_of("body_pose")
-        path_age = STATE.age_of("plan_path")
-        # 空 Path（轨迹清空）会刷新 age，单看 age 会把"已清空"当新鲜；
-        # 这里要求活动路径 + 2 s 窗口，与 _chain_limit("plan_path") 一致。
-        path_ok = bool(STATE.plan_active) and path_age is not None and path_age <= 2.0
-        reasons = []
-        if not getattr(PROCS, 'slam_selection', {}).get('navigation_allowed', True):
-            reasons.append('离线建图未进入定位')
-        if not tracking:
-            reasons.append("SLAM位姿未就绪" if mapping_mode else "未 tracking")
-        if body_age is None or body_age > 0.5:
-            reasons.append("/body_pose 过期")
-        if not path_ok:
-            reasons.append("本地路径未就绪")
-        if _nav_ready_state() is not True and not _reviewed_execution_inputs():
-            reasons.append("当前执行依据未就绪")
-        can_drive = not reasons
+        path_age=STATE.age_of('plan_path')
+        path_ok=bool(STATE.plan_active) and path_age is not None and path_age<=2.
+        can_drive=(_nav_ready_state() is not None and STATE.goal_target is not None and
+            getattr(PROCS,'slam_selection',{}).get('navigation_allowed',True))
+        reasons=[] if path_ok else ['等待SCAN轨迹；执行依据由控制器复核']
         nav_live=_nav_ready_state() is not None
         with STATE.lock:
             task=STATE.navigation_task
-            task.observe_plan(can_drive,path_ok,STATE.goal_failed,nav_live,
+            task.observe_plan(path_ok,path_ok,STATE.goal_failed,nav_live,
                               '、'.join(reasons))
             task.check_feedback(time.monotonic())
             task_label=task.label;task_reason=task.reason;task_phase=task.phase
@@ -6097,10 +6040,10 @@ def refresh_panels() -> None:
         _set(UI['drive_ready'],text,color)
         if UI.get('nav_ready'):_set(UI['nav_ready'],task_label,color)
         if UI.get("drive_button"):
-            restartable=(not PROCS.running('slow_motion') or STATE.motion_feedback.terminal
+            restartable=(not PROCS.running('execution') or STATE.motion_feedback.terminal
                 or STATE.motion_feedback.state=='MANUAL_OVERRIDE')
             UI["drive_button"].set_enabled(can_drive and restartable
-                and not TASK_STATE.active and task_phase not in ('ARRIVED','FAILED','CANCELLED'))
+                and not TASK_STATE.active)
     if UI.get("slow_status"):
         _set(UI["slow_status"], str(getattr(STATE, "slow_status", "") or "—"))
     if UI.get('motion_result'):
@@ -6184,7 +6127,7 @@ def build_console_page() -> None:
                     UI['range']=ui.select(['10m','20m','40m'],value='10m',label='视野',
                         on_change=lambda _:draw_grid(force=True)).props('outlined dense').classes('w-full')
                     UI['trail_on']=ui.checkbox('显示行驶轨迹',value=True,on_change=lambda _:draw_grid(force=True))
-                    ui.label('白色实体：URDF碰撞几何\n紫色光晕：机器人规划包络\n琥珀色：环境外扩6cm\n青绿：实时障碍\n灰蓝：参考环境').classes('text-xs text-slate-300 whitespace-pre-line')
+                    ui.label('白色实体：URDF碰撞几何\n紫色光晕：机器人规划包络\n琥珀色：环境外扩6cm\n青绿：实时障碍\n灰蓝：参考环境\n蓝线：完整全局参考\n青线：当前执行前段').classes('text-xs text-slate-300 whitespace-pre-line')
                     ui.label('环境余量6cm只计一次；紫色为机身近似覆盖，琥珀色为环境外扩（5cm栅格离散）。').classes('text-xs text-slate-500')
                     with ui.expansion('显示参数',icon='tune').classes('w-full'):
                         UI['ground_z']=ui.number('地面 z',value=DEFAULT_NAV_GROUND,format='%.2f',
@@ -6349,7 +6292,7 @@ def build_console_page() -> None:
                         on_change=lambda e:change_navigation_mode(e.value),label='导航模式').classes('w-64')
                     _lbl('地图模式：选点后规划并开始行驶。路线模式：遥控到点停车→记录→保存→加载→开始运行（先到起点）。','text-xs text-slate-400')
                     with ui.row().classes("gap-2"):
-                        ui.button('结束当前任务',icon='stop_circle',on_click=stop_slow_motion).props('outline dense color=negative')
+                        ui.button('结束当前任务',icon='stop_circle',on_click=stop_navigation_motion).props('outline dense color=negative')
                         ui.button("导航 RViz", icon="visibility", on_click=start_nav_visualization).props("outline dense")
                         ui.button("关闭导航 RViz", on_click=stop_nav_visualization).props("flat dense")
                     with ui.row().classes("w-full gap-4 items-start"):
@@ -6380,12 +6323,12 @@ def build_console_page() -> None:
                                 UI["slow_speed"] = ui.number(
                                     "速度上限 m/s", value=0.05, format="%.3f",
                                     min=0.01, max=0.8).classes("w-28")
-                                UI['slow_cbf'] = ui.checkbox('启用 CBF', value=False)
+                                UI['slow_cbf'] = ui.checkbox('CBF（后续专项验收）', value=False).disable()
                                 UI["drive_button"] = ui.button(
                                     "开始沿路径行驶",
-                                    on_click=start_slow_motion)\
+                                    on_click=start_navigation_motion)\
                                     .props("color=negative").bind_visibility_from(UI['navigation_mode'],'value',backward=lambda v:v=='地图选点移动')
-                                ui.button("停止行驶（零速）", on_click=stop_slow_motion)\
+                                ui.button("停止行驶（零速）", on_click=stop_navigation_motion)\
                                     .props("outline dense")
                             UI["slow_status"] = _kv("行驶状态")
                             UI["motion_result"] = _kv("执行结果")
@@ -6497,7 +6440,7 @@ def build_page() -> None:
     # Element timers belong to this page and are cancelled on deletion. The
     # process-wide worker and owned ROS nodes survive browser reconnects.
     for interval,callback in ((.5,refresh_console),(.5,refresh_panels),(.5,refresh_chain),
-                              (1.,refresh_health),(.2,draw_grid),(.3,drain_logs)):
+                              (1.,refresh_health),(.3,draw_grid),(.3,drain_logs)):
         view.timers.append(ui.timer(interval,callback))
 
 
@@ -6544,7 +6487,7 @@ def _shutdown_app() -> None:
                     fh.write(f"pgid={desk_pgid}\n保存前 GUI 退出，desk 组保留待重试")
             except OSError:
                 pass
-            PROCS.stop("slow_motion")
+            PROCS.stop("execution")
             PROCS.stop("rviz")
             PROCS.stop("nav_rviz")
             PROCS.stop("foxglove")
@@ -6559,7 +6502,7 @@ def _shutdown_app() -> None:
                              "确认 PCD 完整后手动停止该进程组")
             WORKER.stop(timeout=8.0)
             return
-    PROCS.stop("slow_motion")
+    PROCS.stop("execution")
     PROCS.stop("bag")
     ok, output = LIFECYCLE.shutdown()
     push_log("ok" if ok else "err",

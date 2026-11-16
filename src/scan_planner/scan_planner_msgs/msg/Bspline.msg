@@ -7,3 +7,6 @@ geometry_msgs/Point[] pos_pts
 
 float64[] yaw_pts
 float64 yaw_dt
+
+# Identity of the accepted goal; zero only for non-navigation legacy tools.
+uint64 goal_id

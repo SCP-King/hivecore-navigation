@@ -42,12 +42,22 @@ target_include_directories(scan_planner_node PRIVATE include)
 ament_target_dependencies(scan_planner_node ${scan_planner_dependencies})
 target_link_libraries(scan_planner_node Eigen3::Eigen)
 
-# Only the SCAN planner is compiled; never build chassis controllers or simulators.
+# R2 navigation only: call the installed SDK, never build another chassis driver.
+add_executable(n01_navigation_controller src/navigation_controller.cpp)
+target_include_directories(n01_navigation_controller PRIVATE include /opt/hivecore/hive2-motion/1.0.0/install/include)
+ament_target_dependencies(n01_navigation_controller rclcpp geometry_msgs nav_msgs sensor_msgs std_msgs scan_planner_msgs)
+target_link_libraries(n01_navigation_controller /opt/hivecore/hive2-motion/1.0.0/install/lib/libmotion_controller.so)
+set_target_properties(n01_navigation_controller PROPERTIES INSTALL_RPATH /opt/hivecore/hive2-motion/1.0.0/install/lib)
+install(TARGETS n01_navigation_controller DESTINATION lib/${PROJECT_NAME})
 install(TARGETS scan_planner_node DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY include/ DESTINATION include)
 install(DIRECTORY launch config DESTINATION share/${PROJECT_NAME} OPTIONAL)
 
 if(BUILD_TESTING)
+  add_executable(test_tracking_core test/test_tracking_core.cpp)
+  target_include_directories(test_tracking_core PRIVATE include)
+  target_compile_options(test_tracking_core PRIVATE -UNDEBUG)
+  add_test(NAME navigation_tracking_core COMMAND test_tracking_core)
   find_package(launch_testing_ament_cmake REQUIRED)
   add_launch_test(test/test_planner_startup.py TIMEOUT 30)
   add_launch_test(test/test_waypoint_parameters.py TIMEOUT 30)

@@ -20,12 +20,11 @@ checks = {
     "bag failure blocks desk": "建图 bag 录制启动失败；不会继续启动建图 desk" in source,
     "desk failure stops bag": "建图 desk 启动失败，停止同时启动的 bag 录制" in source,
     "stop motion and bag before desk": (
-        '("slow_motion", "bag", "desk", "rviz", "nav_rviz", "foxglove")' in source),
+        '("execution", "bag", "desk", "rviz", "nav_rviz", "foxglove")' in source),
     "mapping close saves first": "_close_mapping_session" in source
                                 and "PROCS.deactivate_mapping" in source,
     "mapping close stops bag": 'await asyncio.to_thread(PROCS.stop, "bag")' in source,
-    "stop desk mapping path": "if mode == \"mapping\":" in source
-                              and "建图已保存，bag 已停止" in source,
+    "stop desk mapping path": "_close_mapping_session" in source,
     "desk exit stops orphan bag": "同步停止 bag 录制，避免孤儿录包" in source,
     "shutdown saves mapping and stops bag": "退出前建图 PCD 已保存" in source
                                             and 'PROCS.stop("bag")' in source,

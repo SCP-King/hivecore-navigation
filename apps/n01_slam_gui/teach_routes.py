@@ -15,6 +15,15 @@ SCHEMA = 'n01.teach_route.v1'
 
 
 def map_identity(path, geometry_path=None):
+    session = str(path).startswith('session://')
+    if session:
+        value=str(path)
+        if len(value)!=42 or any(c not in '0123456789abcdef' for c in value[10:]):
+            raise ValueError('实时地图会话标识无效')
+        result={'path':value,'sha256':hashlib.sha256(value.encode()).hexdigest(),
+                'frame':'map','pose_child_frame':'base_link','scope':'live_session'}
+        if geometry_path is not None:result['geometry_sha256']=hashlib.sha256(Path(geometry_path).read_bytes()).hexdigest()
+        return result
     path = Path(path).resolve(strict=True)
     digest = hashlib.sha256()
     with path.open('rb') as stream:
@@ -55,7 +64,7 @@ def validate(route, current_map=None):
     if route['map'].get('pose_child_frame')!='base_link':
         raise ValueError('路线机身参考帧不匹配')
     identity=route['map']
-    if (not isinstance(identity.get('path'),str) or not Path(identity['path']).is_absolute()
+    if (not isinstance(identity.get('path'),str) or not (Path(identity['path']).is_absolute() or (identity.get('scope')=='live_session' and identity['path'].startswith('session://')))
             or not isinstance(identity.get('sha256'),str) or len(identity['sha256'])!=64
             or any(c not in '0123456789abcdef' for c in identity['sha256'])):
         raise ValueError('路线地图标识无效')

@@ -103,7 +103,7 @@ class Hive2KinematicsTests(unittest.TestCase):
         self.assertAlmostEqual(result['wheel_positions_m']['fl'][1],.220)
 
     def test_future_over_limit_curve_does_not_reject_safe_execution_prefix(self):
-        from n01_live_navigation.navigation_path import execution_prefix
+        from n01_live_navigation.trajectory_sampling import execution_prefix
         straight=np.column_stack((np.linspace(0.,1.5,100),np.zeros((100,2))))
         t=np.linspace(0.,2.,150)
         turn=np.column_stack((1.5+np.sin(t),1.-np.cos(t),np.zeros_like(t)))

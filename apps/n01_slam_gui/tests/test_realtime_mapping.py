@@ -67,18 +67,9 @@ def test_motion_gate_uses_realtime_mapping_status_without_offline_relocation(rea
             pose_stamp_age_at_rx=.1,age_of=lambda key: .1 if key!='loc_status' else None)
     scope=dict(STATE=state,TASK_STATE=S(pause=False,cancel=False,binding=None),
         PROCS=S(desk_mode='mapping'),_slam_uses_live_map=lambda:True,
-        _mapping_navigation_ready=lambda:ready,_route_uses_prediction=lambda:False,
+        _mapping_navigation_ready=lambda:ready,_route_uses_prediction=lambda:False,_teach_map_path=lambda:'session://'+'a'*32,
         RouteLocalizationWait=ValueError)
     exec(compile(ast.Module(body=[fn],type_ignores=[]),'motion_mapping_gate','exec'),scope)
     if ready:assert scope['_route_live']()[1]==(1,2,0)
     else:
         with pytest.raises(ValueError,match='实时建图'):scope['_route_live']()
-
-
-def test_rear_point_goal_faces_target_without_overriding_front_or_near_goal():
-    import math
-    from navigation_ui import rear_goal_heading
-    assert abs(rear_goal_heading((0,0,0),(-1,0)))==pytest.approx(math.pi)
-    assert rear_goal_heading((0,0,0),(1,0)) is None
-    assert rear_goal_heading((0,0,0),(-.01,0)) is None
-    assert rear_goal_heading((0,0,math.pi),(-1,0)) is None

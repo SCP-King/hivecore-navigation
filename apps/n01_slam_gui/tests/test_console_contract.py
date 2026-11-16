@@ -20,7 +20,7 @@ checks = {
     "data chain green/gray/red": all(x in source for x in (
         '"green"', '"gray"', '"red"', "chain-wrap")),
     "projected grid image": "ui.interactive_image(" in source
-                            and "投影栅格" in source,
+                            and "实时地图" in source,
     "map click sets goal": "on_map_click" in source and "goal_x" in source,
     "goal publisher": 'GOAL_TOPIC = "/move_base_simple/goal"' in source
                       and "request_goal(" in source
@@ -40,7 +40,7 @@ checks = {
         (ast.unparse(call.args[0]) in ('PoseWithCovarianceStamped', 'PoseStamped')
          or (ast.unparse(call.args[0])=='Bool' and len(call.args)>1
              and isinstance(call.args[1],ast.Constant)
-             and call.args[1].value=='/n01/slow_motion/enable'))
+             and call.args[1].value=='/n01/navigation/enable'))
         for call in ast.walk(ast.parse(source))
         if isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
         and call.func.attr == 'create_publisher' and call.args),
@@ -54,7 +54,7 @@ checks = {
                                        and "尚未上线" in source
                                        and "Node not found" in source,
     "modular page sections": all(x in source for x in (
-        "整体项目生命周期", "共享地图视图", "① 建图模块",
+        "整体项目生命周期", "实时地图", "① 建图模块",
         "位姿与离线地图定位", "③ 导航模块")),
     "global lifecycle controls": all(x in source for x in (
         '① 启动建图', '② 启动定位', '① 启动实时SLAM', '停止SLAM / 定位',

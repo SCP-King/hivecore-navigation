@@ -24,7 +24,7 @@ def test_missing_selected_release_does_not_fall_back(tmp_path):
 
 def test_gui_children_do_not_replay_workspace_underlays():
     root=SCRIPT.parents[2]
-    for name in ('start_localization_stack.sh','start_fast_lio_gui_backend.sh','start_slow_motion.sh'):
+    for name in ('start_localization_stack.sh','start_fast_lio_gui_backend.sh','start_navigation_execution.sh'):
         text=(root/'scripts/runtime'/name).read_text()
         assert 'n01_source_slam_runtime' in text
         assert '/install/setup.bash' not in text

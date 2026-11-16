@@ -69,7 +69,7 @@ case "$COMMAND" in
   navigation) exec bash "$ROOT/scripts/n01_navigation.sh" "$@" ;;
   localization) exec bash "$ROOT/scripts/runtime/start_localization_stack.sh" "$@" ;;
   fast-lio-backend) exec bash "$ROOT/scripts/runtime/start_fast_lio_gui_backend.sh" "$@" ;;
-  motion) exec bash "$ROOT/scripts/runtime/start_slow_motion.sh" "$@" ;;
+  motion) exec bash "$ROOT/scripts/runtime/start_navigation_execution.sh" "$@" ;;
   deploy) exec bash "$ROOT/scripts/deploy_n01_planning_fixes.sh" "$@" ;;
   planning-smoke) exec bash "$ROOT/scripts/run_n01_planning_smoke_test.sh" "$@" ;;
   planning-acceptance) exec bash "$ROOT/scripts/run_n01_planning_acceptance.sh" "$@" ;;

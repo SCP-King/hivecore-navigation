@@ -115,32 +115,3 @@ def route_summary(route):
     waits=' / '.join(f'{p["wait_s"]:g}s' for p in points[:5])
     end='结束后再回首点' if route['return_to_start'] else '终点结束，不再返回'
     return f'先到 {points[0]["name"]}，再按 {names} 执行 · 站间 {distance} · 各站停留 {waits} · {end}'
-
-
-
-
-def rear_goal_heading(pose, target):
-    """Point navigation faces a rear target before translating; routes keep explicit yaw."""
-    import math
-    dx,dy=float(target[0])-pose[0],float(target[1])-pose[1]
-    if math.hypot(dx,dy)<=.08:
-        return None
-    bearing=math.atan2(dy,dx)
-    error=math.atan2(math.sin(bearing-pose[2]),math.cos(bearing-pose[2]))
-    return bearing if abs(error)>math.pi/2 else None
-
-
-def alignment_before_replan(pose,target,global_xy,global_age,local_ready,reason):
-    """A global route may request a checked stop-turn, never authorize driving."""
-    if local_ready or reason not in ('heading_search_time_budget','heading_search_expansion_budget','no_forward_route'):
-        return None
-    if (pose is None or target is None or not global_xy or global_age is None
-            or not 0<=global_age<=2.):return None
-    if not all(math.isfinite(float(v))for v in (*pose,*target[:2],*global_xy[-1][:2])):
-        return None
-    if math.dist(global_xy[-1][:2],target[:2])>.12:return None
-    dx,dy=target[0]-pose[0],target[1]-pose[1]
-    if math.hypot(dx,dy)<.2:return None
-    heading=math.atan2(dy,dx)
-    error=math.atan2(math.sin(heading-pose[2]),math.cos(heading-pose[2]))
-    return heading if abs(error)>math.radians(35) else None

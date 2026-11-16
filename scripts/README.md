@@ -43,7 +43,7 @@ GUI仍检查自己的实例归属。
 |---|---|
 | `start_localization_stack.sh` | `runtime/start_localization_stack.sh`；入口 `n01 localization` |
 | `start_fast_lio_gui_backend.sh` | `runtime/start_fast_lio_gui_backend.sh`；入口 `n01 fast-lio-backend` |
-| `start_slow_motion.sh` | `runtime/start_slow_motion.sh`；入口 `n01 motion` |
+| `start_navigation_execution.sh` | `runtime/start_navigation_execution.sh`；入口 `n01 motion` |
 | `n01_cold_start.sh` | 归档停用；使用 `n01 gui` 后手动启动模块 |
 | `restart_n01_live_navigation_verify.sh` | 归档停用；使用 `n01 navigation` |
 | `start_chassis.sh`、`stop_chassis.sh`、`n01_stop_chassis.py` | 归档停用；底盘由桌面入口独立管理 |

@@ -26,11 +26,17 @@ namespace scan_planner
     have_odom_ = false;
     have_new_target_ = false;
     rviz_height_ready_ = false;
-    go2_execution_frozen_ = false;
+    navigation_replan_sub_ = node_->create_subscription<std_msgs::msg::Bool>(
+      "/n01/navigation/replan", 10, [this](std_msgs::msg::Bool::ConstSharedPtr p){
+        if(p->data && have_target_ && exec_state_ == EXEC_TRAJ) changeFSMExecState(REPLAN_TRAJ,"CONTROLLER_PROGRESS");
+      });
+    execution_progress_sub_ = node_->create_subscription<scan_planner_msgs::msg::ExecutionProgress>(
+      "/n01/navigation/progress", 10, [this](scan_planner_msgs::msg::ExecutionProgress::ConstSharedPtr p) {
+        if (p->goal_id == navigation_goal_id_) execution_progress_ = p;
+      });
     flag_escape_emergency_ = true;
     need_hover_stop_ = false;
     replan_fail_count_ = 0;
-    last_freeze_update_time_ = node_->now();
     goal_reached_sub_ = node_->create_subscription<geometry_msgs::msg::PointStamped>(
         "/n01/navigation/goal_reached",10,
         [this](const geometry_msgs::msg::PointStamped::ConstSharedPtr msg) {
@@ -90,10 +96,6 @@ namespace scan_planner
     odom_sub_ = node_->create_subscription<nav_msgs::msg::Odometry>(
         "body_pose", rclcpp::SensorDataQoS(),
         std::bind(&SCANReplanFSM::odometryCallback, this, std::placeholders::_1));
-    go2_execution_frozen_sub_ = node_->create_subscription<std_msgs::msg::Bool>(
-        "planning/go2_execution_frozen", 10,
-        std::bind(&SCANReplanFSM::go2ExecutionFrozenCallback, this, std::placeholders::_1));
-
     bspline_pub_ = node_->create_publisher<scan_planner_msgs::msg::Bspline>("planning/bspline", 10);
     global_path_pub_ = node_->create_publisher<nav_msgs::msg::Path>(
         "planning/global_path", rclcpp::QoS(1).reliable().transient_local());
@@ -166,6 +168,10 @@ namespace scan_planner
 
     if (msg->poses[0].pose.position.z < -0.1)
       return;
+
+    const uint64_t incoming_goal = static_cast<uint64_t>(msg->header.stamp.sec) * 1000000000ULL + msg->header.stamp.nanosec;
+    if (incoming_goal == 0 || incoming_goal <= navigation_goal_id_) return;
+    navigation_goal_id_ = incoming_goal;
 
     cout << "Triggered!" << endl;
     trigger_ = true;
@@ -443,23 +449,22 @@ namespace scan_planner
     }
   }
 
-  void SCANReplanFSM::go2ExecutionFrozenCallback(const std_msgs::msg::Bool::ConstSharedPtr &msg)
+  double SCANReplanFSM::executionParameter() const
   {
-    go2_execution_frozen_ = msg->data;
-  }
-
-  void SCANReplanFSM::updateLocalTrajTimeFreeze()
-  {
-    const rclcpp::Time now = node_->now();
-    double dt = (now - last_freeze_update_time_).seconds();
-    last_freeze_update_time_ = now;
-
-    if (dt <= 0.0 || dt > 0.2)
-      return;
-
-    LocalTrajData *info = &planner_manager_->local_data_;
-    if (go2_execution_frozen_ && info->start_time_.seconds() > 1e-5)
-      info->start_time_ += rclcpp::Duration::from_seconds(dt);
+    const auto &info = planner_manager_->local_data_;
+    if (execution_progress_ && execution_progress_->goal_id == navigation_goal_id_ &&
+        execution_progress_->revision == info.traj_id_ &&
+        (node_->now() - rclcpp::Time(execution_progress_->header.stamp)).seconds() <= .6)
+      return std::clamp(execution_progress_->parameter_time, 0.0, info.duration_);
+    // Before execution / after revision: measure actual geometric progress,
+    // not elapsed wall time. Waiting at start cannot consume the trajectory.
+    double best = 1e100, parameter = 0.;
+    for (int i=0; i<=100; ++i) {
+      const double t = info.duration_*i/100.;
+      const double d = (info.position_traj_.evaluateDeBoorT(t)-odom_pos_).squaredNorm();
+      if (d < best) { best=d; parameter=t; }
+    }
+    return parameter;
   }
 
   double SCANReplanFSM::getOdomYaw() const
@@ -564,7 +569,6 @@ namespace scan_planner
 
   void SCANReplanFSM::execFSMCallback()
   {
-    updateLocalTrajTimeFreeze();
 
     static int fsm_num = 0;
     fsm_num++;
@@ -610,7 +614,7 @@ namespace scan_planner
       // Arrival is measured from live odometry, never from spline time.
       // Do not count an already reached target as a planning failure.
       if (navi_mode_ == NAVI_MODE::MANUAL_TARGET &&
-          (end_pt_ - odom_pos_).norm() <= no_replan_thresh_)
+          (end_pt_ - odom_pos_).head<2>().norm() <= .08)
       {
         have_target_ = false;
         have_new_target_ = false;
@@ -677,12 +681,12 @@ namespace scan_planner
       /* determine if need to replan */
       LocalTrajData *info = &planner_manager_->local_data_;
       rclcpp::Time time_now = node_->now();
-      double t_cur = (time_now - info->start_time_).seconds();
+      double t_cur = executionParameter();
       t_cur = min(info->duration_, t_cur);
 
       Eigen::Vector3d pos = info->position_traj_.evaluateDeBoorT(t_cur);
       if (navi_mode_ == NAVI_MODE::MANUAL_TARGET &&
-          (end_pt_ - odom_pos_).norm() <= no_replan_thresh_)
+          (end_pt_ - odom_pos_).head<2>().norm() <= .08)
       {
         have_target_ = false;
         replan_fail_count_ = 0;
@@ -744,7 +748,7 @@ namespace scan_planner
         changeFSMExecState(WAIT_TARGET, "FSM");
         return;
       }
-      else if (t_cur >= max_replan_interval_s_)
+      else if (info->duration_ - t_cur <= max_replan_interval_s_)
       {
         changeFSMExecState(REPLAN_TRAJ, "LIVE_ENVIRONMENT_REFRESH");
       }
@@ -815,6 +819,9 @@ namespace scan_planner
   {
     setStartStateFromOdomOrCurrentTraj();
 
+    // Ordinary local updates retain the reference and its bypass side.
+    // A blocked/failed local solution may refresh A* from the measured state.
+    if (replan_fail_count_ >= 2) {
     if (!planner_manager_->planGlobalTraj(
             start_pt_,
             start_vel_,
@@ -832,6 +839,7 @@ namespace scan_planner
       return false;
 
     publishGlobalPath();
+    }
     bool success = callReboundReplan(true, false);
     if (!success)
     {
@@ -850,12 +858,18 @@ namespace scan_planner
     start_acc_.setZero();
     // External wheel execution may stop or lag the nominal spline. Pair the
     // measured start position with measured velocity, never spline-time velocity.
+    if (execution_progress_ && execution_progress_->goal_id==navigation_goal_id_ &&
+        execution_progress_->phase=="ALIGN" && start_vel_.head<2>().norm()<.01) {
+      const double seed=std::min(.03,planner_manager_->pp_.max_vel_);
+      start_vel_.x()=seed*std::cos(getOdomYaw());start_vel_.y()=seed*std::sin(getOdomYaw());
+    }
     const double measured_speed=start_vel_.norm();
     const double planning_speed_limit=planner_manager_->pp_.max_vel_;
     if (measured_speed>planning_speed_limit && measured_speed>1e-6)
       start_vel_*=planning_speed_limit/measured_speed;
     const Eigen::Vector2d to_goal = end_pt_.head<2>() - odom_pos_.head<2>();
-    if (to_goal.norm() > 1e-3 && start_vel_.head<2>().dot(to_goal) < 0.0)
+    if (to_goal.norm() > 1e-3 && start_vel_.head<2>().dot(to_goal) < 0.0 &&
+        !(execution_progress_ && execution_progress_->phase=="ALIGN"))
     {
       start_vel_.setZero();
       start_acc_.setZero();
@@ -864,7 +878,6 @@ namespace scan_planner
 
   void SCANReplanFSM::checkCollisionCallback()
   {
-    updateLocalTrajTimeFreeze();
 
     LocalTrajData *info = &planner_manager_->local_data_;
     auto map = planner_manager_->grid_map_;
@@ -874,7 +887,7 @@ namespace scan_planner
 
     /* ---------- check trajectory ---------- */
     constexpr double time_step = 0.01;
-    double t_cur = (node_->now() - info->start_time_).seconds();
+    double t_cur = executionParameter();
     double t_2_3 = info->duration_ * 2 / 3;
     for (double t = t_cur; t < info->duration_; t += time_step)
     {
@@ -913,6 +926,10 @@ namespace scan_planner
   {
 
     getLocalTarget();
+    // An obstructed ALIGN may need a non-collinear seed. Use SCAN's own
+    // optimizer random initialization, never another downstream search.
+    if(execution_progress_ && execution_progress_->goal_id==navigation_goal_id_ &&
+       execution_progress_->phase=="ALIGN") flag_randomPolyTraj=true;
 
     bool plan_success =
         planner_manager_->reboundReplan(start_pt_, start_vel_, start_acc_, local_target_pt_, local_target_vel_, (have_new_target_ || flag_use_poly_init), flag_randomPolyTraj);
@@ -928,6 +945,7 @@ namespace scan_planner
       /* publish traj */
       scan_planner_msgs::msg::Bspline bspline;
       bspline.order = 3;
+      bspline.goal_id = navigation_goal_id_;
       bspline.start_time = info->start_time_;
       bspline.traj_id = info->traj_id_;
 
@@ -967,6 +985,7 @@ namespace scan_planner
     /* publish traj */
     scan_planner_msgs::msg::Bspline bspline;
     bspline.order = 3;
+    bspline.goal_id = navigation_goal_id_;
     bspline.start_time = info->start_time_;
     bspline.traj_id = info->traj_id_;
 

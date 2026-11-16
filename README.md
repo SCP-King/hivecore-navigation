@@ -1,6 +1,6 @@
 # N-01 药厂导航避障
 
-> 本仓库是 N-01 Navigation 算法与集成工程。当前包含**建图定位接入、实时感知、SCAN规划、统一路径、显式启用的四轮执行与路线管理**；完整路线和更高速度的实机验收状态见[验证文档](docs/validation.md)。
+> 本仓库是 N-01 Navigation 算法与集成工程。当前包含**建图定位接入、实时感知、原生SCAN规划、类型化轨迹、显式启用的C++四轮闭环控制与路线管理**；完整路线和更高速度的实机验收状态见[验证文档](docs/validation.md)。
 
 本文维护工程入口、构建和集成接口；当前运行、坐标模型、导航算法及验证结论统一见 [项目文档索引](docs/README.md)。历史测试原始证据与 `config/reference/` 机器可读档案保留溯源。运行日志、Bag、PCD、录屏和报告放在 `~/lyy/n01_runtime/`，不得提交到 Git。
 
@@ -31,6 +31,7 @@ git pull --ff-only origin dev/n01-current
 | `bash scripts/n01 gui [端口]` | 启动仓库内 SLAM3D Lite + Navigation Web GUI | 显式按钮管理 GUI 自有进程 |
 | `bash scripts/n01 deploy` | 构建并按门控部署 N-01 规划栈 | 会构建、重启 N-01 栈；保留厂商 SLAM |
 | `bash scripts/n01 navigation start\|status\|stop` | Live Stack 生命周期管理 | 只管理 N-01 自有进程 |
+| `bash scripts/n01 motion [ROS参数]` | 显式创建统一导航控制器 | 默认disabled，不替用户启用运动 |
 | `bash scripts/n01 planning-smoke [参数]` | 已运行栈上的 READY 门控单次规划 | 最多发一个规划目标，不发运动命令 |
 | `bash scripts/n01 planning-acceptance` | 实时目标到 SCAN 轨迹验收 | 构建、启动、验收并自动停止 N-01 栈 |
 | `bash scripts/n01 g1-smoke` | G1 隔离短冒烟 | 离线 ROS domain 88 |
@@ -68,12 +69,15 @@ N-01 Live Navigation
   ├─ 原始实时点云进入 native SCAN
   ├─ Goal Gate / runtime supervisor
   ├─ 动态障碍候选诊断（可视化，不是安全传感器）
-  ├─ B-spline 轨迹时间域与 Hive2 必要条件筛查
-  └─ fail-closed safety status
+  ├─ 原生B-spline与goal_id/revision，不做二次局部搜索
+  ├─ 共享URDF、实时场景及Hive2原生模型审核
+  ├─ NavigationTrajectory原子交付，Path仅显示
+  └─ GUI单点/记录路线任务与统一状态
+             ▼（单独点击行驶，默认disabled）
+  C++ 50Hz闭环控制：ALIGN／前进纠偏／停稳确认
+             │ 唯一正常导航 /cmd_vel，手动优先与真实反馈/碰撞约束
              ▼
-      规划候选、状态、诊断与 RViz 可视化
-             X
-      不连接底盘，不输出执行器命令
+      桌面独立启动的底盘控制器
 ```
 
 核心原则：
@@ -81,7 +85,7 @@ N-01 Live Navigation
 - 厂商 SLAM、机器人描述、Livox 驱动、Hive2 Motion SDK 和硬件启动文件均为外部依赖。
 - N-01 核心只使用标准 ROS 消息与内部规范接口；只有 Localization Adapter 可以解析厂商定位状态消息。
 - 不复制、不构建、不启动第二套厂商 SLAM，不修改厂商 URDF、launch、驱动或运动栈。
-- FAST-LIO2 是可选、隔离的研究后端，不是 Lite SLAM 的自动替代品。
+- FAST-LIO2 是用户明确选择的自部署后端，与甲方后端共用导航契约，不自动切换或叠加启动。
 - 规划 READY 只表示可以向规划器提交目标，不等于执行授权。
 
 ### 2.2 ROS 包职责
@@ -96,7 +100,7 @@ N-01 Live Navigation
 | `n01_map_fusion` | 静态/动态地图融合及全局路由研究 |
 | `n01_offline_integration` | Bag 回放、离线证据、集成测试 |
 | `n01_fast_lio` | 可选隔离 FAST-LIO2 与里程计适配 |
-| `scan_planner` | 上游 SCAN Planner；保留上游身份和接口 |
+| `scan_planner` | SCAN全局/局部规划与R2统一C++控制；消息含显式目标身份 |
 
 非 ROS 应用统一放在 `apps/`：`apps/n01_slam_gui/` 是 SLAM3D Lite、建图、定位和导航的 Web 操作台。它不参与 `colcon` 包发现，通过 `bash scripts/n01 gui` 启动，并通过仓库相对路径调用导航生命周期脚本。
 
@@ -106,7 +110,7 @@ N-01 Live Navigation
 hivecore-navigation/
 ├── apps/                   # 非 ROS 操作应用（Web GUI）
 ├── config/                 # 跨模块机器可读契约与统一参数
-├── docs/                   # 四份合并主文档与索引
+├── docs/                   # 架构及四份运行主文档与索引
 ├── rviz/                   # 统一 RViz 配置
 ├── scripts/                # 唯一命令入口及安全生命周期脚本
 ├── src/                    # ROS 2 包与固定来源的第三方源码

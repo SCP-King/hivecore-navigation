@@ -1,5 +1,6 @@
 """Client-owned widgets, caches and callbacks; ROS/process ownership is separate."""
 import asyncio
+from weakref import WeakSet
 from collections.abc import MutableMapping
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -19,6 +20,7 @@ class ClientUI(MutableMapping):
     def __init__(self,current_client):
         self.current_client=current_client
         self.views={}
+        self.process_tasks=WeakSet()
         self.bound=ContextVar('n01_gui_view',default=None)
 
     def attach(self,client):
@@ -39,7 +41,7 @@ class ClientUI(MutableMapping):
             raise asyncio.CancelledError('GUI client deleted')
         try:task=asyncio.current_task()
         except RuntimeError:task=None
-        if task is not None and task not in view.tasks:
+        if task is not None and task not in self.process_tasks and task not in view.tasks:
             view.tasks.add(task)
             task.add_done_callback(view.tasks.discard)
         return view
@@ -49,6 +51,12 @@ class ClientUI(MutableMapping):
         try:self.view();return True
         except asyncio.CancelledError:return False
 
+    def keep_task(self,task):
+        """Mission ownership belongs to the process, never a browser client."""
+        self.process_tasks.add(task)
+        for view in self.views.values():view.tasks.discard(task)
+        task.add_done_callback(self.process_tasks.discard)
+
     def release(self,view):
         if view.closed:return
         view.closed=True
@@ -56,7 +64,7 @@ class ClientUI(MutableMapping):
         try:current=asyncio.current_task()
         except RuntimeError:current=None
         for task in tuple(view.tasks):
-            if task is not current and not task.done():task.cancel()
+            if task is not current and task not in self.process_tasks and not task.done():task.cancel()
         view.widgets.clear();view.caches.clear()
         if self.views.get(view.client.id) is view:self.views.pop(view.client.id)
 

@@ -15,7 +15,7 @@ class EntryPointTests(unittest.TestCase):
             'gui':'apps/n01_slam_gui/run_slam_lite_gui.sh',
             'localization':'scripts/runtime/start_localization_stack.sh',
             'fast-lio-backend':'scripts/runtime/start_fast_lio_gui_backend.sh',
-            'motion':'scripts/runtime/start_slow_motion.sh',
+            'motion':'scripts/runtime/start_navigation_execution.sh',
             'navigation':'scripts/n01_navigation.sh',
         }
         with tempfile.TemporaryDirectory(prefix='n01_router_test_') as tmp:

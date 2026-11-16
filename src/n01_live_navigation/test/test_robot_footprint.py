@@ -2,7 +2,7 @@ import math
 import numpy as np
 from n01_live_navigation.urdf_projection import RobotProjection
 from n01_live_navigation.robot_footprint import steering_hull,polygon_hits,rotation_sweep
-from n01_live_navigation.heading_search import FootprintCollision,search
+from n01_live_navigation.footprint_collision import FootprintCollision
 
 XML='''<robot name="test"><link name="base_link"><collision><geometry><box size="0.8 0.30 0.2"/></geometry></collision></link>
 <link name="leg"/><joint name="leg_pitch" type="revolute"><parent link="base_link"/><child link="leg"/><axis xyz="0 1 0"/><origin xyz="0.25 0.1 0"/></joint>
@@ -34,9 +34,9 @@ def test_narrow_corridor_and_rotated_body_use_polygon_not_three_disks():
     c=FootprintCollision(wall,[0,0,0],.5,[[-3,-2],[3,2]],footprint=BOX)
     assert c.radius==.06 and c.free([[0,0,0]])
     assert not c.free([[0,0,math.pi/2]])
-    assert not FootprintCollision(wall,[0,0,0],.5,[[-3,-2],[3,2]]).free([[0,0,0]])
-    result=search((0,0,0,0),(1.,0.),c,budget_s=1.)
-    assert result.states,result.reason
+    import pytest
+    with pytest.raises(ValueError,match='urdf_footprint_required'):
+        FootprintCollision(wall,[0,0,0],.5,[[-3,-2],[3,2]])
 
 
 def test_only_integrated_out_joints_can_be_missing():

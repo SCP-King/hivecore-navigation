@@ -1,0 +1,9 @@
+std_msgs/Header header
+uint64 goal_id
+int64 revision
+string task_id
+string phase
+float64 parameter_time
+float64 arc_length
+float64 execution_time
+bool frozen

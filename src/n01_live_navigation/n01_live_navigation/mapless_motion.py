@@ -20,7 +20,7 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Bool, UInt8
-from .slow_motion_executor import SlowMotionExecutor
+from .wheel_feedback import WheelFeedback
 from .hive2_kinematics import controller_geometry
 
 
@@ -76,10 +76,10 @@ def lateral_feedback_command(target,relative,minimum_speed=.012):
 
 
 class MaplessMotion(Node):
-    _on_steering=SlowMotionExecutor._on_steering
-    _chassis_command_valid=SlowMotionExecutor._chassis_command_valid
-    _on_command_observed=SlowMotionExecutor._on_command_observed
-    _poll_command_observer=SlowMotionExecutor._poll_command_observer
+    _on_steering=WheelFeedback._on_steering
+    _chassis_command_valid=WheelFeedback._chassis_command_valid
+    _on_command_observed=WheelFeedback._on_command_observed
+    _poll_command_observer=WheelFeedback._poll_command_observer
 
     def __init__(self,args):
         super().__init__('n01_mapless_motion')

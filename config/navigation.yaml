@@ -1,0 +1,12 @@
+# Shared production configuration. Physical geometry comes from runtime SDK/URDF.
+/**:
+  ros__parameters:
+    max_speed_mps: 0.05
+    max_accel_mps2: 0.04
+    max_yaw_rate_radps: 0.12
+    execution_preview_m: 1.0
+    enabled: false
+    dry_run: false
+    cbf_enabled: false
+    require_final_yaw: false
+    follow_goal_updates: false

@@ -25,16 +25,16 @@ class OwnershipTests(unittest.TestCase):
         self.assertIn('未发现底盘 RSP 进程',diagnose([]))
         self.assertNotIn('请取消勾选',blocked)
 
-    def test_motion_launch_explicitly_passes_cbf_choice(self):
+    def test_motion_launch_uses_unified_cpp_controller(self):
         tree=ast.parse(SOURCE)
         cls=next(x for x in tree.body if isinstance(x,ast.ClassDef) and x.name=='ProcManager')
-        method=next(x for x in cls.body if isinstance(x,ast.FunctionDef) and x.name=='start_slow_motion')
+        method=next(x for x in cls.body if isinstance(x,ast.FunctionDef) and x.name=='start_navigation_execution')
         scope={'os':os,'uuid':uuid,'math':math,'NAV_REPO':'/tmp/n01_test'}
         exec(compile(ast.Module(body=[method],type_ignores=[]),'motion_launch','exec'),scope)
         fake=Mock();fake._spawn.return_value=True
-        self.assertTrue(scope['start_slow_motion'](fake,.03))
+        self.assertTrue(scope['start_navigation_execution'](fake,.03))
         self.assertIn('cbf_enabled:=false',fake._spawn.call_args.args[1])
-        self.assertTrue(scope['start_slow_motion'](fake,.03,True))
+        self.assertTrue(scope['start_navigation_execution'](fake,.03,True))
         self.assertIn('cbf_enabled:=true',fake._spawn.call_args.args[1])
 
     def setUp(self):

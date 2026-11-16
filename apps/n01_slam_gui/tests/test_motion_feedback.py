@@ -50,7 +50,7 @@ class FeedbackTests(unittest.TestCase):
         self.assertEqual(len(feedback.watchdog(10)), 1)
 
     def test_external_command_publishers_are_preserved_as_conflicts(self):
-        self.assertEqual(command_conflicts(['/n01_slow_motion_executor', '/person_follow_controller_node']),
+        self.assertEqual(command_conflicts(['/n01_navigation_controller', '/person_follow_controller_node']),
                          ['/person_follow_controller_node'])
 
     def test_startup_wait_is_distinct_from_lost_running_feedback(self):

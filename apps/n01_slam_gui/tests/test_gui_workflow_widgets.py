@@ -16,6 +16,7 @@ def test_real_widgets_switch_workflows_and_allow_ready_realtime_mapping(monkeypa
     monkeypatch.setattr(g.ProcManager, '_spawn', Mock(side_effect=AssertionError('process must not start')))
     monkeypatch.setattr(g.PROCS, 'desk_mode', '')
     monkeypatch.setattr(g.PROCS, 'slam_selection', {})
+    view=g.UI.attach(g.ui.context.client)
     try:
         g.build_console_page()
         assert 'slam_task' not in g.UI
@@ -32,6 +33,9 @@ def test_real_widgets_switch_workflows_and_allow_ready_realtime_mapping(monkeypa
         monkeypatch.setattr(g.PROCS, 'running', lambda key:key=='desk')
         g.STATE.mapping_nav=dict(readiness_semantics='mapping_session_and_fresh_pose', session='mapping',
             mapping_pose_fresh='true', status_mapping_valid='true', source_status_age_s='0.1')
+        g.STATE.goal_target=(1.,0.)
+        g.STATE.goal_failed=False
+        g.STATE.navigation_task.begin_goal(1)
         g.STATE.nav_ready=True
         g.STATE.plan_active=True
         for key in ('n01_status','pose','body_pose','plan_path','nav_ready'):
@@ -44,10 +48,9 @@ def test_real_widgets_switch_workflows_and_allow_ready_realtime_mapping(monkeypa
         assert 'SLAM' in g.UI['loc_session'].text
         g.STATE.plan_active=False
         g.refresh_panels()
-        assert not g.UI['drive_button'].enabled
-        assert '本地路径未就绪' in g.UI['drive_ready'].text
+        assert g.UI['drive_button'].enabled # request allowed; controller waits disabled for valid evidence
         g.WORKER.start.assert_not_called()
         g.ProcManager._spawn.assert_not_called()
     finally:
         g.ui.context.client.content.clear()
-        g.UI.clear()
+        g.UI.release(view)

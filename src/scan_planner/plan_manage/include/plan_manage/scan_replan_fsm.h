@@ -17,6 +17,7 @@
 #include <bspline_opt/bspline_optimizer.h>
 #include <plan_env/grid_map.h>
 #include <scan_planner_msgs/msg/bspline.hpp>
+#include <scan_planner_msgs/msg/execution_progress.hpp>
 #include <scan_planner_msgs/msg/data_disp.hpp>
 #include <plan_manage/planner_manager.h>
 #include <traj_utils/planning_visualization.h>
@@ -72,13 +73,11 @@ namespace scan_planner
     bool trigger_, have_target_, have_odom_, have_new_target_;
     bool preset_started_{false};
     bool rviz_height_ready_;
-    bool go2_execution_frozen_;
     bool enable_fail_safe_, need_hover_stop_;
     FSM_EXEC_STATE exec_state_;
     int continuously_called_times_{0};
     int replan_fail_count_{0};
     int max_replan_fail_count_{1000};
-    rclcpp::Time last_freeze_update_time_;
 
     Eigen::Vector3d odom_pos_, odom_vel_, odom_acc_; // odometry state
     Eigen::Quaterniond odom_orient_;
@@ -95,9 +94,13 @@ namespace scan_planner
     rclcpp::Node *node_{nullptr};
     rclcpp::TimerBase::SharedPtr exec_timer_, safety_timer_;
     rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr goal_sub_;
+    uint64_t navigation_goal_id_ = 0;
+    rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr navigation_replan_sub_;
+    rclcpp::Subscription<scan_planner_msgs::msg::ExecutionProgress>::SharedPtr execution_progress_sub_;
+    scan_planner_msgs::msg::ExecutionProgress::ConstSharedPtr execution_progress_;
+    double executionParameter() const;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
     rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr path_sub_;
-    rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr go2_execution_frozen_sub_;
     rclcpp::Subscription<geometry_msgs::msg::PointStamped>::SharedPtr goal_reached_sub_;
     rclcpp::Publisher<scan_planner_msgs::msg::Bspline>::SharedPtr bspline_pub_;
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr global_path_pub_;
@@ -126,7 +129,6 @@ namespace scan_planner
     void publishSelfInflationMarker();
     double getOdomYaw() const;
     double estimateYawFromSegment(const Eigen::Vector3d &from, const Eigen::Vector3d &to) const;
-    void updateLocalTrajTimeFreeze();
 
     /* ROS functions */
     void execFSMCallback();
@@ -135,7 +137,6 @@ namespace scan_planner
     void waypointCallback(const nav_msgs::msg::Path::ConstSharedPtr &msg);
     void pathCallback(const nav_msgs::msg::Path::ConstSharedPtr &msg);
     void odometryCallback(const nav_msgs::msg::Odometry::ConstSharedPtr &msg);
-    void go2ExecutionFrozenCallback(const std_msgs::msg::Bool::ConstSharedPtr &msg);
 
     bool checkCollision();
 

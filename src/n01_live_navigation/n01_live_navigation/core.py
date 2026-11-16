@@ -442,7 +442,7 @@ def four_wheel_steer_screen(path_xyz, max_speed=0.25, max_accel=0.25,
                             wheel_base_x=0.56, track_y=0.27,
                             wheel_radius=0.095, steering_limit=math.pi,
                             delta_y=0.085, initial_steering=None, body_yaw=None, geometry_override=None,
-                            allow_retime=False, _retime_depth=0):
+                            allow_retime=False, _retime_depth=0, runtime_limits=None):
     """Necessary-condition screen using native controller IK, never actuator output.
 
     Tangent-heading, vy=0 path timing remains a screening assumption. Native IK
@@ -521,8 +521,8 @@ def four_wheel_steer_screen(path_xyz, max_speed=0.25, max_accel=0.25,
     wheel_positions = dict(zip(names,contact_points(angles[first_idx],geometry)))
     checks = (
         ('steering_angle_limit', max_steer, float(steering_limit), 1e-6),
-        ('wheel_speed_limit', max_wheel_angular, 20., 1e-6),
-        ('steering_rate_limit', max_steer_rate, 1.57, 1e-6),
+        ('wheel_speed_limit', max_wheel_angular, float((runtime_limits or {}).get('chassis.drive.max_speed',20.)), 1e-6),
+        ('steering_rate_limit', max_steer_rate, float((runtime_limits or {}).get('chassis.steer.max_speed',1.57)), 1e-6),
         ('body_yaw_rate_limit', float(np.max(np.abs(yaw_rate))), min(.12,geometry.max_angular_speed) if allow_retime else geometry.max_angular_speed, 1e-6),
         ('path_speed_limit', float(np.max(speed)), float(max_speed), 1e-6),
         ('path_acceleration_limit', max_path_accel, float(max_accel), 1e-3),
@@ -538,7 +538,7 @@ def four_wheel_steer_screen(path_xyz, max_speed=0.25, max_accel=0.25,
             if slower>=max(.012,geometry.spin_threshold+.002):
                 result=four_wheel_steer_screen(path_xyz,slower,max_accel,wheel_base_x,track_y,
                     wheel_radius,steering_limit,delta_y,initial_steering,body_yaw,geometry_override,
-                    allow_retime=True,_retime_depth=_retime_depth+1)
+                    allow_retime=True,_retime_depth=_retime_depth+1,runtime_limits=runtime_limits)
                 result['retiming_applied']=True
                 result['requested_speed_mps']=float(max_speed)
                 return result

@@ -2,6 +2,7 @@
 import json
 import math
 import time
+import uuid
 import numpy as np
 
 import rclpy
@@ -9,16 +10,17 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data, QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry, Path
-from sensor_msgs.msg import JointState, PointCloud2
+from sensor_msgs.msg import JointState, PointCloud2, PointField
 from std_msgs.msg import String
 from visualization_msgs.msg import Marker, MarkerArray
-from scan_planner_msgs.msg import Bspline
+from scan_planner_msgs.msg import Bspline, NavigationTrajectory
+from geometry_msgs.msg import Point
 
 from n01_scan_dynacbf_bridge.curve import BSplineCurve, CurveError
 from .core import four_wheel_steer_screen, trajectory_window_is_active
-from .navigation_path import execution_prefix
 from .pose_policy import control_pose_fresh
-from .heading_search import FootprintCollision, SearchResult, search, revalidate_cached, FOOTPRINT_RADIUS, FOOTPRINT_CENTERS, footprint_description, ENVIRONMENT_MARGIN
+from .footprint_collision import FootprintCollision
+from .scan_handoff import SplineEvents, sample_native_prefix
 from .core import decode_pointcloud_xyz
 
 
@@ -36,6 +38,7 @@ class Hive2TrajectoryMonitor(Node):
             "body_pose_topic": "/body_pose",
             "joint_states_topic": "/joint_states",
             "map_frame": "map",
+            "map_id": "",
             "max_speed_mps": 0.25,
             "max_accel_mps2": 0.25,
             "wheel_base_x_m": 0.56,
@@ -53,6 +56,7 @@ class Hive2TrajectoryMonitor(Node):
             self.declare_parameter(name, value)
         get = lambda name: self.get_parameter(name).value
         self.frame = str(get("map_frame"))
+        self.map_id = str(get("map_id")) or "navigation_session:"+uuid.uuid4().hex
         self.max_speed = float(get("max_speed_mps"))
         self.max_accel = float(get("max_accel_mps2"))
         self.wheel_base_x = float(get("wheel_base_x_m"))
@@ -77,19 +81,17 @@ class Hive2TrajectoryMonitor(Node):
         self.joint_stamp_ns = None
         from .footprint_client import FootprintClient
         self.footprint_client=FootprintClient(self)
-        self.heading_cache = None
-        self.heading_search_at = 0.
+        self.spline_events = SplineEvents()
         self.obstacles = self.ground_plane = self.map_window = None
-        self.obstacles_rx = self.plane_rx = self.odom_rx = 0.
+        self.obstacles_rx = self.plane_rx = 0.
         self.obstacles_stamp_ns = 0
-        self.measured_twist = None
         self.last_error = ""
         self.last_bspline_rx = None
         self.last_bspline = None
+        self.last_curve = None
         self.accepted_goal_ns = 0
         self.accepted_goal_xy=None
-        self.global_reference=None;self.global_reference_rx=0.
-        self.readiness=None
+        self.accepted_goal_yaw=0.
         self.last_trajectory_window = None
         self.last_watchdog_status = None
         # Keep the last feasible candidate Path and re-publish it while its
@@ -105,8 +107,10 @@ class Hive2TrajectoryMonitor(Node):
         self.create_subscription(PointCloud2, '/grid_map/occupancy', self.on_obstacles, qos_profile_sensor_data)
         self.create_subscription(String, '/grid_map/static_overlay_status', self.on_window, latched)
         self.create_subscription(String, '/n01/ground_reference/status', self.on_plane, 10)
-        self.create_subscription(Odometry, '/odom', self.on_odometry, qos_profile_sensor_data)
 
+        self.trajectory_pub = self.create_publisher(NavigationTrajectory, "/n01/navigation/trajectory", 10)
+        from .rotation_scene import setup
+        setup(self)
         self.path_pub = self.create_publisher(
             Path, "/n01/live_navigation/hive2_candidate_path", 10)
         self.wheel_marker_pub = self.create_publisher(
@@ -120,10 +124,6 @@ class Hive2TrajectoryMonitor(Node):
             Odometry, str(get("body_pose_topic")), self.on_body_pose, qos_profile_sensor_data)
         self.create_subscription(
             JointState, str(get("joint_states_topic")), self.on_joint_states, qos_profile_sensor_data)
-        self.create_subscription(Path,'/planning/global_path',self.on_global_reference,latched)
-        self.create_subscription(String,'/n01/live_navigation/system_health',self.on_health,10)
-        from .rotation_task import setup as setup_turn_scene
-        setup_turn_scene(self)
         self.create_timer(0.2, self.publish_missing_or_stale_status)
 
     def _clear_wheel_markers(self, stamp):
@@ -145,27 +145,30 @@ class Hive2TrajectoryMonitor(Node):
         self.path_pub.publish(path)
         self._clear_wheel_markers(stamp)
 
-    def on_global_reference(self,msg):
-        if msg.header.frame_id!=self.frame:return
-        self.global_reference=msg;self.global_reference_rx=time.monotonic()
-
-    def on_health(self,msg):
-        try:self.readiness=json.loads(msg.data)
-        except ValueError:self.readiness=None
-
     def publish_missing_or_stale_status(self):
-        from .maneuver_review import publish_guide_maneuver
-        if publish_guide_maneuver(self):return
         now_mono = time.monotonic()
-        # Bspline is an event, not a heartbeat. Revalidate the original time
-        # window and current feedback; never extend its start/duration on replay.
+        if self.accepted_goal_xy is not None and self.body_pose is not None:
+            p=self.body_pose.pose.pose.position
+            if math.hypot(p.x-self.accepted_goal_xy[0],p.y-self.accepted_goal_xy[1])<=.08:
+                try:
+                    q=self.body_pose.pose.pose.orientation;yaw=self._yaw_from_quaternion(q)
+                    states=[(p.x,p.y,p.z,yaw)]
+                    self.check_native_scene(states)
+                    age=(self.get_clock().now().nanoseconds-self.body_pose_stamp_ns)/1e9
+                    ready=control_pose_fresh(age,now_mono-self.body_pose_rx) and self._pitch_reference_match()is True
+                    self.publish_trajectory(None,None,states,{},ready)
+                except (ValueError,TypeError,KeyError):pass
+                return
+        # Bspline is an event, not a heartbeat. Revalidate current feedback and
+        # scene while preserving the original mathematical time domain.
         if self.last_bspline is not None and self.last_trajectory_window:
             start_ns, duration_s = self.last_trajectory_window
             active, _ = trajectory_window_is_active(
                 start_ns, self.get_clock().now().nanoseconds, duration_s)
-            if active:
-                self.on_bspline(self.last_bspline, replay=True)
-                return
+            # Once accepted, execution progress owns the parameter clock.
+            # Each replay still requires fresh scene/model/state admission.
+            self.on_bspline(self.last_bspline, replay=True)
+            return
             self._clear_candidate_visualization()
         if self.last_bspline_rx is not None:
             receive_age = max(0.0, now_mono - self.last_bspline_rx)
@@ -205,10 +208,9 @@ class Hive2TrajectoryMonitor(Node):
         if msg.header.frame_id.lstrip('/')!=self.frame or stamp<=self.accepted_goal_ns:return
         self.accepted_goal_ns=stamp
         self.accepted_goal_xy=(msg.pose.position.x,msg.pose.position.y)
-        self.global_reference=None
-        self.maneuver_cache=None
-        self.last_bspline=None;self.last_bspline_rx=None;self.last_trajectory_window=None
-        self.heading_cache=None;self.heading_search_failure=None
+        self.accepted_goal_yaw=self._yaw_from_quaternion(msg.pose.orientation)
+        self.spline_events = SplineEvents()
+        self.last_bspline=None;self.last_curve=None;self.last_bspline_rx=None;self.last_trajectory_window=None
         self._clear_candidate_visualization()
 
     def on_obstacles(self, msg):
@@ -243,84 +245,30 @@ class Hive2TrajectoryMonitor(Node):
         except (ValueError, KeyError, TypeError):
             pass
 
-    def on_odometry(self, msg):
-        self.measured_twist = None
-        age = (self.get_clock().now().nanoseconds -
-               (msg.header.stamp.sec*10**9+msg.header.stamp.nanosec))/1e9
-        v, w = msg.twist.twist.linear.x, msg.twist.twist.angular.z
-        if (msg.header.frame_id == 'odom' and msg.child_frame_id == 'base_link'
-                and -.1 <= age <= .3 and math.isfinite(v) and math.isfinite(w)):
-            self.measured_twist = (v, w)
-            self.odom_rx = time.monotonic()
+    def scene_inputs_ready(self):
+        now=time.monotonic();ns=self.get_clock().now().nanoseconds
+        if self.body_pose is None or self.body_pose_stamp_ns is None or self.body_pose_rx is None:return False
+        if self.body_pose.header.frame_id!=self.frame or not control_pose_fresh((ns-self.body_pose_stamp_ns)/1e9,now-self.body_pose_rx):return False
+        if (self.obstacles is None or now-self.obstacles_rx>.6 or not -.1<=(ns-self.obstacles_stamp_ns)/1e9<=.6
+                or self.ground_plane is None or now-self.plane_rx>2. or self.map_window is None):return False
+        if self.joint_rx is None or self.joint_stamp_ns is None:return False
+        return now-self.joint_rx<=.5 and -.2<=(ns-self.joint_stamp_ns)/1e9<=.5 and self._pitch_reference_match()is True
 
-    def heading_candidate(self, guide):
+    def check_native_scene(self, states):
+        """Review the original SCAN samples without searching for another path."""
         now = time.monotonic()
         stamp_age = (self.get_clock().now().nanoseconds-self.obstacles_stamp_ns)/1e9
         if (self.obstacles is None or now-self.obstacles_rx > .6 or not -.1 <= stamp_age <= .6
                 or self.ground_plane is None or now-self.plane_rx > 2.
-                or self.map_window is None or self.measured_twist is None or now-self.odom_rx > .3):
-            raise ValueError('heading_search_waiting_for_fresh_map_ground_or_odometry')
-        body_age = (self.get_clock().now().nanoseconds-self.body_pose_stamp_ns)/1e9
-        if (self.body_pose.header.frame_id != self.frame or not control_pose_fresh(body_age, now-self.body_pose_rx)):
-            raise ValueError('heading_search_waiting_for_fresh_body_pose')
-        pose = self.body_pose.pose.pose
-        yaw = self._yaw_from_quaternion(pose.orientation)
-        v, w = self.measured_twist
-        if abs(v) < .01 and abs(w) > .02:
-            raise ValueError('heading_search_waiting_for_rotation_to_stop')
-        curvature = w/v if abs(v) >= .01 else 0.
-        if v < -.01:
-            raise ValueError('heading_search_waiting_for_forward_compatible_state')
-        target = execution_prefix(guide, (pose.position.x, pose.position.y), 2.)
-        end = target[-1]
+                or self.map_window is None):
+            raise ValueError('scan_review_waiting_for_fresh_map_or_ground')
+        footprint = self.footprint_client.get()
+        if footprint is None:
+            raise ValueError('scan_review_waiting_for_urdf_footprint')
         collision = FootprintCollision(self.obstacles, self.ground_plane,
-                                       pose.position.z, self.map_window, footprint=self.footprint_client.get())
-        # A prefix must rejoin the guide in its forward direction. At the final
-        # point, station orientation is handled by the separate arrival turn.
-        goal_yaw = (math.atan2(end[1]-target[-2][1], end[0]-target[-2][0])
-                    if math.dist(end[:2], guide[-1][:2]) > .1 else None)
-        start = (pose.position.x, pose.position.y, yaw, curvature)
-        from .motion_capability import ForwardCapability
-        capability=ForwardCapability(self.native_model_sync.geometry(),
-            [self.joint_positions[f'{leg}_ankle_yaw']for leg in ('fl','fr','rl','rr')],
-            max(self.max_speed,.012))
-        failure=getattr(self,'heading_search_failure',None)
-        if (failure and now-failure['at']<.4 and math.dist(start[:2],failure['start'][:2])<.02
-                and abs(math.atan2(math.sin(yaw-failure['start'][2]),math.cos(yaw-failure['start'][2])))<math.radians(2)
-                and math.dist(end[:2],failure['target'])<.03):
-            raise ValueError(failure['reason'])
-        cache = getattr(self, 'heading_cache', None)
-        cached = None
-        if (cache and now-cache['created'] <= 2.
-                and math.dist(cache['guide_goal'], guide[-1][:2]) <= .03
-                and math.dist(cache['target'], end[:2]) <= .03
-                and cache['goal_yaw'] == goal_yaw):
-            cached = revalidate_cached(cache['states'], start, collision)
-        if cached and not capability.segment_allowed(cached):cached=None
-        # Revalidate against every fresh scene; periodically seek a new path.
-        # The original cache lifetime is never extended by replaying it.
-        if cached and now-getattr(self, 'heading_search_at', 0.) < .8:
-            result = SearchResult(cached, 'revalidated_previous_heading_path', 0, 0.)
-        else:
-            self.heading_search_at = now
-            result = search(start, end[:2], collision, goal_yaw=goal_yaw, capability=capability)
-            if result.states:
-                self.heading_search_failure=None
-                self.heading_cache = dict(states=result.states, created=now,
-                    guide_goal=tuple(guide[-1][:2]), target=tuple(end[:2]), goal_yaw=goal_yaw)
-            elif cached:
-                result = SearchResult(cached, 'revalidated_after_'+result.reason,
-                                      result.expanded, result.elapsed_ms)
-            else:
-                self.heading_cache = None
-                self.heading_search_failure=dict(at=now,start=start,target=tuple(end[:2]),reason=result.reason)
-                raise ValueError(result.reason)
-        self.heading_collision_radius=collision.radius+(math.dist(result.states[0][:2],start[:2])
-            if result.reason.startswith('revalidated') else 0.)
-        n = len(result.states)
-        points = [(s[0], s[1], pose.position.z+(end[2]-pose.position.z)*i/(n-1))
-                  for i, s in enumerate(result.states)]
-        return points, result
+            self.body_pose.pose.pose.position.z, self.map_window, footprint=footprint)
+        if not collision.free([(x, y, yaw) for x, y, z, yaw in states]):
+            raise ValueError('scan_prefix_collision_or_outside_window; replan_required')
 
     def on_body_pose(self, msg):
         self.body_pose = msg
@@ -398,42 +346,48 @@ class Hive2TrajectoryMonitor(Node):
         self.wheel_marker_pub.publish(array)
 
     def on_bspline(self, msg, replay=False):
-        reference=getattr(self,'global_reference',None)
-        goal=getattr(self,'accepted_goal_xy',None)
-        if reference is not None and reference.poses and goal is not None:
-            end=reference.poses[-1].pose.position
-            if math.hypot(end.x-goal[0],end.y-goal[1])<=.12:return
-        if not replay:
-            self.last_bspline_rx = time.monotonic()
-            self.last_bspline = msg
+        # Bind the producer goal ID and reject reordered/conflicting revisions
+        # before replacing the event. Duplicate delivery never resets progress.
+        try:
+            event = self.spline_events.classify(msg, self.accepted_goal_ns)
+        except (ValueError, TypeError, OverflowError) as exc:
+            reason = str(exc)
+            if reason != getattr(self, 'last_rejected_event', None):
+                self.get_logger().warning('Ignoring SCAN event: '+reason)
+                self.last_rejected_event = reason
+            return  # A rejected event must not revoke a newer valid trajectory.
+        committed = False
         try:
             # scan_planner_msgs/Bspline has no Header; its coordinate frame is
             # supplied by the live launch contract (map), not inferred from a field.
-            curve = BSplineCurve(
-                int(msg.order), list(msg.knots),
-                [(p.x, p.y, p.z) for p in msg.pos_pts], table_samples=500)
+            curve = (self.last_curve if event == 'duplicate' and self.last_curve is not None
+                     else BSplineCurve(int(msg.order), list(msg.knots),
+                         [(p.x, p.y, p.z) for p in msg.pos_pts], table_samples=500))
             trajectory_start_ns = int(msg.start_time.sec)*10**9+int(msg.start_time.nanosec)
             trajectory_duration_s = float(curve.end-curve.start)
             if trajectory_start_ns<getattr(self,'accepted_goal_ns',0):
                 raise ValueError('trajectory_from_previous_goal')
-            self.last_trajectory_window = (trajectory_start_ns, trajectory_duration_s)
             active, _ = trajectory_window_is_active(trajectory_start_ns,
                 self.get_clock().now().nanoseconds, trajectory_duration_s)
-            if not active:
+            if not active and event == 'new':
                 raise ValueError('trajectory_window_expired')
-            points = curve.table_xyz
-            full_candidate_points = len(points)
+            # Commit only structurally valid, active events. Perception/feedback
+            # may recover on replay, but the original curve clock stays fixed.
+            if not replay and event == 'new':
+                self.spline_events.commit(msg)
+                self.last_bspline_rx = time.monotonic()
+                self.last_bspline = msg
+                self.last_curve = curve
+                committed = True
+                self.last_trajectory_window = (trajectory_start_ns, trajectory_duration_s)
             if self.body_pose is None:
                 raise ValueError('missing_body_pose_for_execution_preview')
             body = self.body_pose.pose.pose.position
-            start = min(range(len(points)), key=lambda i:
-                        math.hypot(points[i][0]-body.x, points[i][1]-body.y))
-            candidate_points, heading_result = self.heading_candidate(points[start:])
-            points = execution_prefix(candidate_points, (body.x, body.y), self.execution_preview)
-            trajectory_start_ns = (
-                int(msg.start_time.sec) * 1000000000
-                + int(msg.start_time.nanosec))
-            trajectory_duration_s = float(curve.end - curve.start)
+            states = sample_native_prefix(curve, body.x, body.y, self.execution_preview)
+            self.check_native_scene(states)
+            candidate_points = [p[:3] for p in states]
+            points = candidate_points
+            full_candidate_points = len(curve.table_xyz)
             screen = four_wheel_steer_screen(
                 points,
                 max_speed=self.max_speed,
@@ -448,10 +402,17 @@ class Hive2TrajectoryMonitor(Node):
                 body_yaw=None,  # Forward + yaw follows path tangent, with no body lateral command.
                 geometry_override=self.native_model_sync.geometry(),
                 allow_retime=True,
+                runtime_limits=self.native_model_sync.limits(),
             )
         except (CurveError, ValueError, TypeError, OverflowError, KeyError) as exc:
             self.last_error = str(exc)
+            if event == 'new' and not committed and self.last_bspline is not None:
+                self.get_logger().warning('Ignoring malformed/inactive SCAN replacement: '+str(exc))
+                return
             self._clear_candidate_visualization()
+            if self.last_bspline is not None:
+                try:self.publish_trajectory(self.last_bspline,self.last_curve,[],{},False)
+                except (ValueError,TypeError,KeyError):pass
             self.diag_pub.publish(String(data=json.dumps({
                 "schema": "n01.hive2_candidate_feasibility.v1",
             "planning_footprint": self.footprint_client.description(),
@@ -469,7 +430,7 @@ class Hive2TrajectoryMonitor(Node):
         path.header.frame_id = self.frame
         path.header.stamp = self.get_clock().now().to_msg()
         for i, xyz in enumerate(candidate_points):
-            yaw = heading_result.states[i][2]
+            yaw = states[i][3]
             pose = PoseStamped()
             pose.header = path.header
             pose.pose.position.x, pose.pose.position.y, pose.pose.position.z = map(float, xyz)
@@ -481,6 +442,7 @@ class Hive2TrajectoryMonitor(Node):
         now_ns = self.get_clock().now().nanoseconds
         trajectory_active, trajectory_start_age_s = trajectory_window_is_active(
             trajectory_start_ns, now_ns, trajectory_duration_s)
+        trajectory_active = True  # Source accepted once; fresh admission governs continued execution.
         self.last_trajectory_window = (trajectory_start_ns, trajectory_duration_s)
         if trajectory_active:
             self.last_path = path
@@ -518,12 +480,15 @@ class Hive2TrajectoryMonitor(Node):
             and body_feedback_fresh and joint_feedback_fresh and pitch_match is True)
         data = {
             "schema": "n01.hive2_candidate_feasibility.v1",
-            "path_model": "forward_se2_curvature_lattice",
+            "path_model": "scan_bspline",
+            "execution_stage": "forward",
+            "goal_stamp_ns": self.accepted_goal_ns,
+            "goal_xy": self.accepted_goal_xy,
+            "trajectory_source": "/planning/bspline",
+            "geometry_preserved": True,
+            "source_fingerprint": self.spline_events.fingerprint(msg),
             "planning_footprint": self.footprint_client.description(),
             "candidate_stamp_ns": path.header.stamp.sec*10**9+path.header.stamp.nanosec,
-            "heading_search_ms": heading_result.elapsed_ms,
-            "heading_path_source": heading_result.reason,
-            "heading_search_expanded": heading_result.expanded,
             "status": (
                 "TRAJECTORY_NOT_ACTIVE_OR_STALE" if not trajectory_active
                 else "NECESSARY_CONDITIONS_PASS" if screen["necessary_conditions_pass"]
@@ -567,11 +532,70 @@ class Hive2TrajectoryMonitor(Node):
             "wheel_controller_mapping_verified": False,
             "wheel_contact_geometry_verified": False,
             "collision_envelope_verified": False,
+            "collision_prefix_checked": True,
             "actuator_output": "DISABLED",
             "safety_authorization": "NEVER",
         }
+        self.publish_trajectory(msg, curve, states, screen, candidate_review_ready)
         self.diag_pub.publish(String(data=json.dumps(data, sort_keys=True)))
         self.last_error = ""
+
+    def publish_trajectory(self, source, curve, states, screen, ready):
+        """One atomic execution carrier: original source plus current scene/model."""
+        out=NavigationTrajectory()
+        out.header.frame_id=self.frame;out.header.stamp=self.get_clock().now().to_msg()
+        out.scene_valid=self.scene_inputs_ready()
+        out.map_id=self.map_id
+        out.goal_id=self.accepted_goal_ns
+        out.revision=source.traj_id if source is not None else -1
+        out.spline=source if source is not None else Bspline(goal_id=self.accepted_goal_ns,traj_id=-1)
+        out.hold_position=source is None
+        out.goal=Point(x=float(self.accepted_goal_xy[0]),y=float(self.accepted_goal_xy[1]))
+        out.goal_yaw=float(self.accepted_goal_yaw)
+        out.max_speed=float(screen.get('recommended_speed_mps',self.max_speed))
+        out.max_speed=min(out.max_speed,self.max_speed)
+        out.max_accel=self.max_accel;out.environment_margin=.06
+        out.chassis_geometry=self.native_model_sync.geometry().array().tolist()
+        limits=self.native_model_sync.limits()
+        out.max_steering_rate=float(limits['chassis.steer.max_speed'])
+        out.max_wheel_rate=float(limits['chassis.drive.max_speed'])
+        out.footprint=[Point(x=float(x),y=float(y)) for x,y in self.footprint_client.get()]
+        out.ground_plane=list(map(float,self.ground_plane))
+        lo,hi=self.map_window;out.window_bounds=[float(lo[0]),float(lo[1]),float(hi[0]),float(hi[1])]
+        out.scene_stamp.sec=self.obstacles_stamp_ns//10**9;out.scene_stamp.nanosec=self.obstacles_stamp_ns%10**9
+        scene=self.obstacles
+        try:
+            from .rotation_scene import live_points
+            raw,raw_stamp=live_points(self,with_stamp=True)
+            out.rotation_stamp.sec=raw_stamp//10**9;out.rotation_stamp.nanosec=raw_stamp%10**9
+            scene=np.concatenate((scene,raw));out.rotation_observed=True
+        except ValueError:out.rotation_observed=False
+        p=self.body_pose.pose.pose.position
+        floor=scene[:,:2]@np.asarray(self.ground_plane)[:2]+self.ground_plane[2]
+        mask=(scene[:,2]>floor+.03)&(scene[:,2]>=p.z-.90)&(scene[:,2]<=p.z+.25)
+        mask&=(np.hypot(scene[:,0]-p.x,scene[:,1]-p.y)<=4.)
+        scene=scene[mask]
+        if len(scene):
+            _,ids=np.unique(scene[:,:2],axis=0,return_index=True);scene=scene[ids]
+        out.scene_center=Point(x=p.x,y=p.y,z=p.z);out.scene_radius=4.
+        if len(scene)>120000:
+            out.valid=False;out.reason='scene_certificate_point_budget_exceeded'
+        else:
+            out.obstacles=PointCloud2()
+            out.obstacles.header.frame_id=self.frame;out.obstacles.header.stamp=out.scene_stamp
+            out.obstacles.height=1;out.obstacles.width=len(scene)
+            out.obstacles.fields=[PointField(name=name,offset=offset,datatype=PointField.FLOAT32,count=1)
+                for name,offset in [('x',0),('y',4),('z',8)]]
+            out.obstacles.point_step=12;out.obstacles.row_step=len(scene)*12;out.obstacles.is_dense=True
+            out.obstacles.data=np.asarray(scene,dtype='<f4').tobytes()
+            out.valid=bool(ready);out.reason='admitted'if ready else'feedback_or_native_model_not_ready'
+        out.samples=[]
+        for x,y,z,yaw in states:
+            from geometry_msgs.msg import Pose
+            p=Pose();p.position=Point(x=float(x),y=float(y),z=float(z))
+            p.orientation.z=math.sin(yaw/2);p.orientation.w=math.cos(yaw/2);out.samples.append(p)
+        self.trajectory_pub.publish(out)
+
 
 def main(args=None):
     from .runtime_chassis_model import configure_chassis_transport

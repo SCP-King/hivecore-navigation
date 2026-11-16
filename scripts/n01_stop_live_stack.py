@@ -13,12 +13,13 @@ import time
 from pathlib import Path
 
 MANAGED_EXECUTABLES = {
+    # Migration cleanup only; these names are never launched by current code.
+    "n01_navigation_path", "n01_shadow_path_follower",
     "n01_robot_footprint",
-    "n01_navigation_path",
+    "n01_trajectory_display",
     "n01_environment_display",
     "n01_realtime_reference",
     "static_map_node",
-    "n01_shadow_path_follower",
     "n01_live_runtime_supervisor",
     "n01_live_safety_supervisor",
     "n01_live_dynamic_obstacle_tracker",

@@ -22,12 +22,11 @@ _MANAGED_NODE_NAMES = (
     "/n01_static_map",
     "/n01_realtime_reference",
     "/n01_environment_display",
-    "/n01_navigation_path",
+    "/n01_trajectory_display",
     "/n01_live_runtime_supervisor",
     "/n01_live_safety_supervisor",
     "/n01_live_dynamic_obstacle_tracker",
     "/n01_hive2_trajectory_monitor",
-    "/n01_shadow_path_follower",
     "/n01_live_scan_goal_gate",
     "/scan_planner_node",
     "/n01_live_navigation_rviz",
@@ -120,6 +119,7 @@ def _nodes(context):
             and 0.4 <= body_to_ground <= 1.2):
         raise RuntimeError("ground/body height outside bounded research interval")
 
+    navigation_config = os.path.join(get_package_share_directory("n01_live_navigation"), "config", "navigation.yaml")
     planner_config = os.path.join(
         get_package_share_directory("scan_planner"), "config", "planner.yaml")
     rviz_config = LaunchConfiguration("rviz_config").perform(context)
@@ -136,8 +136,8 @@ def _nodes(context):
                 parameters=[{'input_topic': reference_topic}])] if live_reference else []),
         Node(package="n01_live_navigation", executable="n01_robot_footprint",
              name="n01_robot_footprint", output="screen"),
-        Node(package="n01_live_navigation", executable="n01_navigation_path",
-             name="n01_navigation_path", output="screen"),
+        Node(package="n01_live_navigation", executable="n01_trajectory_display",
+             name="n01_trajectory_display", output="screen"),
         # The adapter may already be running as an independently supervised process.
         # Default false prevents duplicate publishers on /n01/localization/pose.
         Node(
@@ -238,8 +238,9 @@ def _nodes(context):
             package="n01_live_navigation", executable="n01_hive2_trajectory_monitor",
             name="n01_hive2_trajectory_monitor",
             additional_env={"RMW_IMPLEMENTATION": "rmw_fastrtps_cpp"},
-            parameters=[{
+            parameters=[navigation_config, {
                 "map_frame": "map",
+                "map_id": LaunchConfiguration("map_id", default="").perform(context),
                 # Screen the candidate at the speed the slow executor actually
                 # commands (0.05 m/s), not at the planner's 0.25 m/s limit.
                 # At 0.25 m/s the same path needs up to ~5.4 rad/s steering,
@@ -253,20 +254,6 @@ def _nodes(context):
                 "delta_y_m": 0.085,
                 "steering_limit_rad": 3.141592653589793,
                 "max_bspline_receive_age_s": 1.0,
-            }],
-            output="screen",
-        ),
-        Node(
-            package="n01_live_navigation", executable="n01_shadow_path_follower",
-            name="n01_shadow_path_follower",
-            condition=IfCondition(LaunchConfiguration("start_shadow_follower")),
-            parameters=[{
-                "lookahead_m": 0.8,
-                "max_speed_mps": 0.15,
-                "wheel_base_m": 0.56,
-                "path_timeout_s": 0.8,
-                "cbf_safe_radius_m": 0.55,
-                "cbf_decel_mps2": 0.20,
             }],
             output="screen",
         ),
@@ -385,9 +372,7 @@ def generate_launch_description():
             "start_scan_bridge", default_value="true",
             description="Start the pose/cloud bridge; disable when the unified localization stack owns it"),
         DeclareLaunchArgument("rviz", default_value="false"),
-        DeclareLaunchArgument(
-            "start_shadow_follower", default_value="true",
-            description="Start the shadow path follower (candidate commands only; no cmd_vel)"),
+        DeclareLaunchArgument("map_id", default_value=""),
         DeclareLaunchArgument(
             "rviz_config",
             default_value=os.path.join(

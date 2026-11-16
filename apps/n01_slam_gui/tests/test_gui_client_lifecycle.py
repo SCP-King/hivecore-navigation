@@ -47,3 +47,18 @@ def test_clients_keep_independent_widgets_and_map_click_coordinates():
     assert owner['label']=='a' and cache['x0']==1
     owner.release(a);current[0]=b.client
     assert owner['label']=='b' and cache['x0']==20
+
+
+def test_background_mission_survives_page_deletion_without_writing_old_widgets():
+    async def scenario():
+        client=S(id='route-page',_deleted=False);owner=ClientUI(lambda:client);view=owner.attach(client)
+        release=asyncio.Event();completed=[]
+        async def mission():
+            await release.wait()
+            assert not owner.available
+            completed.append('station finished')
+        task=asyncio.create_task(mission());owner.keep_task(task)
+        owner.release(view);client._deleted=True;release.set()
+        await task
+        assert completed==['station finished']
+    asyncio.run(scenario())

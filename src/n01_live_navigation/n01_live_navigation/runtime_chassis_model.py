@@ -34,6 +34,8 @@ FIELDS={
 }
 
 
+LIMIT_FIELDS=('chassis.steer.max_speed','chassis.drive.max_speed','chassis.omega_per_linear')
+
 def decode_geometry(values,base):
     if set(values)!=set(FIELDS):raise ValueError('incomplete live chassis geometry')
     if any(isinstance(v,bool) or not isinstance(v,(int,float)) or not math.isfinite(v) for v in values.values()):
@@ -63,7 +65,7 @@ class RuntimeChassisModel:
             old.cancel()
             self.error='live chassis parameter RPC timed out; retrying'
         if not self.client.service_is_ready():return
-        request=GetParameters.Request();request.names=list(FIELDS)
+        request=GetParameters.Request();request.names=[*FIELDS,*LIMIT_FIELDS]
         self.pending_since=now
         self.pending=self.client.call_async(request)
         self.pending.add_done_callback(self.on_parameters)
@@ -73,9 +75,13 @@ class RuntimeChassisModel:
         self.pending=None
         try:
             result=future.result()
-            if len(result.values)!=len(FIELDS) or any(p.type!=3 for p in result.values):
+            if len(result.values)!=len(FIELDS)+len(LIMIT_FIELDS) or any(p.type!=3 for p in result.values):
                 raise ValueError('live chassis parameter types missing/mismatched')
-            self.current=decode_geometry(dict(zip(FIELDS,(p.double_value for p in result.values))),controller_geometry())
+            values=[p.double_value for p in result.values]
+            self.current=decode_geometry(dict(zip(FIELDS,values[:len(FIELDS)])),controller_geometry())
+            self.current_limits=dict(zip(LIMIT_FIELDS,values[len(FIELDS):]))
+            if any(not math.isfinite(v) or v<=0 for v in self.current_limits.values()):raise ValueError('invalid live chassis limits')
+            self.current=replace(self.current,max_angular_speed=self.current.max_linear_speed*self.current_limits['chassis.omega_per_linear'])
             self.received=time.monotonic();self.error=''
         except Exception as exc:
             self.current=None;self.error=str(exc)
@@ -85,3 +91,7 @@ class RuntimeChassisModel:
         if self.current is None or now-self.received>3:
             raise ValueError('live chassis geometry stale/unavailable: '+self.error)
         return self.current
+
+    def limits(self,now=None):
+        self.geometry(now)
+        return dict(self.current_limits)

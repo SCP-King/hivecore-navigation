@@ -57,7 +57,7 @@ source_ros() {
 
 managed_nodes_absent() {
   local nodes="$1" node
-  local managed=(/n01_robot_footprint /n01_navigation_path /n01_static_map /n01_realtime_reference /n01_environment_display /n01_shadow_path_follower /n01_live_runtime_supervisor
+  local managed=(/n01_robot_footprint /n01_trajectory_display /n01_static_map /n01_realtime_reference /n01_environment_display /n01_live_runtime_supervisor
     /n01_live_safety_supervisor /n01_live_dynamic_obstacle_tracker
     /n01_hive2_trajectory_monitor /n01_live_scan_goal_gate /scan_planner_node
     /n01_live_navigation_rviz)
@@ -105,7 +105,7 @@ stop_stack() {
   done
   if (( clean == 0 )); then
     echo "ERROR: ROS graph still reports managed N-01 node names after process-group shutdown:"
-    grep -E '^/(n01_environment_display|n01_realtime_reference|n01_static_map|n01_shadow_path_follower|n01_live_runtime_supervisor|n01_live_safety_supervisor|n01_live_dynamic_obstacle_tracker|n01_hive2_trajectory_monitor|n01_live_scan_goal_gate|scan_planner_node|n01_live_navigation_rviz)$' <<<"$nodes" || true
+    grep -E '^/(n01_environment_display|n01_realtime_reference|n01_static_map|n01_live_runtime_supervisor|n01_live_safety_supervisor|n01_live_dynamic_obstacle_tracker|n01_hive2_trajectory_monitor|n01_live_scan_goal_gate|scan_planner_node|n01_live_navigation_rviz)$' <<<"$nodes" || true
     echo "No unrelated ROS nodes were signalled. Inspect these names before restarting."
     return 4
   fi
@@ -184,6 +184,7 @@ start_stack() {
   launch_log="$LOG_DIR/n01_navigation_launch_$(date +%Y%m%d_%H%M%S).log"
   echo "===== N-01 NAVIGATION START ====="
   nohup setsid ros2 launch n01_live_navigation live_scan.launch.py \
+    map_id:="${N01_NAV_MAP_ID:-}" \
     map_mode:="$NAV_MAP_MODE" \
     realtime_reference_topic:="$NAV_REFERENCE_TOPIC" \
     pcd_path:="$PCD" \
@@ -201,7 +202,7 @@ start_stack() {
   echo "launch_pid=$launch_pid"
   echo "launch_log=$launch_log"
 
-  local required=(/n01_robot_footprint /n01_navigation_path /n01_live_scan_bridge /n01_shadow_path_follower /n01_live_runtime_supervisor
+  local required=(/n01_robot_footprint /n01_trajectory_display /n01_live_scan_bridge /n01_live_runtime_supervisor
     /n01_live_safety_supervisor /n01_live_dynamic_obstacle_tracker
     /n01_hive2_trajectory_monitor /n01_live_scan_goal_gate /scan_planner_node)
   if [[ "$NAV_MAP_MODE" == "offline" ]]; then required=(/n01_static_map "${required[@]}"); fi
@@ -234,7 +235,7 @@ status_stack() {
   else
     echo "No managed launch PID file."
   fi
-  grep -E '^/(n01_environment_display|n01_realtime_reference|n01_static_map|n01_live_scan_bridge|n01_shadow_path_follower|n01_live_runtime_supervisor|n01_live_safety_supervisor|n01_live_dynamic_obstacle_tracker|n01_hive2_trajectory_monitor|n01_live_scan_goal_gate|scan_planner_node|n01_live_navigation_rviz|n01_localization_adapter)$' <<<"$nodes" || true
+  grep -E '^/(n01_environment_display|n01_realtime_reference|n01_static_map|n01_live_scan_bridge|n01_live_runtime_supervisor|n01_live_safety_supervisor|n01_live_dynamic_obstacle_tracker|n01_hive2_trajectory_monitor|n01_live_scan_goal_gate|scan_planner_node|n01_live_navigation_rviz|n01_localization_adapter)$' <<<"$nodes" || true
 }
 
 case "${1:-}" in

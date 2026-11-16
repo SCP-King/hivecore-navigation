@@ -21,7 +21,7 @@ def harness(tmp_path,confirm=True):
     scope=dict(TASK_STATE=NavigationSession(),TEACH_SESSION=S(busy=False,loaded=store.load(path)),TEACH_STORE=store,
         ROUTE_ACTIVE=False,ROUTE_CONTEXT=None,Path=Path,
         UI={'teach_saved':selected,'teach_saved_info':S(set_text=Mock())},
-        asyncio=S(to_thread=inline),_confirm=ask,_teach_view=Mock(),push_log=Mock(),ui=S(notify=Mock()))
+        asyncio=S(to_thread=inline),_confirm=ask,_teach_view=Mock(),push_log=Mock(),ui=S(notify=Mock()),notify_user=Mock())
     tree=ast.parse((Path(__file__).resolve().parents[1]/'slam_lite_gui.py').read_text())
     fn=next(n for n in tree.body if isinstance(n,ast.AsyncFunctionDef) and n.name=='manage_saved_route')
     exec(compile(ast.Module(body=[fn],type_ignores=[]),'route_management','exec'),scope)
