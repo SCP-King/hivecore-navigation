@@ -105,6 +105,15 @@ bool AStar::ConvertToIndexAndAdjustStartEndPoints(Vector3d start_pt, Vector3d en
     int occ = checkOccupancy(Index2Coord(start_idx), path_yaw);
     if (occ)
     {
+        {
+            const auto p = Index2Coord(start_idx);
+            const auto blocker = grid_map_->envelopeBlocker(p, path_yaw);
+            RCLCPP_WARN(rclcpp::get_logger("path_searching"),
+                        "[Astar] start cell occupied occ=%d at (%.3f,%.3f,%.3f) yaw=%.2f blocker=%s@(%.2f,%.2f,%.2f) byaw=%.2f dnorm=%.2f hull=%d",
+                        occ, p.x(), p.y(), p.z(), path_yaw, blocker.code.c_str(),
+                        blocker.x, blocker.y, blocker.z, blocker.yaw, blocker.dnorm,
+                        blocker.polygon_points);
+        }
         //ROS_WARN("Start point is insdide an obstacle.");
         do
         {

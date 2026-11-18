@@ -57,6 +57,15 @@ def live_points(node,with_stamp=False):
             sensor=((t.x,t.y,t.z),(q.x,q.y,q.z,q.w))
             if predicted:sensor=compose_transform(body[0],body[1],sensor[0],sensor[1])
             points=transform_points(p,sensor[0],sensor[1])
+            if getattr(node,'scene_perception',None) is not None:
+                if getattr(node,'ground_plane',None) is None:continue
+                node.scene_perception.next_ground_plane=tuple(node.ground_plane)
+                if not predicted:
+                    body_tf=node.rotation_tf.lookup_transform('map','base_link',Time.from_msg(msg.header.stamp))
+                    bt,bq=body_tf.transform.translation,body_tf.transform.rotation
+                    body=((bt.x,bt.y,bt.z),(bq.x,bq.y,bq.z,bq.w))
+                points,ground=node.scene_perception.process(points,body,stamp/1e9)
+                points=points[~ground]
             return (points,stamp) if with_stamp else points
         except Exception:continue
     raise ValueError('fresh raw lidar with scan-time TF unavailable')

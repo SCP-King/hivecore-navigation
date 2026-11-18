@@ -22,7 +22,7 @@ void exercise(bool updates) {
     rclcpp::Parameter("grid_map.frame_id", "map"),
     rclcpp::Parameter("grid_map.ground_height", -.8),
     rclcpp::Parameter("grid_map.static_cloud_enabled", true),
-    rclcpp::Parameter("grid_map.static_prior_as_cost", true),
+    rclcpp::Parameter("grid_map.static_prior_as_cost", false),
     rclcpp::Parameter("grid_map.reference_updates_enabled", updates),
     rclcpp::Parameter("grid_map.static_cloud_topic", topic),
   });
@@ -59,14 +59,39 @@ void exercise(bool updates) {
   require(std::abs(grid.getStaticSourceMin().x()-expected)<1e-5, "wrong frame accepted");
   send(std::numeric_limits<double>::quiet_NaN(), 13);
   require(grid.getStaticSourceCloud().size()==2, "invalid update destroyed previous reference");
-  // Reference-mode accumulated obstacles must not become hard local collisions.
-  require(grid.getInflateOccupancy(Eigen::Vector3d(expected,.5,.2),0.)==0,
-          "historical reference incorrectly blocks local live layer");
+  // Known background remains a hard obstacle until actual evidence updates it.
+  require(grid.getInflateOccupancy(Eigen::Vector3d(expected,.5,.2),0.)==1,
+          "known background incorrectly softened inside the local window");
 }
 
 int main(int argc, char** argv) {
   rclcpp::init(argc, argv);
-  try { exercise(true); exercise(false); }
+  try {
+    exercise(true); exercise(false);
+    rclcpp::NodeOptions options;
+    options.parameter_overrides({rclcpp::Parameter("grid_map.use_urdf_footprint",true),
+                                 rclcpp::Parameter("grid_map.resolution",.1),
+                                 rclcpp::Parameter("grid_map.sliding_map_size_x",4.),
+                                 rclcpp::Parameter("grid_map.sliding_map_size_y",4.),
+                                 rclcpp::Parameter("grid_map.sliding_map_size_z",3.),
+                                 rclcpp::Parameter("grid_map.footprint_max_age_s",3.)});
+    auto node=std::make_shared<rclcpp::Node>("test_footprint_freshness",options);
+    GridMap grid;grid.initMap(node.get());
+    auto pub=node->create_publisher<geometry_msgs::msg::PolygonStamped>(
+        "/n01/robot_footprint",rclcpp::QoS(1).reliable().transient_local());
+    auto send=[&](double age){
+      geometry_msgs::msg::PolygonStamped msg;
+      msg.header.frame_id="base_link";msg.header.stamp=node->now()-rclcpp::Duration::from_seconds(age);
+      for(const auto& xy:std::vector<Eigen::Vector2d>{{-.5,-.2},{.5,-.2},{.5,.2},{-.5,.2}}){
+        geometry_msgs::msg::Point32 p;p.x=xy.x();p.y=xy.y();msg.polygon.points.push_back(p);
+      }
+      pub->publish(msg);
+      auto end=std::chrono::steady_clock::now()+std::chrono::milliseconds(250);
+      while(std::chrono::steady_clock::now()<end){rclcpp::spin_some(node);std::this_thread::sleep_for(std::chrono::milliseconds(5));}
+    };
+    send(1.5);require(grid.footprintReady(),"valid delayed model rejected by obsolete one-second gate");
+    send(4.);require(!grid.footprintReady(),"expired model accepted beyond configured budget");
+  }
   catch (const std::exception& error) {
     std::cerr << error.what() << std::endl;
     rclcpp::shutdown(); return 1;

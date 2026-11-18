@@ -1,3 +1,5 @@
+#include <navigation/recovery.hpp>
+#include <unordered_map>
 #ifndef _SCAN_REPLAN_FSM_H_
 #define _SCAN_REPLAN_FSM_H_
 
@@ -11,6 +13,7 @@
 #include <nav_msgs/msg/path.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/bool.hpp>
+#include <std_msgs/msg/string.hpp>
 #include <vector>
 #include <visualization_msgs/msg/marker.hpp>
 
@@ -20,6 +23,7 @@
 #include <scan_planner_msgs/msg/execution_progress.hpp>
 #include <scan_planner_msgs/msg/data_disp.hpp>
 #include <plan_manage/planner_manager.h>
+#include <navigation/recovery_ladder.hpp>
 #include <traj_utils/planning_visualization.h>
 
 using std::vector;
@@ -74,17 +78,24 @@ namespace scan_planner
     bool preset_started_{false};
     bool rviz_height_ready_;
     bool enable_fail_safe_, need_hover_stop_;
+    // Bounded recovery: local detour -> global replan -> wait/safe stop.
+    navigation::RecoveryLadder recovery_ladder_;
+    double recovery_wait_since_{0.};
+    rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr recovery_resume_sub_;
+    void noteRecoveryFailure();
+    void resetRecovery();
+    void maybeAutoResume();
+    int recoveryLimit(const char *name, int fallback);
     FSM_EXEC_STATE exec_state_;
     int continuously_called_times_{0};
     int replan_fail_count_{0};
-    int max_replan_fail_count_{1000};
 
     Eigen::Vector3d odom_pos_, odom_vel_, odom_acc_; // odometry state
     Eigen::Quaterniond odom_orient_;
 
     Eigen::Vector3d init_pt_, start_pt_, start_vel_, start_acc_, start_yaw_; // start state
     Eigen::Vector3d end_pt_, end_vel_;                                       // goal state
-    Eigen::Vector3d local_target_pt_, local_target_vel_;                     // local target state
+    Eigen::Vector3d local_target_pt_{Eigen::Vector3d::Zero()}, local_target_vel_{Eigen::Vector3d::Zero()};                     // local target state
     std::vector<Eigen::Vector3d> active_waypoints_;
     int current_wp_;
 
@@ -95,6 +106,7 @@ namespace scan_planner
     rclcpp::TimerBase::SharedPtr exec_timer_, safety_timer_;
     rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr goal_sub_;
     uint64_t navigation_goal_id_ = 0;
+    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr planning_status_pub_;
     rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr navigation_replan_sub_;
     rclcpp::Subscription<scan_planner_msgs::msg::ExecutionProgress>::SharedPtr execution_progress_sub_;
     scan_planner_msgs::msg::ExecutionProgress::ConstSharedPtr execution_progress_;
@@ -123,9 +135,14 @@ namespace scan_planner
     bool planNextWaypoint();
     bool isWaypointSequenceMode() const;
     bool adjustGlobalTargetIfOccupied();
-    void getLocalTarget();
+    bool getLocalTarget();
+    bool globalRouteBlocked();
+    bool force_global_refresh_{false};
+    std::string global_phase_,global_reason_,local_phase_,local_reason_;
+    double planning_phase_since_{0.};
+    int local_attempts_{0},global_replans_{0};
     void publishGlobalPath();
-    void finishProcess();
+    void publishPlanningStatus(const std::string& phase,const std::string& reason);
     void publishSelfInflationMarker();
     double getOdomYaw() const;
     double estimateYawFromSegment(const Eigen::Vector3d &from, const Eigen::Vector3d &to) const;

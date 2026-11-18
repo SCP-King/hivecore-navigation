@@ -37,7 +37,7 @@ from pathlib import Path
 
 import numpy as np
 from PIL import Image, ImageDraw
-from map_presentation import choose_map, occupancy_colors
+from map_presentation import choose_map, occupancy_colors, scan_freshness
 from render_policy import path_visual_key, model_visual_key
 from robot_projection import RobotProjection, paint_robot
 from gui_client_lifecycle import ClientUI, ViewCache
@@ -53,7 +53,7 @@ from navigation_ui import localization_help, inspect_bag, route_summary, is_real
 from navigation_session import SESSION as TASK_STATE
 from ground_model import estimate_ground, GroundPlane
 sys.path.insert(0, str(REPO_ROOT / "src" / "n01_live_navigation"))
-from n01_live_navigation.task_status import NavigationTaskView
+from n01_live_navigation.task_status import NavigationTaskView, planning_wait_description
 from n01_live_navigation.degraded_motion import reviewed_path_continuity
 from n01_live_navigation.pose_policy import tracking_mode, control_pose_fresh
 from n01_live_navigation.calibration_store import load_map_ground, save_map_ground
@@ -79,7 +79,7 @@ except Exception as exc:  # noqa: BLE001
 import rclpy
 from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped, Vector3Stamped
 from diagnostic_msgs.msg import DiagnosticArray
-from nav_msgs.msg import Odometry, Path as RosPath
+from nav_msgs.msg import OccupancyGrid, Odometry, Path as RosPath
 from rcl_interfaces.srv import GetParameters
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
@@ -148,6 +148,8 @@ MAPPING_BAG_TOPICS = tuple(
 FITNESS_THRESHOLD = 0.045
 GRID_RES = 0.06
 GRID_IMAGE_PX = 640
+GRID_MAX_N = 600
+_GRID_DIAG = {}
 
 # 会话配色（dark 面）
 COL_IDLE = "#8a8a85"
@@ -222,6 +224,18 @@ NODE_EXEC_HINTS: dict[str, tuple[str, ...]] = {
     "foxglove_bridge": ("foxglove_bridge",),
     # Display matching only: _PROC_DENY keeps all Livox processes protected.
     "livox_lidar_publisher": ("livox_ros_driver2_node",),
+    # Navigation stack: same repo, may be started from a terminal instead of
+    # this GUI, so they are listed here and gated by the "external" opt-in.
+    "scan_planner_node": ("scan_planner_node",),
+    "n01_navigation_controller": ("n01_navigation_controller",),
+    "n01_hive2_trajectory_monitor": ("n01_hive2_trajectory_monitor",),
+    "n01_live_scan_goal_gate": ("n01_live_scan_goal_gate",),
+    "n01_static_map": ("static_map_node",),
+    "n01_robot_footprint": ("n01_robot_footprint",),
+    "n01_environment_display": ("n01_environment_display",),
+    "n01_realtime_reference": ("n01_realtime_reference",),
+    "n01_live_scan_bridge": ("live_scan_bridge",),
+    "n01_localization_adapter": ("n01_localization_adapter",),
 }
 # 命令行命中这些特征 → 一律不列入可停止目标（甲方底盘 / 腿控 / 手柄 / 传感器）。
 _PROC_DENY = (
@@ -412,9 +426,14 @@ def node_kill_plan(node_name: str, snap: list[dict] | None = None) -> dict:
     纯计算（ps 快照可注入，便于测试）。不发送任何信号。
     """
     short, hints = _node_hints(node_name)
+    known = hints is not None
     if not hints:
-        return {"node": node_name, "supported": False, "procs": [],
-                "killable": [], "protected": [], "launch": []}
+        # Operator may type any node name. Keep the match long enough to avoid
+        # killing unrelated processes by a two-letter substring.
+        if len(short) < 6:
+            return {"node": node_name, "supported": False, "procs": [],
+                    "killable": [], "protected": [], "launch": []}
+        hints = (short,)
     snap = _ps_snapshot() if snap is None else snap
     by_pid = {r["pid"]: r for r in snap}
     me = os.getpid()
@@ -430,47 +449,56 @@ def node_kill_plan(node_name: str, snap: list[dict] | None = None) -> dict:
     candidates = [r for r in procs if not _is_protected(r["cmd"])]
     killable = [r for r in candidates if r.get("pgid") in managed_pgids]
     unmanaged = [r for r in candidates if r.get("pgid") not in managed_pgids]
-    launch: list[dict] = []
-    seen: set[int] = set()
-    for r in killable:
-        cur, depth = r, 0
-        while depth < 8:
-            par = by_pid.get(cur["ppid"])
-            if par is None or par["pid"] == me or par.get("pgid") != r.get("pgid"):
-                break
-            if ".launch.py" in par["cmd"]:
-                if par["pid"] not in seen:
-                    seen.add(par["pid"])
-                    launch.append(par)
-                break
-            cur = par
-            depth += 1
+    def launch_parents(rows: list[dict]) -> list[dict]:
+        out: list[dict] = []
+        seen: set[int] = set()
+        for r in rows:
+            cur, depth = r, 0
+            while depth < 8:
+                par = by_pid.get(cur["ppid"])
+                if par is None or par["pid"] == me or par.get("pgid") != r.get("pgid"):
+                    break
+                if ".launch.py" in par["cmd"]:
+                    if par["pid"] not in seen:
+                        seen.add(par["pid"])
+                        out.append(par)
+                    break
+                cur = par
+                depth += 1
+        return out
     return {"node": node_name, "supported": True, "procs": procs,
-            "killable": killable, "unmanaged": unmanaged,
-            "protected": protected, "launch": launch}
+            "killable": killable, "unmanaged": unmanaged, "known": known,
+            "protected": protected, "launch": launch_parents(killable),
+            "external_launch": launch_parents(unmanaged)}
 
 
-def execute_node_kill(node_name: str) -> None:
+def execute_node_kill(node_name: str, include_external: bool = False) -> None:
     """SIGINT 相关 launch 父进程 + 叶子进程，3s 后对残余 SIGKILL。
 
     先杀 launch 是因为 desk 里 complementary_filter 是 respawn=True，
     只杀叶子会被 launch 立刻重新拉起。
+    include_external=True 时也停止不在本 GUI 登记的进程；保护名单始终生效。
     """
     plan = node_kill_plan(node_name)
     if not plan["supported"]:
-        push_log("warn", f"{node_name}: 不在可停止白名单内（不是 SLAM desk 链节点）")
+        push_log("warn", f"{node_name}: 名称太短或无法匹配，拒绝停止")
         return
     if plan["protected"]:
-        push_log("warn", f"{node_name}: 命中保护名单，跳过 pid="
+        push_log("warn", f"{node_name}: 命中保护名单（底盘/雷达/手柄等），跳过 pid="
                           f"{[r['pid'] for r in plan['protected']]}")
     pids = {r["pid"] for r in plan["launch"]} | {r["pid"] for r in plan["killable"]}
+    external_launch = plan.get("external_launch", []) if include_external else []
+    if include_external:
+        pids |= {r["pid"] for r in plan["unmanaged"]}
+        pids |= {r["pid"] for r in external_launch}
     pids.discard(os.getpid())
     if not pids:
         push_log("warn", f"{node_name}: 没有找到可停止的宿主进程（已退出 / 无权限）")
         return
     push_log("info", f"停止 {node_name}: SIGINT -> {sorted(pids)}"
                       f"（含 launch {[r['pid'] for r in plan['launch']]}）")
-    records = {r["pid"]: r for r in plan["launch"] + plan["killable"]}
+    records = {r["pid"]: r for r in plan["launch"] + plan["killable"] +
+               plan["unmanaged"] + external_launch}
     for pid in sorted(pids):
         record = records.get(pid)
         if record is not None:
@@ -566,6 +594,9 @@ class AppState:
         self.live_seq = 0
         self.nav_static_pts: np.ndarray | None = None
         self.nav_dyn_pts: np.ndarray | None = None
+        self.nav_scan_stamp_ns = 0
+        self.nav_fused_pts=None;self.nav_risk_pts=None;self.nav_risk_seq=0
+        self.ref_grid=None;self.live_grid=None;self.grid_seq=0
         self.nav_map_seq = 0
         self.nav_ready = None
         self.nav_speed_mps = .05
@@ -577,6 +608,7 @@ class AppState:
         self.nav_health: dict = {}
         self.readiness: dict = {}   # 桥接 0.5s 诊断 JSON（各上游新鲜度门控）
         self.feasibility: dict = {}
+        self.scene_status: dict = {}
         self.goal_target: tuple[float, float] | None = None
         self.goal_failed = False
         self.plan_goal_distance: float | None = None
@@ -650,6 +682,21 @@ if not isinstance(_state_registry, dict) or _state_registry.get("pid") != os.get
     _state_registry = {"pid": os.getpid(), "state": AppState()}
     setattr(builtins, "_N01_SLAM_GUI_PROCESS_STATE_REGISTRY", _state_registry)
 STATE = _state_registry["state"]
+
+
+# Routine mapping INFO lines flood the operator log; warnings/errors always pass.
+_DESK_LOG_NOISE = (
+    'mapping_lite[icp]', 'mapping_lite[scan]', 'mapping_lite[cloud_map]',
+    'mapping_scan_counts', 'pose_forward_stats', 'status_forward_stats',
+    'lidar_cloud_preprocess', 'complementary_filter', 'octomap',
+)
+
+
+def _keep_desk_line(line: str) -> bool:
+    low = (line or '').lower()
+    if any(tag in low for tag in ('[warn]', '[error]', '[fatal]', 'error:', 'failed')):
+        return True
+    return not any(tag in line for tag in _DESK_LOG_NOISE)
 
 
 def push_log(sev: str, text: str) -> None:
@@ -806,12 +853,17 @@ class RosWorker:
         try:
             self._run_impl()
         except BaseException as exc:  # noqa: BLE001 - worker boundary must report all failures
-            msg = f"ROS Worker 异常退出：{type(exc).__name__}: {exc}"
+            if isinstance(exc, asyncio.CancelledError):
+                msg = "ROS Worker 被取消：GUI 客户端已删除；请刷新页面重新连接"
+                level = "warn"
+            else:
+                msg = f"ROS Worker 异常退出：{type(exc).__name__}: {exc}"
+                level = "err"
             self.connected.clear()
             with STATE.lock:
                 STATE.ros_ready = False
                 STATE.ros_error = msg
-            push_log("err", msg)
+            push_log(level, msg)
             # Best-effort cleanup for failures during node/executor initialization or spin.
             try:
                 if self.executor is not None:
@@ -963,11 +1015,17 @@ class RosWorker:
                   self._on_readiness)
         self._sub(node, "/n01/navigation/execution_status", String, q_small,
                   self._on_slow_status)
+        self._sub(node, "/grid_map/reference_grid", OccupancyGrid, q_static, self._on_reference_grid)
+        self._sub(node, "/grid_map/live_grid", OccupancyGrid, q_static, self._on_live_grid)
         self._sub(node, "/grid_map/static_occupancy", PointCloud2, q_static, self._on_nav_static)
+        self._sub(node, '/grid_map/fused_reference', PointCloud2, q_static,self._on_nav_fused)
+        self._sub(node, '/grid_map/unconfirmed_risk', PointCloud2, q_cloud,self._on_nav_risk)
         self._sub(node, "/grid_map/occupancy", PointCloud2, q_cloud, self._on_nav_dynamic)
         self._sub(node, "/n01/live_navigation/navigation_ready", Bool, q_status, self._on_nav_ready)
         self._sub(node, "/n01/live_navigation/goal_gate_status", String, q_status, self._on_goal_status)
         self._sub(node, "/n01/live_navigation/system_health", String, q_status, self._on_nav_health)
+        self._sub(node, '/grid_map/static_overlay_status', String, q_path_global,self._on_scene_status)
+        self._sub(node, '/planning/status', String, q_path_global,self._on_planning_status)
         self._sub(node, GLOBAL_PATH_TOPIC, RosPath, q_path_global,
                   self._on_global_path)
         self._sub(node, LOCAL_PATH_TOPIC, RosPath,
@@ -996,6 +1054,11 @@ class RosWorker:
         while not self.stop_flag.is_set() and rclpy.ok():
             try:
                 executor.spin_once(timeout_sec=0.05)
+            except asyncio.CancelledError:
+                # A deleted browser client cancelled a UI-owned callback; ROS
+                # ownership is process-level, so keep spinning.
+                push_log("warn", "GUI 客户端已断开，忽略一次 UI 回调取消；ROS 继续运行")
+                time.sleep(0.05)
             except Exception as exc:  # noqa: BLE001
                 push_log("err", f"spin 异常: {exc}")
                 time.sleep(0.2)
@@ -1093,6 +1156,7 @@ class RosWorker:
             if data.get('goal_id')!=STATE.plan_goal_ns and not (data.get('goal_id')==0 and data.get('state')=='DISABLED'):
                 return
             if not STATE.navigation_task.observe_execution(data,time.monotonic()):return
+        with STATE.lock:STATE.slow_feedback=dict(data)
         TASK_STATE.feedback={**data,'received_at':time.monotonic()}
         with STATE.lock:
             events = STATE.motion_feedback.feed(data, time.monotonic())
@@ -1218,6 +1282,7 @@ class RosWorker:
         xyz = pc2_to_xyz(msg)
         with STATE.lock:
             STATE.nav_dyn_pts = xyz
+            STATE.nav_scan_stamp_ns = int(msg.header.stamp.sec)*1_000_000_000+int(msg.header.stamp.nanosec)
             STATE.nav_map_seq += 1
         STATE.recv("nav_dynamic")
 
@@ -1254,6 +1319,53 @@ class RosWorker:
         with STATE.lock:
             STATE.feasibility = self._json_or_empty(msg.data)
         STATE.recv("feasibility")
+
+    def _on_nav_fused(self,msg):
+        xyz=pc2_to_xyz(msg)
+        with STATE.lock:STATE.nav_fused_pts=xyz;STATE.nav_map_seq+=1
+        STATE.recv('nav_fused')
+
+    def _on_reference_grid(self,msg):
+        try:
+            data=np.asarray(msg.data,dtype=np.int8).reshape(msg.info.height,msg.info.width)
+        except Exception:  # noqa: BLE001
+            return
+        with STATE.lock:
+            first=getattr(STATE,'ref_grid',None) is None
+            STATE.ref_grid=(data,msg.info.origin.position.x,msg.info.origin.position.y,
+                            msg.info.resolution,time.monotonic())
+            STATE.grid_seq+=1
+        if first:
+            push_log('info', f"参考栅格已收到：{data.shape[1]}×{data.shape[0]}，占用 {int((data==100).sum())}")
+        STATE.recv('grid_map')
+
+    def _on_live_grid(self,msg):
+        try:
+            data=np.asarray(msg.data,dtype=np.int8).reshape(msg.info.height,msg.info.width)
+        except Exception:  # noqa: BLE001
+            return
+        with STATE.lock:
+            first=getattr(STATE,'live_grid',None) is None
+            STATE.live_grid=(data,msg.info.origin.position.x,msg.info.origin.position.y,
+                             msg.info.resolution,time.monotonic())
+            STATE.grid_seq+=1
+        if first:
+            push_log('info', f"实时栅格已收到：{data.shape[1]}×{data.shape[0]}，占用 {int((data==100).sum())}")
+        STATE.recv('grid_map')
+
+    def _on_nav_risk(self,msg):
+        xyz=pc2_to_xyz(msg)
+        with STATE.lock:STATE.nav_risk_pts=xyz;STATE.nav_risk_seq+=1
+        STATE.recv('nav_risk')
+
+    def _on_scene_status(self,msg):
+        with STATE.lock:STATE.scene_status=self._json_or_empty(msg.data)
+        STATE.recv('scene_status')
+
+    def _on_planning_status(self,msg):
+        data=self._json_or_empty(msg.data)
+        with STATE.lock:STATE.planning_status=data
+        STATE.recv('planning_status')
 
     def _on_global_path(self, msg: RosPath) -> None:
         points = [(float(p.pose.position.x), float(p.pose.position.y))
@@ -1718,7 +1830,8 @@ class ProcManager:
                 line = line.rstrip()
                 if line:
                     recent_output.append(line)
-                    STATE.log_q.put(f"[{time.strftime('%H:%M:%S')}] {key}| {line}")
+                    if _keep_desk_line(line):
+                        STATE.log_q.put(f"[{time.strftime('%H:%M:%S')}] {key}| {line}")
         except Exception:  # noqa: BLE001
             pass
         try:
@@ -2640,6 +2753,12 @@ async def lifecycle_start_slam(mode: str) -> None:
     if PROCS.running('desk'):
         notify_user('已有建图定位会话运行，请先停止再切换组合', type='warning')
         return
+    existing_navigation = LIFECYCLE._active_navigation_identity()
+    if existing_navigation is not None:
+        existing_note = (f'已有导航实例 PID={existing_navigation[0]}；本次仅启动SLAM，不会启动导航。'
+                         '若它属于上次SLAM会话，请从原入口停止后重新启动导航，不能混用新旧坐标会话。')
+        push_log('warn', existing_note)
+        notify_user(existing_note, type='warning')
     backend = UI['slam_backend'].value if UI.get('slam_backend') else BACKEND_VENDOR
     fast = backend == BACKEND_FAST_LIO
     realtime = bool(UI.get('slam_map_mode') and UI['slam_map_mode'].value == FAST_MODE_REALTIME)
@@ -3017,8 +3136,13 @@ async def _wait_route_motion(task_id,target,phase,token=None):
         f=dict(TASK_STATE.feedback);now=time.monotonic()
         if f.get('task_id')==task_id and f.get('goal_id')==goal_id:
             if f.get('state')=='ARRIVED':return
-            if f.get('state')in('MANUAL_OVERRIDE','ESTOP'):raise RoutePaused(f'{f["state"]}: {f.get("reason","")}')
-            if f.get('state')in('GOAL_CHANGED','FAILED'):raise RuntimeError(f.get('reason')or f['state'])
+            if f.get('state')in('MANUAL_OVERRIDE','ESTOP'):
+                from navigation_flow import describe
+                label='手动接管' if f['state']=='MANUAL_OVERRIDE' else '急停'
+                raise RoutePaused(f'{label}：{describe(f.get("reason",""))}')
+            if f.get('state')in('GOAL_CHANGED','FAILED'):
+                from navigation_flow import describe
+                raise RuntimeError(describe(f.get('reason')) if f.get('reason') else '执行已结束')
         if now-began>3 and now-f.get('received_at',0)>3:raise RuntimeError('执行反馈中断，无法确认运动状态')
         if not PROCS.running('execution'):raise RuntimeError('控制器提前退出')
         await asyncio.sleep(.1)
@@ -3476,6 +3600,11 @@ async def navigation_action(action: str) -> None:
     UI["nav_result"].set_text(f"正在执行导航 {action} …")
     ok, output = await asyncio.to_thread(LIFECYCLE.navigation, action,
                                          env_extra=env_extra)
+    if action=='stop' and ok and '保持外部导航不变' in output:
+        UI['nav_result'].set_text('未执行停止：'+output)
+        notify_user('当前导航不是本GUI启动的，未停止；请从原启动入口停止导航。',type='warning')
+        push_log('warn','导航停止未执行：'+output)
+        return
     if ok and action=='start':
         STATE.nav_speed_mps=float(env_extra['N01_NAV_SPEED'])
     notify_user(f"导航 {action} 成功" if ok else f"导航 {action} 失败：{output[-300:]}", type="positive" if ok else "negative")
@@ -3741,11 +3870,16 @@ def build_health_tab() -> None:
 
         with ui.column().classes("w-96 shrink-0 gap-3"):
             with _card("停止节点（按宿主进程）"):
-                _lbl("只对 SLAM desk 链生效。甲方底盘 / 腿控 / 手柄 / Livox 驱动 / lpms "
-                     "即使同名也永远不会出现在这里。", "text-xs text-amber-400")
+                _lbl("默认只停 GUI 自己启动的进程组；勾选“允许停止外部进程”后可停终端启动的"
+                     " N-01 节点。甲方底盘 / 腿控 / 手柄 / Livox 驱动 / lpms 始终受保护，"
+                     "即使同名也不会被停止。", "text-xs text-amber-400")
                 UI["kill_target"] = ui.select(
                     list(KILL_OPTIONS), value=None, label="选择节点")\
                     .classes("w-full").props("dense")
+                UI["kill_name"] = ui.input(
+                    "或输入节点名（覆盖下拉；至少6字符）").classes("w-full").props("dense")
+                UI["kill_external"] = ui.checkbox(
+                    "允许停止外部/未托管进程（危险，需再次确认）", value=False)
                 with ui.row().classes("gap-2 items-center"):
                     ui.button("查看进程明细", on_click=show_kill_plan).props("flat")
                     ui.button("停止该节点", on_click=kill_selected)\
@@ -3933,7 +4067,7 @@ async def start_desk() -> None:
     if not census_at or time.monotonic() - census_at > 15.0:
         push_log("err", "启动 desk 前节点普查不可用/已过期：请稍等再试")
         notify_user("节点普查未完成或已过期，无法确认前置链没有残留，请稍等片刻再启动。",
-                  type="negative", timeout=8000)
+                  type="negative", timeout=5000)
         return
     residue = [r["name"] for r in rows
                if r["name"] in DESK_CHAIN_NODES and r.get("count", 0) > 0
@@ -3947,7 +4081,7 @@ async def start_desk() -> None:
         else:
             msg = (f"{', '.join(residue)} 已在运行（可能是上次残留）。先到“节点体检”页"
                    f"停止；未托管残留请回到原启动终端正常 Ctrl+C，再启动。")
-        notify_user(msg, type="negative", timeout=8000)
+        notify_user(msg, type="negative", timeout=5000)
         return
     if skip_rsp:
         # Desktop owns the model; an alive OS process is not proof of ROS health.
@@ -4123,14 +4257,20 @@ async def stop_bridge() -> None:
 KILL_EVENTS: queue.Queue = queue.Queue()
 
 
-def _plan_lines(plan: dict) -> list[str]:
+def _allow_external() -> bool:
+    return bool((UI.get("kill_external_nodes") and UI["kill_external_nodes"].value)
+                or (UI.get("kill_external") and UI["kill_external"].value))
+
+
+def _plan_lines(plan: dict, allow_external: bool = False) -> list[str]:
     out = []
     for r in plan.get("launch") or []:
         out.append(f"launch  pid {r['pid']:<6} {r['cmd'][:110]}")
     for r in plan.get("killable") or []:
         out.append(f"进程    pid {r['pid']:<6} {r['cmd'][:110]}")
     for r in plan.get("unmanaged") or []:
-        out.append(f"外部进程 pid {r['pid']:<6} {r['cmd'][:110]}  ← 只展示，不会停止")
+        note = "  ← 已勾选：将停止" if allow_external else "  ← 只展示，不会停止"
+        out.append(f"外部进程 pid {r['pid']:<6} {r['cmd'][:110]}{note}")
     for r in plan.get("protected") or []:
         out.append(f"受保护  pid {r['pid']:<6} {r['cmd'][:110]}  ← 不会停止")
     return out
@@ -4165,7 +4305,7 @@ async def show_kill_plan() -> None:
     if not plan["supported"]:
         notify_user("该节点不在可停止白名单内", type="warning")
         return
-    lines = _plan_lines(plan) or ["（没有找到对应的宿主进程）"]
+    lines = _plan_lines(plan, _allow_external()) or ["（没有找到对应的宿主进程）"]
     with ui.dialog() as dlg, ui.card().classes("w-[42rem] gap-3"):
         ui.label(f"{name} 的宿主进程").classes("text-sm font-semibold")
         ui.label("\n".join(lines)).classes(
@@ -4175,39 +4315,48 @@ async def show_kill_plan() -> None:
 
 
 async def kill_selected() -> None:
-    name = UI["kill_target"].value
+    override = (UI["kill_name"].value or "").strip() if UI.get("kill_name") else ""
+    name = override or UI["kill_target"].value
     if not name:
-        notify_user("先选一个节点", type="warning")
+        notify_user("先选一个节点，或输入节点名", type="warning")
         return
     if not STATE.ros_ready:
         notify_user("ROS 未连接", type="negative")
         return
+    allow_external = _allow_external()
     plan = await asyncio.to_thread(node_kill_plan, name)
     if not plan["supported"]:
-        notify_user("该节点不在可停止白名单内", type="warning")
+        notify_user("节点名太短或无法匹配，拒绝停止", type="warning")
         return
-    if not plan["killable"]:
-        msg = ("检测到外部管理的进程；GUI 只展示，不会越权停止。请回到原启动终端 Ctrl+C。"
-               if plan["unmanaged"] else
+    targets = list(plan["killable"]) + (list(plan["unmanaged"]) if allow_external else [])
+    if not targets:
+        msg = ("检测到外部管理的进程；勾选“允许停止外部进程”后可强制停止，"
+               "或回到原启动终端 Ctrl+C。" if plan["unmanaged"] else
                ("没有找到可停止的宿主进程（节点可能已退出，或进程属于其他用户）"
                 if plan["procs"] else "按进程名没有匹配到该节点"))
         push_log("warn", f"{name}: {msg}")
         notify_user(msg, type="warning")
         return
-    lines = _plan_lines(plan)
+    lines = _plan_lines(plan, allow_external)
     lines.append("")
-    lines.append("仅停止由当前 GUI 登记的专属进程组；外部进程只展示，不会发送信号。")
-    lines.append("停止顺序：SIGINT，等待 3 秒，仍存活时对确认归属的 PID 升级 SIGKILL。")
-    lines.append("这会中断该节点当前的定位/建图输出。")
+    if allow_external and plan["unmanaged"]:
+        lines.append("！勾选已包含外部进程：这些进程不是本 GUI 启动的，")
+        lines.append("！原启动终端可能立刻把它们重新拉起；停止后请自行确认来源。")
+    if not plan["known"]:
+        lines.append(f"！'{name}' 不在预置节点表内，按命令行包含该名称匹配。")
+    if plan["protected"]:
+        lines.append("保护名单命中，将跳过：" + ", ".join(str(r["pid"]) for r in plan["protected"]))
+    lines.append("停止顺序：SIGINT，等待 3 秒，仍存活时对确认的 PID 升级 SIGKILL。")
+    lines.append("这会中断该节点当前的定位/建图/导航输出。")
     if not await _confirm_detail(f"停止 {name}？", lines):
         return
     UI["kill_result"].set_text(f"{time.strftime('%H:%M:%S')} 停止 {name} 中…")
-    threading.Thread(target=_kill_worker, args=(name,), daemon=True).start()
+    threading.Thread(target=_kill_worker, args=(name, allow_external), daemon=True).start()
 
 
-def _kill_worker(name: str) -> None:
+def _kill_worker(name: str, include_external: bool = False) -> None:
     try:
-        execute_node_kill(name)
+        execute_node_kill(name, include_external)
     except Exception as exc:  # noqa: BLE001
         push_log("err", f"{name}: 停止异常 {exc}")
     finally:
@@ -4551,9 +4700,11 @@ def _grid_source():
     body_age=STATE.age_of('body_pose')
     with STATE.lock:
         loc,cloud=STATE.loc_pts,STATE.cloud_pts
-        nav_static,nav_dyn=STATE.nav_static_pts,STATE.nav_dyn_pts
+        nav_static,nav_dyn=STATE.nav_fused_pts,STATE.nav_dyn_pts
         live=getattr(STATE,'live_pts',None)
         seq=(STATE.loc_seq,STATE.cloud_seq,STATE.nav_map_seq,getattr(STATE,'live_seq',0))
+        ref_grid=getattr(STATE,'ref_grid',None);live_grid=getattr(STATE,'live_grid',None)
+        grid_seq=getattr(STATE,'grid_seq',0)
         pose=STATE.pose;pose_z=STATE.pose_z;trail=list(STATE.trail)
         if body_age is not None and body_age<.5:
             pose=getattr(STATE,'control_pose',pose)
@@ -4564,22 +4715,114 @@ def _grid_source():
     age=STATE.age_of('bridge_cloud')
     if age is None or age>1.:live=None
     nav_age=STATE.age_of('nav_health')
-    source=choose_map(requested,nav_age is not None and nav_age<2.,
-                      PROCS.running('desk') and (PROCS.desk_mode in ('mapping','fast_lio_mapping','fast_lio_realtime') or map_session=='mapping'),
-                      loc_session in ('tracking','relocalization'))
+    scan=scan_freshness(getattr(STATE,'nav_scan_stamp_ns',0),time.time())
+    now_mono=time.monotonic()
+    grid_ready=((ref_grid is not None and now_mono-ref_grid[4]<2.)
+                or (live_grid is not None and now_mono-live_grid[4]<2.))
+    detailed=bool(UI.get('render') and UI['render'].value=='细节点云')
+    def fresh(key, limit=2.):
+        a=STATE.age_of(key)
+        return a is not None and a<limit
+    # Liveness must follow data, not only process ownership: SLAM may be started
+    # from a terminal, and a GUI-owned process can exist with no map data.
+    nav_live=scan['scan_ready'] and fresh('nav_dynamic',3.)
+    mapping_live=(PROCS.running('desk') and
+                  (PROCS.desk_mode in ('mapping','fast_lio_mapping','fast_lio_realtime') or map_session=='mapping')) \
+                 or fresh('cloud_map')
+    loc_live=loc_session in ('tracking','relocalization') or fresh('loc_map')
+    # An observed empty room (0) is valid; an entirely unknown (-1) grid is not.
+    def grid_has_data(layer):
+        return (layer is not None and now_mono-layer[4]<2. and bool(np.any(layer[0]>=0)))
+    nav_grid_ready=grid_has_data(ref_grid) or grid_has_data(live_grid)
+    if requested in ('导航','占据栅格'):
+        source='导航栅格'
+    elif requested=='建图':
+        source='建图'
+    elif requested=='定位':
+        source='定位地图'
+    else:
+        source=choose_map('自动',nav_live,mapping_live,loc_live)
+        if source=='等待':
+            if nav_live:source='导航栅格'
+            elif fresh('cloud_map'):source='建图'
+            elif fresh('loc_map'):source='定位地图'
+        # A live process does not imply live data: after the ROS worker dies the
+        # desk keeps running while every topic stops. Never present a stale map
+        # as current.
+        if not (nav_live or
+                fresh('cloud_map',3.) or fresh('loc_map',3.) or fresh('bridge_cloud',3.)):
+            source='等待'
     def stack(parts):
         parts=[x for x in parts if x is not None and len(x)]
         return np.vstack(parts) if parts else None
+    # Low-cost raster colours differ per content type; the live layer stays cyan.
+    ref_color,live_color={'导航栅格':((116,151,182),(79,239,219)),
+                          '建图':((147,197,253),(79,239,219)),
+                          '定位地图':((196,181,253),(79,239,219))}.get(
+                              source,((116,151,182),(79,239,219)))
+    style=None if detailed else (ref_color,live_color,True)
+    grids=None
     if source=='导航栅格':
-        points=stack([nav_static,nav_dyn,live]);detail='导航 · 参考环境＋实时障碍'
-        dynamic=live if live is not None else nav_dyn
+        if nav_grid_ready and not detailed:
+            points=None;dynamic=None;grids=(ref_grid,live_grid)
+            detail='导航 · 低耗栅格（参考层＋实时层）'
+        else:
+            points=stack([nav_static,nav_dyn]);dynamic=nav_dyn
+            detail='导航 · ' + ('细节点云' if detailed else '点云（栅格尚未就绪，自动回退）')
+        if not scan['scan_ready']:
+            detail += (' · 等待原始扫描（当前为历史缓存）' if scan['scan_age_s'] is None else
+                       f" · 原始扫描已过期 {scan['scan_age_s']:.1f}s（当前为历史缓存）")
     elif source=='建图':
-        points=stack([cloud,live]);detail='建图 · 累积环境＋当前扫描';dynamic=live
+        points=stack([cloud,live]);detail='建图 · ' + ('细节点云' if detailed else '低耗栅格')
+        dynamic=live
     elif source=='定位地图':
-        points=stack([loc,live]);detail='定位 · 已载地图＋当前扫描';dynamic=live
+        points=stack([loc,live]);detail='定位 · ' + ('细节点云' if detailed else '低耗栅格')
+        dynamic=live
     else:
-        points=None;detail='等待模块启动';dynamic=None
-    return points,detail,(*seq,source,live is not None),dynamic,pose,pose_z,trail
+        points=None;dynamic=None
+        err=str(getattr(STATE,'ros_error','') or '')
+        detail=('ROS 数据已停止：'+err[:60]) if err else '等待模块启动或数据刷新' 
+    now_diag=time.monotonic()
+    try:
+        worker_txt='ok' if WORKER.connected.is_set() else 'down'
+    except Exception:  # noqa: BLE001
+        worker_txt='?'
+    # Detailed counters are opt-in. Normal GUI use logs only source transitions.
+    diag_enabled=os.environ.get('N01_GUI_MAP_DIAGNOSTICS','0')=='1'
+    if diag_enabled and now_diag-_GRID_DIAG.get('t',0.)>30.:
+        _GRID_DIAG['t']=now_diag
+        push_log('info', "地图诊断 "
+                         f"src={source} pts={0 if points is None else len(points)} "
+                         f"dyn={0 if dynamic is None else len(dynamic)} "
+                         f"nav_static={0 if nav_static is None else len(nav_static)} "
+                         f"nav_dyn={0 if nav_dyn is None else len(nav_dyn)} "
+                         f"cloud={0 if cloud is None else len(cloud)} "
+                         f"loc={0 if loc is None else len(loc)} "
+                         f"grid_ref={0 if ref_grid is None else int((ref_grid[0]==100).sum())} "
+                         f"grid_live={0 if live_grid is None else int((live_grid[0]==100).sum())} "
+                         f"pose={'yes' if pose is not None else 'no'} "
+                         f"dyn_age={STATE.age_of('nav_dynamic') if STATE.age_of('nav_dynamic') is not None else -1:.2f}s "
+                         f"cloud_age={STATE.age_of('bridge_cloud') if STATE.age_of('bridge_cloud') is not None else -1:.2f}s "
+                         f"worker={worker_txt}")
+    if (not diag_enabled and _GRID_DIAG.get('source')!=source
+            and now_diag-_GRID_DIAG.get('source_log_t',float('-inf'))>=5.):
+        _GRID_DIAG['source']=source
+        _GRID_DIAG['source_log_t']=now_diag
+        push_log('info',f'地图显示切换：{detail}')
+    return points,detail,(*seq,source,live is not None,grid_seq,detailed),dynamic,pose,pose_z,trail,grids,style
+
+
+def _placeholder_png(message):
+    """Readable stand-in instead of a black 1x1 image when there is no data."""
+    try:
+        img=Image.new('RGB',(GRID_IMAGE_PX,GRID_IMAGE_PX),(12,20,31))
+        draw=ImageDraw.Draw(img)
+        for i,line in enumerate(str(message).split('\n')[:12]):
+            draw.text((16,16+i*20),line,fill=(226,232,240))
+        buf=io.BytesIO();img.save(buf,format='PNG',compress_level=1)
+        return "data:image/png;base64,"+base64.b64encode(buf.getvalue()).decode()
+    except Exception:  # noqa: BLE001
+        return _BLANK_PNG
 
 
 def _grid_ground():
@@ -4600,7 +4843,9 @@ def _map_xy_to_pixel(x, y, view):
     return px, py
 
 
-def _rasterize(points, view, ground, dynamic_points):
+def _rasterize(points, view, ground, dynamic_points, style=None):
+    if points is None or len(points) == 0:
+        return None, ground + .03, ground + 1.60
     x, y, z = points[:, 0], points[:, 1], points[:, 2]
     valid = np.isfinite(x) & np.isfinite(y) & np.isfinite(z)
     with STATE.lock:
@@ -4613,7 +4858,7 @@ def _rasterize(points, view, ground, dynamic_points):
         return None, zmin, zmax
     x, y = x[valid], y[valid]
     size_m = view["size_m"]
-    n = max(60, min(600, int(round(size_m / GRID_RES))))
+    n = max(60, min(GRID_MAX_N, int(round(size_m / GRID_RES))))
     res = size_m / n
     ix = np.floor((x - view["x0"]) / res).astype(np.int32)
     iy = np.floor((y - view["y0"]) / res).astype(np.int32)
@@ -4632,7 +4877,18 @@ def _rasterize(points, view, ground, dynamic_points):
         diy = np.floor((dy[dmask] - view["y0"]) / res).astype(np.int32)
         din = (dix >= 0) & (dix < n) & (diy >= 0) & (diy < n)
         dyn[diy[din], dix[din]] = 1
-    rgb = occupancy_colors(occ,dyn,res)
+    if style is None:
+        rgb = occupancy_colors(occ,dyn,res)
+    else:
+        ref_color,live_color,flat = style
+        if flat:
+            rgb = np.empty((n,n,3),dtype=np.uint8)
+            rgb[:] = _GRID_UNKNOWN
+            rgb[occ.astype(bool)] = ref_color
+            if dyn.any():
+                rgb[dyn.astype(bool)] = live_color
+        else:
+            rgb = occupancy_colors(occ,dyn,res)
     return rgb, zmin, zmax
 
 
@@ -4687,11 +4943,22 @@ def _grid_overlay(img, view, pose, trail, goal_xy, plan_xy=None,
 def _render_grid_frame(points, view, ground, dynamic_points, pose, _pose_z,
                        observed, inflated, model_polygons, envelope, trail,
                        goal_xy, plan_xy, plan_active, goal_failed, global_xy,
-                       global_active, trail_on):
+                       global_active, trail_on, risk=None, blocked=None, style=None):
     """CPU-only rendering; never read or mutate browser widgets in this worker."""
-    rgb, zmin, zmax = _rasterize(points, view, ground, dynamic_points)
+    rgb, zmin, zmax = _rasterize(points, view, ground, dynamic_points, style)
     if rgb is None:
         return None, zmin, zmax
+    return _finish_frame(rgb, view, ground, pose, _pose_z, observed, inflated,
+                         model_polygons, envelope, trail, goal_xy, plan_xy,
+                         plan_active, goal_failed, global_xy, global_active,
+                         trail_on, risk, blocked, zmin, zmax)
+
+
+def _finish_frame(rgb, view, ground, pose, _pose_z, observed, inflated,
+                  model_polygons, envelope, trail, goal_xy, plan_xy,
+                  plan_active, goal_failed, global_xy, global_active,
+                  trail_on, risk, blocked, zmin, zmax):
+    """Shared overlay/robot/PNG stage for point-cloud and occupancy-grid views."""
     img = Image.fromarray(rgb[::-1]).resize(
         (GRID_IMAGE_PX, GRID_IMAGE_PX), Image.Resampling.BILINEAR)
     if pose is not None:
@@ -4705,9 +4972,71 @@ def _render_grid_frame(points, view, ground, dynamic_points, pose, _pose_z,
         img = paint_robot(img, view, pose, model_polygons, envelope, env, observed=raw)
     img = _grid_overlay(img, view, pose, trail, goal_xy, plan_xy, plan_active,
                         goal_failed, global_xy, global_active, trail_on)
+    if risk is not None:
+        draw=ImageDraw.Draw(img)
+        for x,y in risk[:2000,:2]:
+            px,py=_map_xy_to_pixel(x,y,view)
+            if 0<=px<GRID_IMAGE_PX and 0<=py<GRID_IMAGE_PX:draw.ellipse((px-2,py-2,px+2,py+2),outline='#f9df8d',width=1)
+    if blocked is not None:
+        px,py=_map_xy_to_pixel(blocked[0],blocked[1],view)
+        if 0<=px<GRID_IMAGE_PX and 0<=py<GRID_IMAGE_PX:
+            draw=ImageDraw.Draw(img);color=blocked[2]
+            draw.line((px-7,py-7,px+7,py+7),fill=color,width=3)
+            draw.line((px-7,py+7,px+7,py-7),fill=color,width=3)
     buf = io.BytesIO()
     img.save(buf, format="PNG", compress_level=1)
     return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode(), zmin, zmax
+
+
+_GRID_UNKNOWN=(8,12,20)      # never observed
+_GRID_FREE=(26,40,62)        # observed and free: must be visibly different
+_GRID_REF=(116,151,182)
+_GRID_LIVE=(79,239,219)
+
+
+def _project_occupancy(ref, live, view, max_n, ref_color=None, live_color=None):
+    """2D OccupancyGrid -> RGB view. No morphology, no distance transform."""
+    n = max(60, min(max_n, int(round(view["size_m"] / GRID_RES))))
+    res = view["size_m"] / n
+    xs = view["x0"] + (np.arange(n) + .5) * res
+    ys = view["y0"] + (np.arange(n) + .5) * res
+    rgb = np.empty((n, n, 3), np.uint8)
+    rgb[:] = _GRID_UNKNOWN
+    ref_color = ref_color or _GRID_REF
+    live_color = live_color or _GRID_LIVE
+    for layer, color in ((ref, ref_color), (live, live_color)):
+        if layer is None:
+            continue
+        data, ox, oy, ores = layer[0], layer[1], layer[2], layer[3]
+        h, w = data.shape
+        ix = np.floor((xs - ox) / ores).astype(np.int64)
+        iy = np.floor((ys - oy) / ores).astype(np.int64)
+        vx = (ix >= 0) & (ix < w)
+        vy = (iy >= 0) & (iy < h)
+        gx = np.clip(ix, 0, w - 1)
+        gy = np.clip(iy, 0, h - 1)
+        sample = data[np.ix_(gy, gx)]
+        valid = vy[:, None] & vx[None, :]
+        # Observed-free must be distinguishable from never-observed, otherwise
+        # a mostly-free map looks like a black screen.
+        rgb[valid & (sample == 0)] = _GRID_FREE
+        rgb[valid & (sample == 100)] = color
+    return rgb
+
+
+def _render_occupancy_frame(grids, view, ground, pose, _pose_z, observed,
+                            inflated, model_polygons, envelope, trail, goal_xy,
+                            plan_xy, plan_active, goal_failed, global_xy,
+                            global_active, trail_on, blocked, style=None,
+                            max_n=GRID_MAX_N):
+    ref, live = grids if grids else (None, None)
+    ref_color, live_color = (style[0], style[1]) if style else (_GRID_REF, _GRID_LIVE)
+    rgb = _project_occupancy(ref, live, view, max_n, ref_color, live_color)
+    zmin, zmax = ground + .03, ground + 1.60
+    return _finish_frame(rgb, view, ground, pose, _pose_z, observed, inflated,
+                         model_polygons, envelope, trail, goal_xy, plan_xy,
+                         plan_active, goal_failed, global_xy, global_active,
+                         trail_on, None, blocked, zmin, zmax)
 
 
 def draw_grid(force: bool = False) -> None:
@@ -4732,12 +5061,22 @@ async def _draw_grid_pending() -> None:
         raise
     except Exception as exc:
         push_log('warn', f'地图刷新失败：{exc}')
+        if UI.get('grid_info'):
+            UI['grid_info'].set_text(f'地图刷新失败：{exc}')
 
 
 async def _draw_grid_async(force: bool = False) -> None:
     if not UI.get("map_image"):
         return
-    points, label, seq, dynamic_points, pose, _pose_z, trail = _grid_source()
+    points, label, seq, dynamic_points, pose, _pose_z, trail, grids, style = _grid_source()
+    if not grids and (points is None or len(points) == 0) and pose is None:
+        msg=f"{label}：没有位姿也没有地图数据（导航/建图/定位都未就绪）"
+        if UI.get("grid_info"):
+            UI["grid_info"].set_text(msg)
+        placeholder=_placeholder_png("NO DATA\n" + msg)
+        UI["map_image"].set_source(placeholder)
+        _GRID_CACHE['image_source']=placeholder
+        return
     with STATE.lock:
         plan_xy = list(STATE.plan_xy)
         plan_seq = STATE.plan_seq
@@ -4751,6 +5090,9 @@ async def _draw_grid_async(force: bool = False) -> None:
         tilt=STATE.body_tilt
         inflated=STATE.nav_inflated_pts;inflated_seq=STATE.nav_inflated_seq
         observed=STATE.nav_dyn_pts
+        risk=STATE.nav_risk_pts if (UI.get('risk_on') and UI['risk_on'].value) else None
+        risk_seq=STATE.nav_risk_seq
+        failure=dict(STATE.feasibility.get('failure_context',{})) if STATE.feasibility.get('goal_id')==STATE.plan_goal_ns else {}
         envelope=dict(STATE.feasibility.get('planning_footprint',{}))
     now=time.monotonic()
     joints={k:v for k,v in joints.items() if now-times.get(k,0)<=.5}
@@ -4769,7 +5111,11 @@ async def _draw_grid_async(force: bool = False) -> None:
     inflated_age=STATE.age_of('nav_inflated')
     if inflated_age is None or inflated_age>1.:inflated=None
     review_age=STATE.age_of('feasibility')
-    if review_age is None or review_age>.75:envelope=None
+    if review_age is None or review_age>.75:envelope=None;failure={}
+    blocked=None
+    position=failure.get('position',[])
+    if len(position)>=2 and all(isinstance(v,(int,float)) and math.isfinite(v)for v in position[:2]):
+        blocked=(position[0],position[1],'#fbbf24'if failure.get('reason')=='footprint_coverage_missing'else'#f87171')
     # 发布者中途消失时，最后一条路径不能继续按“活动”着色。
     # 与 _chain_state / refresh_console 共用同一判据 _nav_paths_live()，
     # 避免“地图灰了导航页还绿”的三套定义漂移。
@@ -4779,7 +5125,7 @@ async def _draw_grid_async(force: bool = False) -> None:
     # 全局参考独立显示；局部前段暂不可用时仍保留完整参考线。
     if not nav_path_live:
         global_active = False
-    if points is None or not len(points):
+    if not grids and (points is None or not len(points)):
         if _GRID_CACHE.get('image_source')!=_BLANK_PNG:
             UI["map_image"].set_source(_BLANK_PNG)
             _GRID_CACHE['image_source']=_BLANK_PNG
@@ -4792,8 +5138,14 @@ async def _draw_grid_async(force: bool = False) -> None:
         half = 10.0
     half = max(3.0, min(50.0, half))
     size_m = 2.0 * half
-    center_x = pose[0] if pose is not None else float(np.median(points[:, 0]))
-    center_y = pose[1] if pose is not None else float(np.median(points[:, 1]))
+    if pose is not None:
+        center_x,center_y=pose[:2]
+    elif grids:
+        layer=next(g for g in grids if g is not None)
+        center_x=layer[1]+layer[0].shape[1]*layer[3]/2
+        center_y=layer[2]+layer[0].shape[0]*layer[3]/2
+    else:
+        center_x=float(np.median(points[:,0]));center_y=float(np.median(points[:,1]))
     view = {"x0": center_x - half, "y0": center_y - half, "size_m": size_m,
             "center": (center_x, center_y), "half": half}
     ground = _grid_ground()
@@ -4803,18 +5155,36 @@ async def _draw_grid_async(force: bool = False) -> None:
             goal_xy = (float(UI["goal_x"].value), float(UI["goal_y"].value))
     except (TypeError, ValueError):
         goal_xy = None
-    key = (str(UI["src"].value), str(UI["range"].value), round(ground, 3),
+    key = (str(UI["src"].value), str(UI.get("render").value) if UI.get("render") else '',
+           str(UI["range"].value),
+           bool(UI.get("risk_on") and UI["risk_on"].value), round(ground, 3),
            seq, None if pose is None else tuple(round(v, 2) for v in pose),
            len(trail), goal_xy, plan_seq, plan_active, goal_failed,
-           global_seq, global_active,model_key,model_error,inflated_seq,inflated is not None,bool(envelope),
+           global_seq, global_active,risk_seq,blocked,model_key,model_error,inflated_seq,inflated is not None,bool(envelope),
            bool(UI["trail_on"].value) if UI.get("trail_on") else True)
     if not force and key == _GRID_CACHE.get("key"):
         return
     trail_on = bool(UI["trail_on"].value) if UI.get("trail_on") else True
-    source, zmin, zmax = await asyncio.to_thread(
-        _render_grid_frame, points, view, ground, dynamic_points, pose, _pose_z,
-        observed, inflated, model_polygons, envelope, trail, goal_xy, plan_xy,
-        plan_active, goal_failed, global_xy, global_active, trail_on)
+    if not grids and (points is None or len(points) == 0):
+        msg=f"{label}：当前数据源没有数据（话题未启动或未收到）"
+        if UI.get("grid_info"):
+            UI["grid_info"].set_text(msg)
+        placeholder=_placeholder_png("NO DATA\n" + msg)
+        UI["map_image"].set_source(placeholder)
+        _GRID_CACHE['image_source']=placeholder
+        push_log('warn', msg)
+        return
+    if grids:
+        source, zmin, zmax = await asyncio.to_thread(
+            _render_occupancy_frame, grids, view, ground, pose, _pose_z,
+            observed, inflated, model_polygons, envelope, trail, goal_xy, plan_xy,
+            plan_active, goal_failed, global_xy, global_active, trail_on, blocked,
+            style)
+    else:
+        source, zmin, zmax = await asyncio.to_thread(
+            _render_grid_frame, points, view, ground, dynamic_points, pose, _pose_z,
+            observed, inflated, model_polygons, envelope, trail, goal_xy, plan_xy,
+            plan_active, goal_failed, global_xy, global_active, trail_on,risk,blocked,style)
     if not UI.available:
         return
     image_source=source or _BLANK_PNG
@@ -4829,8 +5199,14 @@ async def _draw_grid_async(force: bool = False) -> None:
     _GRID_VIEW.update(view)
     _GRID_CACHE["key"] = key
     if UI.get("grid_info"):
+        count_text=(f"{len(points)} pts" if points is not None else
+                    (f"栅格 {grids[0][0].shape[1]}×{grids[0][0].shape[0]}" if grids and grids[0]
+                     else "栅格"))
+        with STATE.lock:
+            ref_g=getattr(STATE,'ref_grid',None);live_g=getattr(STATE,'live_grid',None)
+        grid_txt=(f"栅格 ref={'有' if ref_g else '无'}/live={'有' if live_g else '无'}")
         UI["grid_info"].set_text(
-            f"{label} · {len(points)} pts · z [{zmin:.2f}, {zmax:.2f}] · "
+            f"{label} · {count_text} · {grid_txt} · z [{zmin:.2f}, {zmax:.2f}] · "
             f"ground {ground:.2f} · {size_m:.0f} m 视野 · "
             + ('URDF关节投影 · ' if model_polygons else f'模型未就绪：{model_error} · ')
             + ('紫色包络就绪 · ' if envelope else '等待机器人审核包络 · ')
@@ -4862,8 +5238,9 @@ def _goal_failure_reason() -> str:
     with STATE.lock:
         gate = dict(STATE.goal_status)
         feas = dict(STATE.feasibility)
+    from navigation_flow import describe
     if gate.get("goal_received") and gate.get("last_goal_accepted") is False:
-        return f"Goal Gate 拒绝：{gate.get('reason', '—')}"
+        return f"目标未受理：{describe(gate.get('reason'))}"
     if feas:
         status = str(feas.get("status", "") or feas.get("reason", ""))
         reason = str(feas.get("reason", ""))
@@ -4871,8 +5248,7 @@ def _goal_failure_reason() -> str:
             return ("规划器没有生成 B 样条：scan_planner 可能无解，"
                     "或规划线程卡住/未响应（当前点判失败，建议重启导航）")
         if status:
-            return (f"规划器反馈：{status}"
-                    + (f" / {reason}" if reason and reason != status else ""))
+            return f"规划器反馈：{describe(reason or status)}"
     return "目标已接受，但 180 s 内没有新路径（规划器无输出）"
 
 
@@ -4924,7 +5300,7 @@ async def send_goal() -> None:
             f"规划失败（{phase}）：{reason}；耗时 {elapsed_ms:.0f} ms；"
             "目标已清除，允许重新选点；旧路径/过期路径不计入成功。")
         push_log("err", f"目标 ({x:.2f}, {y:.2f}) {phase}失败：{reason}；耗时 {elapsed_ms:.0f} ms；已清除")
-        notify_user(f"{phase}规划失败：{reason}", type="negative", timeout=8000)
+        notify_user(f"{phase}规划失败：{reason}", type="negative", timeout=5000)
 
     # Phase 1: global A* path. Fail fast; do not keep the goal pending.
     global_ok = False
@@ -4938,7 +5314,13 @@ async def send_goal() -> None:
             g_pts = STATE.global_pts
             g_distance = STATE.global_goal_distance
             gate = dict(STATE.goal_status)
+            planning_status=dict(getattr(STATE,'planning_status',{}))
         if seq != token:
+            return
+        if planning_status.get('goal_id')==goal_ns and planning_status.get('phase')=='GLOBAL_FAILED':
+            reason=str(planning_status.get('reason','global_no_route'))
+            from navigation_flow import describe
+            fail(describe(reason), '全局 A*', max(0.,(time.time_ns()-goal_ns)/1e6))
             return
         if g_success_ns and g_success_ns >= goal_ns:
             global_ms = max(0.0, (g_success_ns - goal_ns) / 1e6)
@@ -4961,12 +5343,14 @@ async def send_goal() -> None:
              "全局 A*", global_timeout * 1000.0)
         return
 
-    # Phase 2: local SCAN + CBF candidate path.
+    # Phase 2: native local SCAN execution proposal.
     UI["goal_result"].set_text(
-        f"全局 A* 成功（{global_ms:.0f} ms）；局部 SCAN/CBF 阶段（≤{local_timeout:.0f} s）…")
+        f"全局 A* 成功（{global_ms:.0f} ms）；局部 SCAN 阶段（≤{local_timeout:.0f} s）…")
     local_ok = False
     local_ms = 0.0
-    local_deadline = min(planning_deadline,time.monotonic() + max(3.0, local_timeout))
+    last_planning_reason = ""
+    local_start = time.monotonic()
+    local_deadline = min(planning_deadline, local_start + max(3.0, local_timeout))
     while time.monotonic() < local_deadline:
         await asyncio.sleep(0.1)
         with STATE.lock:
@@ -4975,6 +5359,7 @@ async def send_goal() -> None:
             l_pts = STATE.plan_pts
             l_active = STATE.plan_active
             gate = dict(STATE.goal_status)
+            planning_status=dict(getattr(STATE,'planning_status',{}))
         if seq != token:
             return
         if l_success_ns and l_success_ns >= goal_ns:
@@ -4995,7 +5380,22 @@ async def send_goal() -> None:
             reason = str(gate.get("reason", "goal_rejected"))
             fail(f"Goal Gate 拒绝（{reason}）", "局部", 0.0)
             return
-    fail(f"全局路线已生成，局部搜索在 {local_timeout:.0f} s 内尚未找到可执行曲线（不等于确定无路）",
+        if planning_status.get("goal_id")==goal_ns:
+            stage=str(planning_status.get("recovery_stage",""))
+            phase=str(planning_status.get("phase",""))
+            if stage=="wait" or phase=="WAITING_FOR_CLEARANCE":
+                from navigation_flow import describe
+                fail(f"局部规划进入等待恢复：{describe(planning_status.get('reason'))}"
+                     "（目标保留；可在“恢复策略”面板点“继续任务”，或移开障碍后重新规划）",
+                     "局部", max(0.0,(time.monotonic()-local_start)*1000.0))
+                return
+            reason_txt=str(planning_status.get("local_reason") or planning_status.get("reason") or "")
+            if phase in ("LOCAL_FAILED","GLOBAL_FAILED") and reason_txt:
+                last_planning_reason=reason_txt
+    from navigation_flow import describe
+    detail=(f"最后原因：{describe(last_planning_reason)}；" if last_planning_reason else "")
+    fail(f"全局路线已生成，局部搜索在 {local_timeout:.0f} s 内尚未找到可执行曲线（不等于确定无路）。{detail}"
+         "可查看“运行流程”的根因链",
          "局部", local_timeout * 1000.0)
 
 async def apply_map_path() -> None:
@@ -5272,7 +5672,7 @@ async def start_nav_visualization() -> None:
             msg = ("导航 RViz 启动后立即退出：DISPLAY/X 服务器不可用或无权限。"
                    "请在有桌面的终端设置 DISPLAY/XAUTHORITY，或使用 Foxglove。")
             push_log("err", msg)
-            notify_user(msg, type="negative", timeout=8000)
+            notify_user(msg, type="negative", timeout=5000)
 
 
         else:
@@ -5932,7 +6332,121 @@ def _chain_hint() -> str:
     return "数据链路完整，可以启动导航。"
 
 
+def _apply_recovery():
+    """Write the recovery limits to the planner node (live, no restart)."""
+    from recovery_tuner import apply_async
+    node=getattr(WORKER,"node",None)
+    if node is None:
+        if UI.get("rec_status"): UI["rec_status"].text="恢复策略：ROS 未就绪，参数未写入"
+        return
+    status = UI["rec_status"]
+
+    def done(msg):
+        try:
+            status.text=f"恢复策略：{msg}"
+        except BaseException: pass
+    apply_async(node,UI["rec_local"].value,UI["rec_global"].value,UI["rec_wait"].value,done)
+
+
+def _resume_recovery():
+    """Release one held task; the planner validates target and scene again."""
+    from recovery_tuner import resume_async
+    node=getattr(WORKER,"node",None)
+    ok=bool(node is not None and resume_async(node))
+    if UI.get("rec_status"):
+        UI["rec_status"].text="恢复策略：已发送继续请求" if ok else "恢复策略：ROS 未就绪"
+
+
+_PM_LAST = {}
+
+
+def _pm_key():
+    return UI["pm_select"].value if UI.get("pm_select") else None
+
+
+def _pm_text(key, current=None):
+    from param_manager import describe
+    try:
+        return describe(key, current)
+    except Exception:  # noqa: BLE001
+        return str(key)
+
+
+def _pm_select(key):
+    if UI.get("pm_desc"):
+        UI["pm_desc"].text = _pm_text(key, _PM_LAST.get(key))
+    if UI.get("pm_value") and key in _PM_LAST:
+        UI["pm_value"].value = _PM_LAST[key]
+
+
+def _pm_read():
+    key = _pm_key()
+    node = getattr(WORKER, "node", None)
+    if not key or node is None:
+        UI["pm_result"].text = "ROS 未就绪"
+        return
+    from param_manager import read_async
+    # Capture widgets now: the future callback runs on the ROS executor thread,
+    # where ClientUI's context lookup is unavailable.
+    result, field, desc = UI["pm_result"], UI["pm_value"], UI["pm_desc"]
+
+    def done(value, err):
+        try:
+            if err:
+                result.text = f"{key}: {err}"
+                return
+            _PM_LAST[key] = value
+            field.value = value
+            desc.text = _pm_text(key, value)
+            result.text = f"{key}: 已读取"
+        except BaseException:  # noqa: BLE001 - deleted client must not kill ROS
+            return
+
+    read_async(node, key, done)
+
+
+def _pm_apply():
+    key = _pm_key()
+    node = getattr(WORKER, "node", None)
+    if not key or node is None:
+        UI["pm_result"].text = "ROS 未就绪"
+        return
+    from param_manager import apply_async
+    result = UI["pm_result"]
+
+    def done(msg):
+        try:
+            result.text = f"{key}: {msg}"
+        except BaseException:  # noqa: BLE001 - deleted client must not kill ROS
+            return
+
+    apply_async(node, key, UI["pm_value"].value, done)
+
+
+def _recovery_label():
+    from recovery_tuner import describe
+    try:
+        with STATE.lock: status=dict(getattr(STATE,"planning_status",{}))
+        return describe(status)
+    except Exception:  # noqa: BLE001
+        return "恢复策略：未触发"
+
+
 _CHAIN_LAST_HTML = ""
+
+
+def _run_flow_html():
+    from navigation_flow import build_flow,render_flow
+    with STATE.lock:
+        task=STATE.navigation_task
+        scene=dict(STATE.scene_status)
+        scene.update(scan_freshness(getattr(STATE,'nav_scan_stamp_ns',0),time.time()))
+        snapshot=(STATE.plan_goal_ns,dict(getattr(STATE,'planning_status',{})),
+            dict(STATE.feasibility),dict(getattr(STATE,'slow_feedback',{})),
+            scene,dict(STATE.readiness),{'phase':task.phase,'reason':task.reason})
+    # age_of and readiness take STATE.lock themselves; never call under it.
+    return render_flow(build_flow(*snapshot,running=_nav_ready_state() is not None,
+        ages={k:STATE.age_of(v)for k,v in [('planning','planning_status'),('scene','scene_status')]}))
 
 
 def refresh_chain() -> None:
@@ -5941,11 +6455,16 @@ def refresh_chain() -> None:
     绿色必须每 tick 重新争取（状态来自 age_of 实时计算）；内容不变时
     跳过 innerHTML 替换，避免每 0.5 s 整块重建造成闪烁与 CPU 抖动。
     """
-    if not UI.get("chain_html"):
-        return
+    if not UI.available:return
+    if UI.get('rec_status'):
+        UI["rec_status"].text=_recovery_label()
+    if UI.get('run_flow_html'):
+        content=_run_flow_html()
+        if UI['run_flow_html'].content!=content:UI['run_flow_html'].content=content
+    if not UI.get("chain_html"):return
     global _CHAIN_LAST_HTML
     html = _chain_html()
-    if html != _CHAIN_LAST_HTML:
+    if html != UI["chain_html"].content:
         UI["chain_html"].content = html
         _CHAIN_LAST_HTML = html
     hint = _chain_hint()
@@ -6032,7 +6551,7 @@ def refresh_panels() -> None:
             task.observe_plan(path_ok,path_ok,STATE.goal_failed,nav_live,
                               '、'.join(reasons))
             task.check_feedback(time.monotonic())
-            task_label=task.label;task_reason=task.reason;task_phase=task.phase
+            task_label=task.label;task_reason=planning_wait_description(getattr(STATE,'planning_status',{}),STATE.plan_goal_ns,task.reason);task_phase=task.phase
         color=COL_OK if task_phase in ('READY','RUNNING','ARRIVED') else COL_WARN
         if task_phase=='FAILED':color=COL_ERR
         if TASK_STATE.active and task_phase=='ARRIVED':task_label='路线执行中 · 站点停留'
@@ -6121,13 +6640,16 @@ def build_console_page() -> None:
                         _BLANK_PNG,on_mouse=on_map_click,events=['click']).classes(
                         'w-full max-w-[860px] mx-auto rounded-xl border border-slate-700')
                 with ui.column().classes('w-52 gap-3 shrink-0'):
-                    UI['src']=ui.select(['自动','建图','定位地图','导航栅格'],value='自动',
-                        label='地图模式',on_change=lambda _:draw_grid(force=True)).props('outlined dense').classes('w-full')
+                    UI['src']=ui.select(['自动','导航','建图','定位'],value='自动',
+                        label='地图内容',on_change=lambda _:draw_grid(force=True)).props('outlined dense').classes('w-full')
+                    UI['render']=ui.select(['低耗栅格','细节点云'],value='低耗栅格',
+                        label='渲染方式',on_change=lambda _:draw_grid(force=True)).props('outlined dense').classes('w-full')
                     UI['grid_info']=ui.label('等待地图数据…').classes('text-xs text-slate-400 leading-relaxed')
                     UI['range']=ui.select(['10m','20m','40m'],value='10m',label='视野',
                         on_change=lambda _:draw_grid(force=True)).props('outlined dense').classes('w-full')
                     UI['trail_on']=ui.checkbox('显示行驶轨迹',value=True,on_change=lambda _:draw_grid(force=True))
-                    ui.label('白色实体：URDF碰撞几何\n紫色光晕：机器人规划包络\n琥珀色：环境外扩6cm\n青绿：实时障碍\n灰蓝：参考环境\n蓝线：完整全局参考\n青线：当前执行前段').classes('text-xs text-slate-300 whitespace-pre-line')
+                    UI['risk_on']=ui.checkbox('显示未确认风险',value=False,on_change=lambda _:draw_grid(force=True))
+                    ui.label('低耗栅格：深蓝=已知空闲，近黑=未观测，灰蓝=导航参考，浅蓝=建图累积，淡紫=定位地图，青绿=实时障碍；\n细节点云：额外显示发光与膨胀层。\n白色实体：URDF碰撞几何\n紫色光晕：机器人规划包络\n蓝线：完整全局参考（远端可能未观测）\n青线：当前执行前段').classes('text-xs text-slate-300 whitespace-pre-line')
                     ui.label('环境余量6cm只计一次；紫色为机身近似覆盖，琥珀色为环境外扩（5cm栅格离散）。').classes('text-xs text-slate-500')
                     with ui.expansion('显示参数',icon='tune').classes('w-full'):
                         UI['ground_z']=ui.number('地面 z',value=DEFAULT_NAV_GROUND,format='%.2f',
@@ -6141,6 +6663,7 @@ def build_console_page() -> None:
             ui.tab("建图")
             ui.tab("定位")
             ui.tab("导航")
+            ui.tab("参数管理")
             ui.tab("节点管理")
         with ui.tab_panels(tabs, value="总控 / 适配器").classes("w-full"):
             with ui.tab_panel("总控 / 适配器"):
@@ -6287,6 +6810,17 @@ def build_console_page() -> None:
                                 UI["loc_map_path"] = _kv("地图路径")
 
             with ui.tab_panel("导航"):
+                with _card2('运行流程（点击环节查看原因与恢复条件）'):
+                    UI['run_flow_html']=ui.html(_run_flow_html(),sanitize=False).classes('w-full')
+                with _card2("恢复策略（运行时调试，写入即生效）"):
+                    with ui.row().classes("w-full gap-3 items-end"):
+                        UI["rec_local"]=ui.number("局部绕行次数",value=15,min=1,max=50,format="%d").classes("w-32")
+                        UI["rec_global"]=ui.number("全局重规划次数",value=5,min=1,max=20,format="%d").classes("w-32")
+                        UI["rec_wait"]=ui.number("等待超时 [s]（0=手动）",value=0,min=0,max=600,format="%.0f").classes("w-40")
+                        ui.button("应用",on_click=_apply_recovery).props("outline dense")
+                        ui.button("继续任务",on_click=_resume_recovery).props("outline dense color=positive")
+                    UI["rec_status"]=ui.label("恢复策略：未触发").classes("text-xs text-slate-400")
+                    _lbl("局部绕行用尽后自动全局重规划，两者都用尽则零速等待并保留目标；参数写入规划节点，不重启。等待超时>0且自动恢复开启时按其重试。","text-xs text-slate-400")
                 with _card2("③ 导航模块"):
                     UI['navigation_mode']=ui.select(['地图选点移动','手动记录路线'],value=TASK_STATE.mode,
                         on_change=lambda e:change_navigation_mode(e.value),label='导航模式').classes('w-64')
@@ -6355,6 +6889,20 @@ def build_console_page() -> None:
                                     UI["nav_ground_match"] = _kv("地面一致性")
                                 UI["nav_result"] = _kv("导航操作")
 
+            with ui.tab_panel("参数管理"):
+                with _card2("参数管理（我方设计参数，不含甲方）"):
+                    from param_manager import options as _pm_options
+                    _pm_opts=_pm_options()
+                    _pm_first=next(iter(_pm_opts))
+                    with ui.row().classes("w-full gap-3 items-end"):
+                        UI["pm_select"]=ui.select(_pm_opts,value=_pm_first,label="参数",
+                            on_change=lambda e:_pm_select(e.value)).classes("w-[28rem]").props("outlined dense")
+                        UI["pm_value"]=ui.input("值").classes("w-32").props("dense")
+                        ui.button("读取",on_click=_pm_read).props("flat dense")
+                        ui.button("应用",on_click=_pm_apply).props("outline dense")
+                    UI["pm_desc"]=ui.label(_pm_text(_pm_first)).classes("text-xs text-slate-300 whitespace-pre-line")
+                    UI["pm_result"]=ui.label("").classes("text-xs text-slate-400")
+                    _lbl("只列本仓库定义的速度/恢复/审查/规划参数；甲方 SLAM、底盘、雷达、遥控参数不在此列。标“重启”的参数写入后需重启对应节点。","text-xs text-amber-400")
             with ui.tab_panel("节点管理"):
                 with _card2("系统节点管理"):
                     _lbl("按功能查看当前 ROS 图；分类不代表进程所有权。"
@@ -6404,6 +6952,11 @@ def build_console_page() -> None:
                             "w-full compact-expansion"):
                         UI["orphan_result"] = _kv("孤儿进程")
                         UI["kill_target"] = ui.input("停止节点名").classes("w-full")
+                        UI["kill_external_nodes"] = ui.checkbox(
+                            "允许操作非本 GUI 托管的进程（外部终端启动）").classes("text-xs")
+                        _lbl("默认只停本 GUI 登记的进程组；勾选后可处理终端启动的 N-01 节点。"
+                             "甲方底盘 / 腿控 / 手柄 / Livox / lpms 始终受保护。",
+                             "text-xs text-amber-400")
                         UI["kill_result"] = _kv("停止结果")
                         with ui.row().classes("gap-2"):
                             ui.button("查看停止计划", on_click=show_kill_plan)\

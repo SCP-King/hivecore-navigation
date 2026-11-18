@@ -169,7 +169,7 @@ def _nodes(context):
             package="n01_live_navigation", executable="n01_live_scan_bridge",
             name="n01_live_scan_bridge",
             condition=IfCondition(LaunchConfiguration("start_scan_bridge")),
-            parameters=[{
+            parameters=[navigation_config, {
                 "status_topic": "/n01/localization/status",
                 "cloud_topic": "/cloud_registered_body",
                 "pose_topic": "/n01/localization/pose",
@@ -192,6 +192,7 @@ def _nodes(context):
                 "body_pose_publish_period_s": 0.05,
                 "max_live_body_pose_age_s": 0.25,
                 "max_tf_wait_s": 0.55, "tf_retry_period_s": 0.02,
+                "ground_plane": [ground_a,ground_b,ground_z], "ground_configured": True,
                 "max_pending_clouds": 1, "max_points": 100000,
                 "max_point_range_m": 12.0, "use_sim_time": False,
             }],
@@ -239,6 +240,10 @@ def _nodes(context):
             name="n01_hive2_trajectory_monitor",
             additional_env={"RMW_IMPLEMENTATION": "rmw_fastrtps_cpp"},
             parameters=[navigation_config, {
+                # 2026-11-17: blind spots are a mapping responsibility. Navigation
+                # only blocks on explicit obstacles, so execution no longer
+                # requires validated footprint coverage.
+                "require_observed_space": False,
                 "map_frame": "map",
                 "map_id": LaunchConfiguration("map_id", default="").perform(context),
                 # Screen the candidate at the speed the slow executor actually
@@ -270,7 +275,7 @@ def _nodes(context):
         Node(
             package="scan_planner", executable="scan_planner_node",
             name="scan_planner_node",
-            parameters=[planner_config, {
+            parameters=[planner_config, navigation_config, {
                 "use_sim_time": False,
                 "fsm.navi_mode": 1,
                 "fsm.thresh_replan": 0.1,
@@ -279,10 +284,16 @@ def _nodes(context):
                 "fsm.planning_horizon": 10.0,
                 "fsm.emergency_time": 1.0,
                 "fsm.fail_safe": True,
-                "fsm.max_replan_fail_count": 1000,
                 "grid_map.resolution": 0.05,
                 "grid_map.static_observation_refresh": True,
-                "grid_map.static_prior_as_cost": True,
+                # Same rule for planning: no inferred unknown obstacles.
+                "grid_map.require_observed_local_space": False,
+                # Let the global reference reach goals outside the loaded map;
+                # unknown space is traversable, not a rejection reason.
+                "grid_map.extend_reference_to_goal": True,
+                "grid_map.static_prior_as_cost": False,
+                # Planning may treat unknown as cost; execution stays gated.
+                "grid_map.unknown_as_obstacle": False,
                 "grid_map.sliding_map_size_x": 10.0,
                 "grid_map.sliding_map_size_y": 10.0,
                 "grid_map.sliding_map_size_z": 5.0,

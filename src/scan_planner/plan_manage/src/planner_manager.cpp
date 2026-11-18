@@ -1,4 +1,6 @@
-// #include <fstream>
+//
+#include <functional>
+#include <fstream>
 #include <plan_manage/planner_manager.h>
 #include <path_searching/dyn_a_star.h>
 #include <chrono>
@@ -61,15 +63,32 @@ namespace scan_planner
       bool static_reference_local = false,
       const Eigen::Vector3d &reference_min = Eigen::Vector3d::Zero(),
       const Eigen::Vector3d &reference_max = Eigen::Vector3d::Zero(),
-      const std::vector<Eigen::Vector2d> &footprint_polygon = {})
+      const std::vector<Eigen::Vector2d> &footprint_polygon = {},
+      bool extend_realtime_reference = false, std::string* error=nullptr,
+      const std::vector<Eigen::Vector3d>& uncertain_points={},
+      std::function<bool(const Eigen::Vector3d&)>* free_check=nullptr)
   {
-    if (cloud.empty() || resolution <= 1e-6)
-      return {};
+    if(error)error->clear();
+    const auto fail=[&](const char* reason){if(error)*error=reason;return std::vector<Eigen::Vector3d>{};};
+    if (cloud.empty())return fail("map_reference_unavailable");
+    if (!std::isfinite(resolution) || resolution <= 1e-6 ||
+        !start.allFinite() || !end.allFinite() || !source_min.allFinite() || !source_max.allFinite())
+      return fail("invalid_global_inputs");
+    // Only the realtime reference may extend past current SLAM bounds.
+    // This is an optimistic global guide, never a certificate of observed free space.
+    Eigen::Vector3d lo=source_min, hi=source_max;
+    if(extend_realtime_reference) {
+      lo=lo.cwiseMin(start).cwiseMin(end);hi=hi.cwiseMax(start).cwiseMax(end);
+    }
     const double margin = 1.0;
-    const double min_x = source_min.x() - margin;
-    const double min_y = source_min.y() - margin;
-    const double max_x = source_max.x() + margin;
-    const double max_y = source_max.y() + margin;
+    const double min_x = lo.x() - margin;
+    const double min_y = lo.y() - margin;
+    const double max_x = hi.x() + margin;
+    const double max_y = hi.y() + margin;
+    // Check before integer conversion/allocation, including unreasonable clicked goals.
+    const double cells_x=std::ceil((max_x-min_x)/resolution)+1.;
+    const double cells_y=std::ceil((max_y-min_y)/resolution)+1.;
+    if(!std::isfinite(cells_x*cells_y) || cells_x*cells_y>4000000.) return fail("global_search_budget_exceeded");
     const int width = static_cast<int>(std::ceil((max_x - min_x) / resolution)) + 1;
     const int height = static_cast<int>(std::ceil((max_y - min_y) / resolution)) + 1;
     if (width <= 2 || height <= 2 || static_cast<long long>(width) * height > 4000000LL)
@@ -87,9 +106,7 @@ namespace scan_planner
       if (p.z < min_z || p.z > max_z || p.z <= ground_cutoff.x()*p.x+ground_cutoff.y()*p.y+ground_cutoff.z()) continue;
       const int id = index(p.x, p.y);
       if (id >= 0) {
-        if(static_reference_local && p.x>=reference_min.x() && p.x<=reference_max.x() &&
-           p.y>=reference_min.y() && p.y<=reference_max.y()) reference[id]=1;
-        else occupied[id]=1;
+        occupied[id]=1; // Known background obstacles never become soft just by entering the window.
       }
     }
     // The static map is the global baseline; current sensor hits can block a
@@ -99,6 +116,11 @@ namespace scan_planner
       if (p.z()<min_z || p.z()>max_z || p.z() <= ground_cutoff.x()*p.x()+ground_cutoff.y()*p.y()+ground_cutoff.z()) continue;
       const int id=index(p.x(),p.y());
       if (id>=0) occupied[id]=1;
+    }
+    (void)static_reference_local;(void)reference_min;(void)reference_max;
+    for(const auto& p:uncertain_points){
+      if(!p.allFinite() || p.z()<min_z || p.z()>max_z || p.z()<=ground_cutoff.x()*p.x()+ground_cutoff.y()*p.y()+ground_cutoff.z())continue;
+      int id=index(p.x(),p.y());if(id>=0)reference[id]=1;
     }
     // Rasterize the configured metric radius, not ceil(radius/resolution)
     // cells. Keep fractional footprint offsets in metres as well: rounding
@@ -146,17 +168,18 @@ namespace scan_planner
     return result;
     };
     const auto inflated=inflate_layer(occupied);
-    const auto reference_inflated=static_reference_local ? inflate_layer(reference) : std::vector<uint8_t>();
+    const auto reference_inflated=inflate_layer(reference);
+    if(free_check)*free_check=[index,inflated](const Eigen::Vector3d& p){int id=index(p.x(),p.y());return id>=0 && !inflated[id];};
     const int start_id = index(start.x(), start.y());
     const int goal_id = index(end.x(), end.y());
-    if (start_id < 0 || goal_id < 0) return {};
+    if (start_id < 0 || goal_id < 0) return fail("start_or_goal_outside_map_bounds");
     if (inflated[start_id] || inflated[goal_id])
     {
       RCLCPP_ERROR(rclcpp::get_logger("path_searching"),
                    "Global PCD A* start/goal occupied after 2D inflation: start_occ=%d goal_occ=%d z=[%.2f,%.2f]",
                    static_cast<int>(inflated[start_id]), static_cast<int>(inflated[goal_id]),
                    min_z, max_z);
-      return {};
+      return fail(inflated[start_id]?"start_occupied":"goal_occupied");
     }
     const int gx = goal_id % width, gy = goal_id / width;
     const auto heuristic = [gx, gy, width](int id) {
@@ -192,7 +215,7 @@ namespace scan_planner
             (inflated[cy * width + nx] || inflated[ny * width + cx]))
           continue;
         const double step = (d[0] != 0 && d[1] != 0) ? std::sqrt(2.0) : 1.0;
-        const double prior_cost=static_reference_local && reference_inflated[nid] ? 12.0 : 1.0;
+        const double prior_cost=reference_inflated[nid] ? 12.0 : 1.0;
         const double tentative = g_score[current] + step*prior_cost;
         if (tentative + 1e-9 < g_score[nid])
         {
@@ -202,7 +225,7 @@ namespace scan_planner
         }
       }
     }
-    if (!found) return {};
+    if (!found) return fail("global_no_route");
     std::vector<int> ids;
     for (int cur = goal_id; cur != -1; cur = parent[cur])
     {
@@ -259,8 +282,8 @@ namespace scan_planner
         {
           if ((path[j] - path[i]).head<2>().norm() > waypoint_spacing)
             break;
-          if (segment_free(path[i], path[j]))
-            best = j;
+          bool same_risk=true;for(size_t k=i;k<=j;++k){int id=index(path[k].x(),path[k].y());if(id>=0&&reference_inflated[id]){same_risk=false;break;}}
+          if (same_risk && segment_free(path[i], path[j]))best = j;
         }
         reduced.push_back(path[best]);
         i = best;
@@ -319,6 +342,7 @@ namespace scan_planner
                                         Eigen::Vector3d start_acc, Eigen::Vector3d local_target_pt,
                                         Eigen::Vector3d local_target_vel, bool flag_polyInit, bool flag_randomPolyTraj)
   {
+    last_local_error_.clear();
 
     static int count = 0;
     std::cout << endl
@@ -331,6 +355,7 @@ namespace scan_planner
     // unreachable annulus where every replan fails before optimization.
     if ((start_pt - local_target_pt).norm() < 0.02)
     {
+      last_local_error_="local_target_too_close_without_arrival";
       cout << "Close to goal" << endl;
       continuous_failures_count_++;
       return false;
@@ -443,6 +468,7 @@ namespace scan_planner
             }
             else
             {
+              last_local_error_="local_initialization_has_no_path";
               RCLCPP_ERROR(node_->get_logger(), "pseudo_arc_length is empty; aborting replan");
               continuous_failures_count_++;
               return false;
@@ -507,6 +533,7 @@ namespace scan_planner
     cout << "first_optimize_step_success=" << flag_step_1_success << endl;
     if (!flag_step_1_success)
     {
+      last_local_error_="scan_optimizer_no_collision_free_solution";
       // visualization_->displayOptimalList( ctrl_pts, vis_id );
       continuous_failures_count_++;
       return false;
@@ -534,6 +561,7 @@ namespace scan_planner
 
     if (!flag_step_2_success || !checkDynamicFeasibility(pos))
     {
+      last_local_error_="scan_refinement_or_dynamic_limit_failed";
       printf("\033[34mThis refined trajectory is unsafe or dynamically infeasible. Skip publishing it.\n\033[0m");
       continuous_failures_count_++;
       return false;
@@ -651,16 +679,24 @@ namespace scan_planner
                                          const Eigen::Vector3d &end_pos, const Eigen::Vector3d &end_vel, const Eigen::Vector3d &end_acc)
   {
 
+    last_global_error_.clear();
+    std::function<bool(const Eigen::Vector3d&)> reference_free;
     // Global path: A* over the COMPLETE static PCD bounds (not the 10 m
     // sliding local GridMap and not a hard-coded pool size).
     std::vector<Eigen::Vector3d> inter_points;
     const auto t_global_start = std::chrono::steady_clock::now();
     if(grid_map_ && !grid_map_->footprintReady()) {
+      last_global_error_="urdf_footprint_missing_or_stale";
       RCLCPP_ERROR(node_->get_logger(),"Global planning blocked: urdf_footprint_missing_or_stale");
       return false;
     }
     if (grid_map_ && grid_map_->hasStaticSource())
     {
+      if(grid_map_->usesRealtimeReference() &&
+         (end_pos.x()<grid_map_->getStaticSourceMin().x() || end_pos.x()>grid_map_->getStaticSourceMax().x() ||
+          end_pos.y()<grid_map_->getStaticSourceMin().y() || end_pos.y()>grid_map_->getStaticSourceMax().y()))
+        RCLCPP_INFO_THROTTLE(node_->get_logger(),*node_->get_clock(),2000,
+          "Realtime far goal retained: extending optimistic global reference; local execution still needs current scene");
       inter_points = globalAStar2D(
           grid_map_->getStaticSourceCloud(),
           grid_map_->getLiveObstaclePoints(),
@@ -671,7 +707,7 @@ namespace scan_planner
           std::max(start_pos.z(), end_pos.z()) + grid_map_->getBodyUp(),
           pp_.global_waypoint_spacing_,
           start_pos, end_pos, grid_map_->getFootprintCenters(), grid_map_->getGroundCutoffPlane(),
-          grid_map_->usesStaticReferenceCost(),grid_map_->getLocalMinimum(),grid_map_->getLocalMaximum(),grid_map_->getFootprintPolygon());
+          grid_map_->usesStaticReferenceCost(),grid_map_->getLocalMinimum(),grid_map_->getLocalMaximum(),grid_map_->getFootprintPolygon(),(grid_map_->usesRealtimeReference()||grid_map_->extendsReferenceToGoal()),&last_global_error_,grid_map_->getUnconfirmedPoints(),&reference_free);
       if (inter_points.size() < 2)
       {
         RCLCPP_ERROR(node_->get_logger(),
@@ -690,22 +726,13 @@ namespace scan_planner
                   std::chrono::duration<double, std::milli>(t_astar_done - t_global_start).count(),
                   grid_map_->getStaticSourceMin().x(), grid_map_->getStaticSourceMax().x(),
                   grid_map_->getStaticSourceMin().y(), grid_map_->getStaticSourceMax().y());
-      constexpr size_t kMaxGlobalWps = 160;
-      if (inter_points.size() > kMaxGlobalWps)
-      {
-        std::vector<Eigen::Vector3d> reduced;
-        const size_t stride = (inter_points.size() + kMaxGlobalWps - 1) / kMaxGlobalWps;
-        for (size_t i = 0; i < inter_points.size(); i += stride)
-          reduced.push_back(inter_points[i]);
-        if (reduced.back() != inter_points.back())
-          reduced.push_back(inter_points.back());
-        inter_points.swap(reduced);
-      }
+
     }
     else
     {
       RCLCPP_ERROR(node_->get_logger(),
                    "Global PCD A* unavailable: static PCD source is not ready");
+      last_global_error_="map_reference_unavailable";
       return false;
     }
 
@@ -727,12 +754,48 @@ namespace scan_planner
     time(time.rows() - 1) *= 2.0;
 
     PolynomialTraj gl_traj;
-    if (pos.cols() >= 3)
+    if (pos.cols() >= 3 && pos.cols()<=160)
       gl_traj = PolynomialTraj::minSnapTraj(pos, start_vel, end_vel, start_acc, end_acc, time);
     else if (pos.cols() == 2)
       gl_traj = PolynomialTraj::one_segment_traj_gen(start_pos, start_vel, start_acc, end_pos, end_vel, end_acc, time(0));
-    else
-      return false;
+    else if(pos.cols()<2)return false;
+
+    auto line_reference=[&](){
+      PolynomialTraj line;line.reset();
+      for(int i=0;i<pt_num-1;++i){
+        const auto delta=(pos.col(i+1)-pos.col(i))/time(i);
+        line.addSegment({0,0,0,0,delta.x(),pos(0,i)},
+                        {0,0,0,0,delta.y(),pos(1,i)},
+                        {0,0,0,0,delta.z(),pos(2,i)},time(i));
+      }
+      line.init();return line;
+    };
+    if(pt_num>160)gl_traj=line_reference();
+    // Bound the polynomial speed by its coefficients on each segment. Sampling
+    // at <=quarter-cell arc distance checks the final smooth reference itself.
+    auto reference_valid=[&](PolynomialTraj& traj){
+      if(!reference_free)return false;
+      const auto durations=traj.getTimes();const auto cx=traj.getCoef(0),cy=traj.getCoef(1),cz=traj.getCoef(2);
+      double offset=0.;size_t samples=0;
+      for(size_t seg=0;seg<durations.size();++seg){
+        const double duration=durations[seg];double velocity_bound=0.;
+        for(const auto* axis:{&cx,&cy,&cz})for(size_t j=0;j+1<(*axis)[seg].size();++j){
+          const size_t power=(*axis)[seg].size()-1-j;
+          velocity_bound+=std::abs((*axis)[seg][j])*power*std::pow(duration,power-1);
+        }
+        const double count=std::ceil(duration*velocity_bound/(grid_map_->getResolution()*.25));
+        if(!std::isfinite(count)||count>300000. || samples+count>300000.)return false;
+        const size_t steps=std::max<size_t>(1,size_t(count));samples+=steps;
+        for(size_t k=0;k<=steps;++k)if(!reference_free(traj.evaluate(offset+duration*k/steps)))return false;
+        offset+=duration;
+      }
+      return true;
+    };
+    if(!reference_valid(gl_traj)){
+      gl_traj=line_reference();
+      if(!reference_valid(gl_traj)){last_global_error_="global_reference_collision";return false;}
+      RCLCPP_WARN(node_->get_logger(),"Global smoothing crossed occupancy or exceeded sampling budget; retaining collision-free A* polyline reference");
+    }
 
     const auto t_smooth_done = std::chrono::steady_clock::now();
     RCLCPP_INFO(node_->get_logger(),

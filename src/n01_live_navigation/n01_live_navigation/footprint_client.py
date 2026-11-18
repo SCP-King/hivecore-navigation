@@ -8,6 +8,8 @@ from .robot_footprint import describe
 class FootprintClient:
     def __init__(self,node):
         self.node=node;self.polygon=None;self.rx=0.;self.stamp=0
+        if not node.has_parameter('grid_map.footprint_max_age_s'):
+            node.declare_parameter('grid_map.footprint_max_age_s',3.0)
         q=QoSProfile(depth=1,reliability=ReliabilityPolicy.RELIABLE,durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.sub=node.create_subscription(PolygonStamped,'/n01/robot_footprint',self.receive,q)
     def receive(self,m):
@@ -18,7 +20,8 @@ class FootprintClient:
         self.polygon=p;self.rx=time.monotonic();self.stamp=m.header.stamp.sec*10**9+m.header.stamp.nanosec
     def get(self):
         age=(self.node.get_clock().now().nanoseconds-self.stamp)/1e9
-        if self.polygon is None or time.monotonic()-self.rx>1. or not -.1<=age<=1.:
+        limit=float(self.node.get_parameter('grid_map.footprint_max_age_s').value)
+        if self.polygon is None or time.monotonic()-self.rx>limit or not -.1<=age<=limit:
             raise ValueError('urdf_footprint_missing_or_stale')
         return self.polygon
     def description(self):

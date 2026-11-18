@@ -38,3 +38,11 @@ def test_missing_feedback_is_unknown_not_assumed_moving_or_arrived():
     assert t.phase=='PAUSED' and '待确认'in t.reason
     assert execution_task_state('NOT_READY')=='PAUSED'
     assert execution_task_state('ROTATING')=='RUNNING'
+
+
+def test_waiting_for_native_path_exposes_only_matching_goal_planning_reason():
+    from n01_live_navigation.task_status import planning_wait_description
+    status=dict(goal_id=2,phase='WAITING_FOR_OBSERVATION')
+    assert '雷达覆盖'in planning_wait_description(status,2,'waiting_for_native_scan_trajectory')
+    assert '本次目标'in planning_wait_description(status,3,'waiting_for_native_scan_trajectory')
+    assert planning_wait_description(status,2,'estop')=='estop'

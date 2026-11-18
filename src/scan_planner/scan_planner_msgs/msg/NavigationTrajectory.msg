@@ -30,3 +30,7 @@ builtin_interfaces/Time rotation_stamp
 # Scene/model feedback may remain valid when a new spline is rejected.
 # This updates collision evidence for an existing segment; never authorizes the rejected spline.
 bool scene_valid
+# Realtime exploration separates unknown from measured clear local centres.
+bool require_observed_space
+sensor_msgs/PointCloud2 observed_free
+float64 observed_resolution

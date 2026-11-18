@@ -8,6 +8,23 @@ from motion_feedback import MotionFeedback, command_conflicts
 
 
 class FeedbackTests(unittest.TestCase):
+    def test_packet_rejection_explains_existing_scan_instead_of_claiming_it_missing(self):
+        result=MotionFeedback().feed(dict(state='DISABLED',reason='waiting_for_native_scan_trajectory',
+            trajectory_rejection=dict(reason='packet_or_scene_stale',scene_age_s=1.79,scene_limit_s=.6)),0.)[0]
+        self.assertIn('1.79s',result['text'])
+        self.assertIn('0.60s',result['text'])
+        self.assertNotIn('尚未取得',result['text'])
+
+    def test_disabled_reason_updates_without_repeating_each_heartbeat(self):
+        feedback=MotionFeedback()
+        feedback.feed(dict(state='DISABLED',reason='chassis_twist_stale'),0.)
+        next_reason=dict(state='DISABLED',reason='waiting_for_native_scan_trajectory')
+        self.assertEqual(feedback.feed(next_reason,1.),[])
+        result=feedback.feed(next_reason,5.)
+        self.assertEqual(len(result),1)
+        self.assertIn('SCAN轨迹',result[0]['text'])
+        self.assertEqual(feedback.feed(next_reason,10.),[])
+
     def test_progress_is_periodic_and_arrival_reported_once(self):
         feedback = MotionFeedback()
         self.assertEqual(len(feedback.feed({'state': 'MOVING'}, 0)), 1)

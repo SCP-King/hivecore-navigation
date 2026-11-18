@@ -43,7 +43,7 @@ def test_controller_route_and_authority(tmp_path):
        '-p','task_id:=synthetic_route','-p','enabled:=false','-p','max_speed_mps:=0.2',
        '-p','max_yaw_rate_radps:=0.4','-p','max_accel_mps2:=0.3','-p','require_final_yaw:=true',
        '-p','follow_goal_updates:=true'],stdout=stream,stderr=subprocess.STDOUT,start_new_session=True)
-    last=time.monotonic();last_packet=0.
+    last=time.monotonic();last_packet=0.;feedback_delay=0.;scene_delay=0.
     def step(duration):
         nonlocal last,last_packet,joints
         end=time.monotonic()+duration
@@ -52,22 +52,26 @@ def test_controller_route_and_authority(tmp_path):
             now=time.monotonic();dt=min(.03,now-last);last=now
             v,w=command;pose[2]+=w*dt;pose[0]+=v*math.cos(pose[2])*dt;pose[1]+=v*math.sin(pose[2])*dt
             stamp=node.get_clock().now().to_msg();ns=stamp.sec*10**9+stamp.nanosec
-            p=Odometry();p.header.stamp=stamp;p.header.frame_id='map';p.child_frame_id='base_link'
+            from rclpy.time import Time
+            feedback_stamp=Time(nanoseconds=ns-int(feedback_delay*1e9)).to_msg()
+            scene_stamp=Time(nanoseconds=ns-int(scene_delay*1e9)).to_msg()
+            p=Odometry();p.header.stamp=feedback_stamp;p.header.frame_id='map';p.child_frame_id='base_link'
             p.pose.pose.position=Point(x=pose[0],y=pose[1],z=.775)
             p.pose.pose.orientation.z=math.sin(pose[2]/2);p.pose.pose.orientation.w=math.cos(pose[2]/2)
             pubs['/body_pose'].publish(p)
-            od=Odometry();od.header.stamp=stamp;od.header.frame_id='odom';od.child_frame_id='base_link'
+            od=Odometry();od.header.stamp=feedback_stamp;od.header.frame_id='odom';od.child_frame_id='base_link'
             # Reproduce the known doubled raw pose; measured twist stays true.
             od.pose.pose.position.x=pose[0]*2;od.pose.pose.position.y=pose[1]*2;od.pose.pose.orientation.w=1.
             od.twist.twist.linear.x=v;od.twist.twist.angular.z=w;pubs['/odom'].publish(od)
             if abs(v)+abs(w)>1e-8:joints=inverse((v,0.,w),joints)[0].tolist()
-            j=JointState();j.header.stamp=stamp;j.name=[f'{leg}_ankle_yaw'for leg in ('fl','fr','rl','rr')];j.position=joints;j.velocity=[0.]*4;pubs['/joint_states'].publish(j)
+            j=JointState();j.header.stamp=feedback_stamp;j.name=[f'{leg}_ankle_yaw'for leg in ('fl','fr','rl','rr')];j.position=joints;j.velocity=[0.]*4;pubs['/joint_states'].publish(j)
             health={'bridge':{'pose_prediction':{'fault':'','source_stamp_ns':ns,'source_age_s':0.,
                'source_pose':{'x':pose[0],'y':pose[1],'quaternion':[0.,0.,math.sin(pose[2]/2),math.cos(pose[2]/2)]}}}}
             pubs['/n01/live_navigation/system_health'].publish(String(data=json.dumps(health)))
             dec.publish(UInt8(data=0));emergency.publish(Bool(data=False))
             if packet is not None and now-last_packet>.08 and publish_scene:
-                packet.header.stamp=stamp;packet.scene_stamp=stamp;packet.rotation_stamp=stamp;packet.scene_center=Point(x=pose[0],y=pose[1])
+                packet.header.stamp=stamp;packet.scene_stamp=scene_stamp;packet.rotation_stamp=scene_stamp;packet.scene_center=Point(x=pose[0],y=pose[1])
+                if packet.require_observed_space:packet.observed_free.header.stamp=stamp
                 pubs['/n01/navigation/trajectory'].publish(packet);last_packet=now
             assert process.poll()is None,log.read_text()
             time.sleep(.003)
@@ -106,12 +110,30 @@ def test_controller_route_and_authority(tmp_path):
     results=[]
     try:
         step(1.5)
+        feedback_delay=1.5;scene_delay=4.
         goal(0,0,0,hold=True)
+        step(.8)
+        assert current.get('reason')=='packet_or_scene_stale',current
+        assert current['trajectory_rejection']['scene_limit_s']==3.
+        assert not current['start_ready'] and not current['enabled']
+        results.append({'case':'scene beyond configured 3s rejected with exact reason','passed':True})
+        scene_delay=1.8
         until(lambda:current.get('start_ready'))
         assert not any(abs(v)+abs(w)>1e-8 for _,v,w in outputs), 'disabled must not move'
+        results.append({'case':'1.5s feedback and 1.8s scene admitted under configured 3s budget','passed':True})
+        feedback_delay=0.;scene_delay=0.;step(.15)
         pubs['/n01/navigation/enable'].publish(Bool(data=True))
         until(lambda:current.get('state')=='ARRIVED')
         results.append({'case':'recorded A: hold, stop and measured confirmation','passed':True})
+        goal(0,0,math.pi/2,hold=True)
+        packet.require_observed_space=True;packet.observed_resolution=.1;packet.observed_free=obstacles([Point(x=.05,y=.05,z=.775)])
+        step(.35)
+        assert current['state']=='ALIGN' and abs(command[1])<1e-8,'centre-only coverage must not authorize swept robot rotation'
+        results.append({'case':'rotation refuses unobserved footprint despite observed centre','passed':True})
+        packet.observed_free=obstacles([Point(x=(x+.5)*.1,y=(y+.5)*.1,z=.775)for x in range(-10,10)for y in range(-10,10)])
+        until(lambda:current.get('state')=='ROTATING')
+        results.append({'case':'rotation resumes with full observed swept space','passed':True})
+        goal(0,0,0,hold=True);until(lambda:current.get('state')=='ARRIVED')
         step(1.)
         goal(1,0,math.pi/2)
         until(lambda:current.get('state')=='MOVING')
@@ -129,7 +151,7 @@ def test_controller_route_and_authority(tmp_path):
         results.append({'case':'return original A, turn before forward movement, final yaw','passed':True,'pose':list(pose)})
         # Stale scene must stop, but may recover once fresh evidence returns.
         goal(1,0,0);until(lambda:current.get('state')=='MOVING')
-        publish_scene=False;step(.85)
+        publish_scene=False;step(3.25)
         assert abs(command[0])+abs(command[1])<1e-8
         assert current['state']=='WAITING_FOR_FEEDBACK'
         publish_scene=True;until(lambda:current.get('state')=='MOVING')
@@ -140,6 +162,21 @@ def test_controller_route_and_authority(tmp_path):
         assert current['state']=='MOVING' and current['trajectory_id']==old_revision
         assert current['execution_time_s']>clock
         results.append({'case':'rejected replacement refreshes scene without revoking valid held segment','passed':True})
+        # Unknown is distinct from an obstacle-free cloud. It must stop the
+        # actual correction command and preserve the current task for recovery.
+        packet.require_observed_space=True;packet.observed_resolution=.1;packet.observed_free=obstacles([])
+        step(.35)
+        assert current['state']=='WAITING_FOR_REPLAN' and abs(command[0])+abs(command[1])<1e-8
+        waiting_goal=current['goal_id']
+        packet.observed_free=obstacles([Point(x=pose[0],y=pose[1],z=.775)])
+        step(.25)
+        assert current['state']=='WAITING_FOR_REPLAN' and abs(command[0])+abs(command[1])<1e-8,'observed centre alone cannot authorize unobserved footprint'
+        results.append({'case':'unknown coverage cannot authorize movement','passed':True})
+        packet.observed_free=obstacles([Point(x=(x+.5)*.1,y=(y+.5)*.1,z=.775)for x in range(-50,50)for y in range(-50,50)])
+        until(lambda:current.get('state')=='MOVING')
+        assert current['goal_id']==waiting_goal and current['trajectory_id']==old_revision
+        results.append({'case':'observed coverage resumes same held trajectory and final goal','passed':True})
+        packet.require_observed_space=False
         packet.revision=old_revision;packet.spline.traj_id=old_revision;packet.valid=True
         goal(2.,pose[1],0.);until(lambda:current.get('state')=='MOVING')
         packet.obstacles=obstacles([Point(x=pose[0]+.57,y=pose[1],z=.4)])

@@ -10,8 +10,10 @@
 #include <geometry_msgs/msg/polygon_stamped.hpp>
 #include <plan_env/polygon_footprint.h>
 #include <iostream>
+#include <limits>
 #include <random>
 #include <nav_msgs/msg/odometry.hpp>
+#include <nav_msgs/msg/occupancy_grid.hpp>
 #include <queue>
 #include <rclcpp/rclcpp.hpp>
 #include <rmw/qos_profiles.h>
@@ -36,6 +38,8 @@
 #include <plan_env/raycast.h>
 #include <plan_env/static_inflation.hpp>
 #include <plan_env/static_free_evidence.h>
+#include <plan_env/world_evidence.h>
+#include <unordered_map>
 
 #define logit(x) (log((x) / (1 - (x))))
 
@@ -138,13 +142,14 @@ struct MappingData {
   // depth image projected point cloud
 
   vector<Eigen::Vector3d> proj_points_;
+  std::vector<char> proj_ground_; // scan-time classification, not synthetic endpoints
   int proj_points_cnt;
 
   // flag buffers for speeding up raycasting
 
-  vector<short> count_hit_, count_hit_and_miss_;
-  vector<char> flag_traverse_, flag_rayend_;
-  char raycast_num_;
+  vector<std::uint32_t> count_hit_, count_hit_and_miss_;
+  vector<std::uint32_t> flag_traverse_, flag_rayend_;
+  std::uint32_t raycast_num_;
   queue<Eigen::Vector3i> cache_voxel_;
 
   // range of updating grid
@@ -181,7 +186,7 @@ public:
   inline void setOccupied(Eigen::Vector3d pos);
   inline int getOccupancy(Eigen::Vector3d pos);
   inline int getOccupancy(Eigen::Vector3i id);
-  inline int getInflateOccupancy(Eigen::Vector3d pos, double yaw);
+  inline int getInflateOccupancy(Eigen::Vector3d pos, double yaw, bool allow_unknown=false);
 
   inline void boundIndex(Eigen::Vector3i& id);
   inline bool isUnknown(const Eigen::Vector3i& id);
@@ -192,6 +197,63 @@ public:
   void initMap(rclcpp::Node* node);
 
   // Complete static PCD source (map frame), not the sliding-window copy.
+  bool requiresObservedSpace() const { return require_observed_space_; }
+  static uint64_t coverageKey(double x,double y) {
+    return (uint64_t(uint32_t(int64_t(std::floor(x/.1))))<<32) |
+           uint32_t(int64_t(std::floor(y/.1)));
+  }
+  bool hasObservedCoverage(const Eigen::Vector3d& p) const {
+    auto it=observed_columns_.find(coverageKey(p.x(),p.y()));
+    const double age=observation_now_s_- (it==observed_columns_.end()?0.:it->second);
+    return it!=observed_columns_.end() && age>=-.1 && age<=observation_ttl_s_;
+  }
+  double collisionLogThreshold() const {
+    return mp_.min_occupancy_log_;
+  }
+  bool collisionRisk(double value) const {
+    return value>=mp_.clamp_min_log_ && value>collisionLogThreshold();
+  }
+  bool observationFresh(int addr) const {
+    auto it=observation_times_.find(addr);
+    return it!=observation_times_.end() && observation_now_s_>=it->second-.1 && observation_now_s_-it->second<=observation_ttl_s_;
+  }
+  bool observedFree(const Eigen::Vector3d& p,
+                    const Eigen::Vector3d* envelope_center=nullptr) {
+    if(!isInMap(p))return false;
+    Eigen::Vector3i observed_id;posToIndex(p,observed_id);
+    const int addr=toAddress(observed_id);
+    // Visibility is 2D projected ray coverage, not a dense slice at body Z.
+    // Occupancy remains 3D: a ground ray never erases an upper chair voxel.
+    if(md_.occupancy_buffer_inflate_[addr] || collisionRisk(md_.occupancy_buffer_[addr]))return false;
+    if(hasObservedCoverage(p))return true;
+    // The current physical robot footprint is known to contain the robot,
+    // not unobserved forward travel. Do not erase any occupied voxel here.
+    // The collision query samples the environment-margin envelope, so the
+    // exemption must cover that same ring: otherwise every sample just
+    // outside the raw hull (LiDAR blind wedge at the rear/side) reads as
+    // unobserved and the robot can never be planned out of its start pose.
+    // Planning starts at a control point that can sit a few centimetres ahead
+    // of the measured body pose, so the exemption is anchored to the queried
+    // envelope while staying bounded to the real robot location.
+    const Eigen::Vector3d origin=envelope_center?*envelope_center:md_.sliding_map_frame_pos_;
+    // The rebound start can lead the measured pose by one control-point
+    // spacing (0.2 m), so bound the anchor offset at 0.3 m.
+    if((origin-md_.sliding_map_frame_pos_).head<2>().norm()>.30)return false;
+    const Eigen::Vector2d d=(p-origin).head<2>();
+    if(d.norm()>.85)return false;
+    auto polygon=footprintPolygon(md_.body_yaw_);
+    if(!urdf_footprint_enabled_ || polygon.size()<3)return false;
+    bool inside=true;
+    double edge_distance=std::numeric_limits<double>::infinity();
+    for(size_t i=0;i<polygon.size();++i){
+      const Eigen::Vector2d a=polygon[i],e=polygon[(i+1)%polygon.size()]-a,w=d-a;
+      if(e.x()*w.y()-e.y()*w.x()<0)inside=false;
+      const double len2=e.squaredNorm();
+      const double t=len2>1e-12?std::max(0.,std::min(1.,w.dot(e)/len2)):0.;
+      edge_distance=std::min(edge_distance,(w-t*e).norm());
+    }
+    return inside || edge_distance<=mp_.environment_margin_+1e-9;
+  }
   bool hasStaticSource() const { return static_source_valid_; }
   const pcl::PointCloud<pcl::PointXYZ>& getStaticSourceCloud() {
     refreshStaticObservations(true);
@@ -200,22 +262,86 @@ public:
   Eigen::Vector3d getStaticSourceMin() const { return static_source_min_; }
   Eigen::Vector3d getStaticSourceMax() const { return static_source_max_; }
   bool usesFixedBodyHeading() const { return mp_.fixed_body_heading_; }
+  bool usesRealtimeReference() const { return reference_updates_enabled_; }
+  // Goals outside the loaded map are plannable: unknown space is not an
+  // obstacle. The search grid extends to include start and goal.
+  bool extendsReferenceToGoal() const { return extend_reference_to_goal_; }
   bool usesStaticReferenceCost() const { return static_prior_as_cost_; }
+  // First concrete blocker of the robot envelope at pos/yaw. A failed local
+  // plan must name a cause and a location instead of a generic optimizer
+  // error; an empty code means the envelope is clear for planning.
+  struct EnvelopeBlocker { std::string code; double x=0., y=0., z=0.;
+                           double yaw=0., dnorm=0.; int polygon_points=0; };
+  EnvelopeBlocker envelopeBlocker(const Eigen::Vector3d& pos, double yaw) {
+    EnvelopeBlocker out;
+    const auto probe=[&](const Eigen::Vector3d& p)->const char* {
+      if(!isInMap(p))return "outside_map";
+      Eigen::Vector3i id;posToIndex(p,id);const int adr=toAddress(id);
+      if(md_.occupancy_buffer_inflate_[adr])return "live_occupied";
+      if(static_cloud_enabled_&&!static_prior_as_cost_&&!static_inflate_buffer_.empty()&&
+         static_inflate_buffer_[adr])return "static_occupied";
+      if(require_observed_space_&&!observedFree(p))return "not_observed";
+      return nullptr;
+    };
+    const auto record=[&](const Eigen::Vector3d& p){
+      const char* code=probe(p);
+      if(!code)return false;
+      out.code=code;out.x=p.x();out.y=p.y();out.z=p.z();
+      out.yaw=yaw;out.dnorm=(p-md_.sliding_map_frame_pos_).head<2>().norm();
+      out.polygon_points=int(footprint_polygon_.size());return true;
+    };
+    if(record(pos))return out;
+    if(mp_.fixed_body_heading_)yaw=md_.body_yaw_;
+    if(urdf_footprint_enabled_){
+      if(!footprintReady()){
+        out.code="footprint_missing";out.x=pos.x();out.y=pos.y();out.z=pos.z();return out;
+      }
+      const auto offsets=plan_env_detail::polygonOffsets(
+          footprintPolygon(yaw),mp_.environment_margin_,mp_.resolution_);
+      for(const auto& offset:offsets){
+        const Eigen::Vector3d p=pos+Eigen::Vector3d(offset.x()*mp_.resolution_,
+                                                    offset.y()*mp_.resolution_,0.);
+        if(record(p))return out;
+      }
+      return out;
+    }
+    const Eigen::Vector3d heading(std::cos(yaw),std::sin(yaw),0.);
+    for(double x:mp_.footprint_centers_x_){
+      if(record(pos+x*heading))return out;
+    }
+    return out;
+  }
   Eigen::Vector3d getLocalMinimum() const { return mp_.map_min_boundary_; }
   Eigen::Vector3d getLocalMaximum() const { return mp_.map_max_boundary_; }
-  std::vector<Eigen::Vector3d> getLiveObstaclePoints() const {
-    std::vector<Eigen::Vector3d> points;
-    points.reserve(md_.proj_points_cnt);
-    for (int i=0; i<md_.proj_points_cnt; ++i) {
-      const auto &p=md_.proj_points_[i];
-      // Beyond-range returns only clear truncated rays, not observed obstacles.
-      if ((p-md_.ray_pos_).squaredNorm() <= mp_.max_ray_length_*mp_.max_ray_length_)
-        points.push_back(p);
+  std::vector<Eigen::Vector3d> getLiveObstaclePoints() {
+    std::vector<Eigen::Vector3d> points;points.reserve(observation_times_.size()/4);
+    // Global and local use accumulated measured occupancy, not only one scan.
+    for(const auto& e:observation_times_)if(collisionRisk(md_.occupancy_buffer_[e.first])){
+      Eigen::Vector3i id;hashIdToGlobalIndex(e.first,id);Eigen::Vector3d p;indexToPos(id,p);
+      if(isInMap(p))points.push_back(p);
     }
     return points;
   }
+  std::vector<Eigen::Vector3d> getUnconfirmedPoints() {
+    std::vector<Eigen::Vector3d> points;
+    for(const auto& id:world_changes_.uncertainCells()){
+      Eigen::Vector3d p;indexToPos(Eigen::Vector3i(id[0],id[1],id[2]),p);
+      if(isInMap(p))points.push_back(p);
+    }
+    for(const auto& e:observation_times_){double v=md_.occupancy_buffer_[e.first];
+      if(v>std::min(-.01,mp_.prob_miss_log_) && !collisionRisk(v)){
+        Eigen::Vector3i id;hashIdToGlobalIndex(e.first,id);Eigen::Vector3d p;indexToPos(id,p);points.push_back(p);
+      }
+    }
+    if(predictionFresh())points.insert(points.end(),predicted_points_.begin(),predicted_points_.end());
+    return points;
+  }
+  int64_t sceneStamp() const{return processed_scan_stamp_ns_;}
+  bool takeRouteMapChange(){bool changed=route_map_changed_;route_map_changed_=false;return changed;}
 
   void publishMap();
+  // 2D projection of the same voxel buffers for display only (never planning input).
+  void publishProjectedGrids();
   void publishMapInflate(bool all_info = false);
 
   void publishUnknown();
@@ -232,7 +358,7 @@ public:
   bool footprintReady() const {
     return !urdf_footprint_enabled_ || (footprint_valid_ &&
       (node_->now().nanoseconds()-footprint_stamp_ns_)*1e-9 >= -.1 &&
-      (node_->now().nanoseconds()-footprint_stamp_ns_)*1e-9 <= 1.);
+      (node_->now().nanoseconds()-footprint_stamp_ns_)*1e-9 <= footprint_max_age_s_);
   }
   std::vector<Eigen::Vector2d> footprintPolygon(double yaw) const {
     std::vector<Eigen::Vector2d> p;
@@ -325,6 +451,7 @@ private:
 
   bool urdf_footprint_enabled_{false},footprint_valid_{false};
   int64_t footprint_stamp_ns_{0};
+  double footprint_max_age_s_{3.};
   std::vector<Eigen::Vector2d> footprint_polygon_;
   double footprint_cached_yaw_{1e30};
   std::vector<Eigen::Vector2i> footprint_cached_offsets_;
@@ -346,11 +473,29 @@ private:
   pcl::PointCloud<pcl::PointXYZ> static_source_decoded_;
   pcl::PointCloud<pcl::PointXYZ> effective_static_source_;
   plan_env_detail::StaticFreeEvidence static_free_evidence_;
-  plan_env_detail::StaticFreeEvidence static_free_column_evidence_;
+  plan_env_detail::WorldChanges world_changes_;
   std::vector<char> static_prior_mask_;
-  std::vector<char> static_prior_columns_;
   bool static_observation_refresh_{false}, static_refresh_pending_{false}, static_restore_urgent_{false};
   bool static_prior_as_cost_{false};
+  bool unknown_as_obstacle_{true};
+  bool extend_reference_to_goal_{false};
+  bool route_map_changed_{false};
+  rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr predicted_sub_;
+  std::vector<Eigen::Vector3d> predicted_points_;
+  int64_t prediction_stamp_ns_{0};
+  bool predictionFresh() const {
+    double age=(node_->now().nanoseconds()-prediction_stamp_ns_)*1e-9;
+    return prediction_stamp_ns_>0 && age>=-.1 && age<=.6;
+  }
+  bool require_observed_space_{false};
+  double observation_ttl_s_{3.};
+  int64_t latest_scan_stamp_ns_{0};
+  std::unordered_map<int,double> observation_times_;
+  std::unordered_map<uint64_t,double> observed_columns_;
+  double observation_now_s_{0.};
+  void expireObservations();
+  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr observed_free_pub_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr ground_reference_sub_;
   bool free_evidence_frame_valid_{false};
   int64_t free_evidence_stamp_{0}, last_free_evidence_stamp_{0};
   double last_static_rebuild_s_{0};
@@ -384,6 +529,14 @@ private:
   uniform_real_distribution<double> rand_noise_;
   normal_distribution<double> rand_noise2_;
   default_random_engine eng_;
+  void publishPlanningView();
+  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr fused_view_pub_,risk_view_pub_;
+  rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr reference_grid_pub_, live_grid_pub_;
+  double last_planning_view_s_{-1.};
+  std::vector<Eigen::Vector3i> static_window_prior_cells_;
+  std::unordered_map<int,int64_t> prior_observation_since_;
+  int64_t last_prior_scan_stamp_ns_{0},processed_scan_stamp_ns_{0};
+  void ageStaticPriors();
 };
 
 /* ============================== definition of inline function
@@ -422,9 +575,11 @@ inline void GridMap::boundIndex(Eigen::Vector3i& id) {
 }
 
 inline bool GridMap::isUnknown(const Eigen::Vector3i& id) {
+  if(!isInMap(id))return true;
   Eigen::Vector3i id1 = id;
-  boundIndex(id1);
-  return md_.occupancy_buffer_[toAddress(id1)] < mp_.clamp_min_log_ - 1e-3;
+  const double value=md_.occupancy_buffer_[toAddress(id1)];
+  return (require_observed_space_ && !observationFresh(toAddress(id1))) || value<mp_.clamp_min_log_-1e-3 ||
+      (value>std::min(-.01,mp_.prob_miss_log_) && value<mp_.min_occupancy_log_);
 }
 
 inline bool GridMap::isUnknown(const Eigen::Vector3d& pos) {
@@ -434,16 +589,12 @@ inline bool GridMap::isUnknown(const Eigen::Vector3d& pos) {
 }
 
 inline bool GridMap::isKnownFree(const Eigen::Vector3i& id) {
-  Eigen::Vector3i id1 = id;
-  boundIndex(id1);
-  int adr = toAddress(id1);
-
-  // return md_.occupancy_buffer_[adr] >= mp_.clamp_min_log_ &&
-  //     md_.occupancy_buffer_[adr] < mp_.min_occupancy_log_;
-  return md_.occupancy_buffer_[adr] >= mp_.clamp_min_log_ &&
-         md_.occupancy_buffer_inflate_[adr] == 0 &&
-         (!static_cloud_enabled_ || static_inflate_buffer_.empty() ||
-          static_inflate_buffer_[adr] == 0);
+  if(!isInMap(id))return false;
+  const int adr=toAddress(id);
+  return md_.occupancy_buffer_[adr]>=mp_.clamp_min_log_ &&
+         md_.occupancy_buffer_[adr]<=std::min(-.01,mp_.prob_miss_log_) &&
+         md_.occupancy_buffer_inflate_[adr]==0 &&
+         (!static_cloud_enabled_ || static_prior_as_cost_ || static_inflate_buffer_.empty() || static_inflate_buffer_[adr]==0);
 }
 
 inline bool GridMap::isKnownOccupied(const Eigen::Vector3i& id) {
@@ -491,8 +642,25 @@ inline int GridMap::getOccupancy(Eigen::Vector3d pos) {
            static_occupancy_buffer_[addr] == 1)) ? 1 : 0;
 }
 
-inline int GridMap::getInflateOccupancy(Eigen::Vector3d pos, double yaw) {
+inline int GridMap::getInflateOccupancy(Eigen::Vector3d pos, double yaw, bool allow_unknown) {
+  // Hard occupancy and observation certainty are separate decisions. Real
+  // obstacles always block; an unobserved cell only blocks when the caller
+  // asks for strict observation (execution/admission) or when the configured
+  // planning policy still treats unknown as an obstacle. Planning may relax
+  // unknown to a cost/speed influence while execution keeps the strict gate.
   if (mp_.fixed_body_heading_) yaw=md_.body_yaw_;
+  const bool check_observed=require_observed_space_ && !allow_unknown;
+  bool unobserved=false;
+  const auto sample=[&](const Eigen::Vector3d& point)->int {
+    const int live=getInflateOccupancyFromBuffer(point,md_.occupancy_buffer_inflate_);
+    if(live!=0)return live;
+    if(static_cloud_enabled_ && !static_prior_as_cost_ && !static_inflate_buffer_.empty()) {
+      const int stat=getInflateOccupancyFromBuffer(point,static_inflate_buffer_);
+      if(stat!=0)return stat;
+    }
+    if(check_observed && !observedFree(point,&pos))unobserved=true;
+    return 0;
+  };
   if(urdf_footprint_enabled_) {
     if(!footprintReady())return -1;
     if(std::abs(yaw-footprint_cached_yaw_)>1e-9 || footprint_cached_offsets_.empty()) {
@@ -500,26 +668,18 @@ inline int GridMap::getInflateOccupancy(Eigen::Vector3d pos, double yaw) {
       footprint_cached_yaw_=yaw;
     }
     for(const auto &offset:footprint_cached_offsets_) {
-      Eigen::Vector3d point=pos+Eigen::Vector3d(offset.x()*mp_.resolution_,offset.y()*mp_.resolution_,0.);
-      int occupied=getInflateOccupancyFromBuffer(point,md_.occupancy_buffer_inflate_);
+      const Eigen::Vector3d point=pos+Eigen::Vector3d(offset.x()*mp_.resolution_,offset.y()*mp_.resolution_,0.);
+      const int occupied=sample(point);
       if(occupied!=0)return occupied;
-      if(static_cloud_enabled_ && !static_prior_as_cost_ && !static_inflate_buffer_.empty()) {
-        occupied=getInflateOccupancyFromBuffer(point,static_inflate_buffer_);
-        if(occupied!=0)return occupied;
-      }
     }
-    return 0;
-  }
-  Eigen::Vector3d heading(std::cos(yaw), std::sin(yaw), 0.0);
-  for (double x : mp_.footprint_centers_x_) {
-    Eigen::Vector3d center = pos + x*heading;
-    int occupied = getInflateOccupancyFromBuffer(center, md_.occupancy_buffer_inflate_);
-    if (occupied != 0) return occupied;
-    if (static_cloud_enabled_ && !static_prior_as_cost_ && !static_inflate_buffer_.empty()) {
-      occupied = getInflateOccupancyFromBuffer(center, static_inflate_buffer_);
+  } else {
+    const Eigen::Vector3d heading(std::cos(yaw), std::sin(yaw), 0.0);
+    for (double x : mp_.footprint_centers_x_) {
+      const int occupied=sample(pos + x*heading);
       if (occupied != 0) return occupied;
     }
   }
+  if(unobserved)return unknown_as_obstacle_ ? -1 : 0;
   return 0;
 }
 
@@ -528,6 +688,7 @@ inline int GridMap::getInflateOccupancyFromBuffer(Eigen::Vector3d pos, const std
 
   Eigen::Vector3i id;
   posToIndex(pos, id);
+
 
   return int(buffer[toAddress(id)]);
 }

@@ -1,6 +1,9 @@
 
+#include <nlohmann/json.hpp>
+
 #include <plan_manage/scan_replan_fsm.h>
 #include <cmath>
+#include <cstdio>
 #include <stdexcept>
 
 namespace
@@ -19,6 +22,7 @@ namespace scan_planner
   void SCANReplanFSM::init(rclcpp::Node *node)
   {
     node_ = node;
+    planning_status_pub_=node_->create_publisher<std_msgs::msg::String>("/planning/status",rclcpp::QoS(1).reliable().transient_local());
     current_wp_ = 0;
     exec_state_ = FSM_EXEC_STATE::INIT;
     trigger_ = false;
@@ -37,6 +41,7 @@ namespace scan_planner
     flag_escape_emergency_ = true;
     need_hover_stop_ = false;
     replan_fail_count_ = 0;
+    resetRecovery();
     goal_reached_sub_ = node_->create_subscription<geometry_msgs::msg::PointStamped>(
         "/n01/navigation/goal_reached",10,
         [this](const geometry_msgs::msg::PointStamped::ConstSharedPtr msg) {
@@ -54,11 +59,22 @@ namespace scan_planner
     replan_thresh_ = load_parameter<double>(node_, "fsm.thresh_replan", -1.0);
     max_replan_interval_s_ = load_parameter<double>(node_, "fsm.max_replan_interval_s", 0.5);
     max_replan_interval_s_ = std::max(0.2, max_replan_interval_s_);
+    // Recovery limits are read live so the GUI can tune them at runtime.
+    load_parameter<int>(node_,"recovery.local_attempts",15);
+    load_parameter<int>(node_,"recovery.global_attempts",5);
+    load_parameter<double>(node_,"recovery.wait_timeout_s",0.);
+    load_parameter<bool>(node_,"recovery.auto_resume",true);
+    recovery_resume_sub_=node_->create_subscription<std_msgs::msg::Bool>(
+      "/n01/navigation/resume",10,[this](std_msgs::msg::Bool::ConstSharedPtr p){
+        if(!p->data || !have_target_ || recovery_ladder_.stage!=navigation::RecoveryLadder::WAIT)return;
+        resetRecovery();need_hover_stop_=false;
+        RCLCPP_INFO(node_->get_logger(),"Recovery resumed by operator");
+        changeFSMExecState(GEN_NEW_TRAJ,"RECOVERY_RESUME");
+      });
     no_replan_thresh_ = load_parameter<double>(node_, "fsm.thresh_no_replan", -1.0);
     planning_horizon_ = load_parameter<double>(node_, "fsm.planning_horizon", -1.0);
     emergency_time_ = load_parameter<double>(node_, "fsm.emergency_time", 1.0);
     enable_fail_safe_ = load_parameter<bool>(node_, "fsm.fail_safe", true);
-    max_replan_fail_count_ = load_parameter<int>(node_, "fsm.max_replan_fail_count", 1000);
     self_inflation_z_up_ = load_parameter<double>(node_, "grid_map.obstacles_inflation_z_up", 0.0);
     self_inflation_z_down_ = load_parameter<double>(node_, "grid_map.obstacles_inflation_z_down", 0.0);
     self_double_cylinder_radius_ = load_parameter<double>(node_, "grid_map.double_cylinder_radius", 0.0);
@@ -166,12 +182,15 @@ namespace scan_planner
       return;
     }
 
-    if (msg->poses[0].pose.position.z < -0.1)
-      return;
+    const auto& position=msg->poses[0].pose.position;
+    // Map origin is established by SLAM, not by ground height. Negative map
+    // coordinates are valid; only non-finite payloads are invalid.
+    if(!std::isfinite(position.x)||!std::isfinite(position.y)||!std::isfinite(position.z))return;
 
     const uint64_t incoming_goal = static_cast<uint64_t>(msg->header.stamp.sec) * 1000000000ULL + msg->header.stamp.nanosec;
     if (incoming_goal == 0 || incoming_goal <= navigation_goal_id_) return;
     navigation_goal_id_ = incoming_goal;
+    resetRecovery();
 
     cout << "Triggered!" << endl;
     trigger_ = true;
@@ -185,6 +204,7 @@ namespace scan_planner
       success = adjustGlobalTargetIfOccupied();
 
     visualization_->displayGoalPoint(end_pt_, Eigen::Vector4d(0, 0.5, 0.5, 1), 0.3, 0);
+    if(!success)publishPlanningStatus("GLOBAL_FAILED",planner_manager_->last_global_error_.empty()?"goal_collision_or_unavailable":planner_manager_->last_global_error_);
 
     if (success)
     {
@@ -567,8 +587,28 @@ namespace scan_planner
     cout << "[FSM]: state: " + state_str[int(exec_state_)] << endl;
   }
 
+  bool SCANReplanFSM::globalRouteBlocked()
+  {
+    auto map=planner_manager_->grid_map_;
+    auto& data=planner_manager_->global_data_;
+    const double duration=data.global_duration_;
+    if(!(duration>0.))return false;
+    const auto lo=map->getLocalMinimum(),hi=map->getLocalMaximum();
+    const double step=std::max(.01,map->getResolution()/(2.*planner_manager_->pp_.max_vel_));
+    for(double t=data.last_progress_time_;t<duration;t+=step){
+      auto p=data.getPosition(t);
+      if(p.x()<=lo.x()||p.x()>=hi.x()||p.y()<=lo.y()||p.y()>=hi.y())continue;
+      if(map->getInflateOccupancy(p,getOdomYaw(),true)==1)return true;
+    }
+    return false;
+  }
+
   void SCANReplanFSM::execFSMCallback()
   {
+    if(have_target_ && planner_manager_->grid_map_->takeRouteMapChange() && globalRouteBlocked()){
+      force_global_refresh_=true;
+      if(exec_state_==EXEC_TRAJ)changeFSMExecState(REPLAN_TRAJ,"FUSED_ROUTE_BLOCKED");
+    }
 
     static int fsm_num = 0;
     fsm_num++;
@@ -619,6 +659,7 @@ namespace scan_planner
         have_target_ = false;
         have_new_target_ = false;
         replan_fail_count_ = 0;
+        resetRecovery();
         changeFSMExecState(WAIT_TARGET, "MEASURED_ARRIVAL");
         break;
       }
@@ -626,7 +667,7 @@ namespace scan_planner
       // Keep map/pose/goal callbacks responsive; a new target bypasses backoff.
       const auto attempt_time=std::chrono::steady_clock::now();
       if(replan_fail_count_>0 && !have_new_target_ &&
-          std::chrono::duration<double>(attempt_time-last_replan_attempt_).count()<.2)break;
+          std::chrono::duration<double>(attempt_time-last_replan_attempt_).count()<navigation::Recovery::retryDelay(replan_fail_count_))break;
       last_replan_attempt_=attempt_time;
       setStartStateFromOdomOrCurrentTraj();
 
@@ -640,17 +681,19 @@ namespace scan_planner
       else
         flag_random_poly_init = true;
 
-      bool success = callReboundReplan(true, flag_random_poly_init);
+      bool success = replan_fail_count_>=2 ? planFromCurrentTraj() : callReboundReplan(true, flag_random_poly_init);
       if (success)
       {
 
         replan_fail_count_ = 0;
+        resetRecovery();
         changeFSMExecState(EXEC_TRAJ, "FSM");
         flag_escape_emergency_ = true;
       }
       else
       {
         replan_fail_count_++;
+        noteRecoveryFailure();
         changeFSMExecState(GEN_NEW_TRAJ, "FSM");
       }
       break;
@@ -660,16 +703,18 @@ namespace scan_planner
     {
       const auto attempt_time=std::chrono::steady_clock::now();
       if(replan_fail_count_>0 && !have_new_target_ &&
-          std::chrono::duration<double>(attempt_time-last_replan_attempt_).count()<.2)break;
+          std::chrono::duration<double>(attempt_time-last_replan_attempt_).count()<navigation::Recovery::retryDelay(replan_fail_count_))break;
       last_replan_attempt_=attempt_time;
       if (planFromCurrentTraj())
       {
         replan_fail_count_ = 0;
+        resetRecovery();
         changeFSMExecState(EXEC_TRAJ, "FSM");
       }
       else
       {
         replan_fail_count_++;
+        noteRecoveryFailure();
         changeFSMExecState(REPLAN_TRAJ, "FSM");
       }
 
@@ -690,6 +735,7 @@ namespace scan_planner
       {
         have_target_ = false;
         replan_fail_count_ = 0;
+        resetRecovery();
         changeFSMExecState(WAIT_TARGET, "MEASURED_ARRIVAL");
         return;
       }
@@ -705,6 +751,7 @@ namespace scan_planner
           return;
         }
         replan_fail_count_++;
+        noteRecoveryFailure();
         changeFSMExecState(GEN_NEW_TRAJ, "FSM");
         return;
       }
@@ -733,6 +780,7 @@ namespace scan_planner
             return;
           }
           replan_fail_count_++;
+          noteRecoveryFailure();
           changeFSMExecState(GEN_NEW_TRAJ, "FSM");
           return;
         }
@@ -782,12 +830,14 @@ namespace scan_planner
           changeFSMExecState(GEN_NEW_TRAJ, "FSM");
         else if (enable_fail_safe_ && need_hover_stop_ && odom_vel_.norm() < 0.1)
         {
+          if (recovery_ladder_.stage == navigation::RecoveryLadder::WAIT) {
+            maybeAutoResume();
+            break;
+          }
           RCLCPP_INFO(node_->get_logger(),
-                      "Exiting EMERGENCY_STOP; switching to WAIT_TARGET for a new target");
+                      "Stopped safely; retaining target and retrying recovery");
           need_hover_stop_ = false;
-          have_target_ = false;
-          trigger_ = false;
-          changeFSMExecState(WAIT_TARGET, "EMERGENCY_EXIT");
+          changeFSMExecState(have_target_?GEN_NEW_TRAJ:WAIT_TARGET, "RECOVERY_RETRY");
         }
       }
 
@@ -796,23 +846,8 @@ namespace scan_planner
     }
     }
 
-    finishProcess();
-
     data_disp_.header.stamp = node_->now();
     data_disp_pub_->publish(data_disp_);
-  }
-
-  void SCANReplanFSM::finishProcess()
-  {
-    if (replan_fail_count_ >= max_replan_fail_count_)
-    {
-      RCLCPP_WARN(node_->get_logger(),
-                  "Replan failed %d times; emergency stop and wait for a new target", replan_fail_count_);
-      replan_fail_count_ = 0;
-      need_hover_stop_ = true;
-      flag_escape_emergency_ = true;
-      changeFSMExecState(EMERGENCY_STOP, "finishProcess");
-    }
   }
 
   bool SCANReplanFSM::planFromCurrentTraj()
@@ -821,7 +856,7 @@ namespace scan_planner
 
     // Ordinary local updates retain the reference and its bypass side.
     // A blocked/failed local solution may refresh A* from the measured state.
-    if (replan_fail_count_ >= 2) {
+    if (force_global_refresh_ || replan_fail_count_ >= 2) {
     if (!planner_manager_->planGlobalTraj(
             start_pt_,
             start_vel_,
@@ -838,7 +873,9 @@ namespace scan_planner
     if (!adjustGlobalTargetIfOccupied())
       return false;
 
+    ++global_replans_;
     publishGlobalPath();
+    force_global_refresh_ = false;
     }
     bool success = callReboundReplan(true, false);
     if (!success)
@@ -925,7 +962,9 @@ namespace scan_planner
   bool SCANReplanFSM::callReboundReplan(bool flag_use_poly_init, bool flag_randomPolyTraj)
   {
 
-    getLocalTarget();
+    ++local_attempts_;
+    if(!getLocalTarget())return false;
+    publishPlanningStatus("LOCAL_PLANNING","scan_computing");
     // An obstructed ALIGN may need a non-collinear seed. Use SCAN's own
     // optimizer random initialization, never another downstream search.
     if(execution_progress_ && execution_progress_->goal_id==navigation_goal_id_ &&
@@ -934,6 +973,20 @@ namespace scan_planner
     bool plan_success =
         planner_manager_->reboundReplan(start_pt_, start_vel_, start_acc_, local_target_pt_, local_target_vel_, (have_new_target_ || flag_use_poly_init), flag_randomPolyTraj);
     have_new_target_ = false;
+
+    if(!plan_success) {
+      auto blocker=planner_manager_->grid_map_->envelopeBlocker(start_pt_,getOdomYaw());
+      if(!blocker.code.empty()) {
+        char detail[160];
+        std::snprintf(detail,sizeof(detail),"start_envelope_%s@(%.2f,%.2f,%.2f)",
+                      blocker.code.c_str(),blocker.x,blocker.y,blocker.z);
+        planner_manager_->last_local_error_=detail;
+        RCLCPP_WARN_THROTTLE(node_->get_logger(),*node_->get_clock(),2000,
+            "Local plan blocked inside the robot envelope: %s",detail);
+      }
+    }
+    publishPlanningStatus(plan_success?"LOCAL_READY":"LOCAL_FAILED",plan_success?"scan_trajectory_available":
+        (planner_manager_->last_local_error_.empty()?"scan_no_solution":planner_manager_->last_local_error_));
 
     cout << "final_plan_success=" << plan_success << endl;
 
@@ -1012,6 +1065,92 @@ namespace scan_planner
     return true;
   }
 
+  int SCANReplanFSM::recoveryLimit(const char *name, int fallback)
+  {
+    const int value = node_->get_parameter(name).as_int();
+    return value >= 1 && value <= 50 ? value : fallback;
+  }
+
+  void SCANReplanFSM::resetRecovery()
+  {
+    recovery_ladder_.reset();
+    recovery_wait_since_ = 0.;
+  }
+
+  void SCANReplanFSM::noteRecoveryFailure()
+  {
+    if (recovery_ladder_.stage == navigation::RecoveryLadder::WAIT) return;
+    // Starting up or losing the scene is a data problem, not a planning failure.
+    auto grid_map = planner_manager_->grid_map_;
+    const int64_t scene_stamp = grid_map->sceneStamp();
+    const double scene_age = scene_stamp > 0
+        ? (node_->now().nanoseconds() - scene_stamp) * 1e-9 : -1.;
+    if (scene_age < 0. || scene_age > 2.0) {
+      recovery_ladder_.reset();
+      publishPlanningStatus("WAITING_FOR_SCENE", "scene_not_ready");
+      return;
+    }
+    recovery_ladder_.configure(recoveryLimit("recovery.local_attempts", 15),
+                               recoveryLimit("recovery.global_attempts", 5));
+    const auto step = recovery_ladder_.noteFailure();
+    if (step.stage == navigation::RecoveryLadder::WAIT) {
+      recovery_wait_since_ = node_->now().seconds();
+      need_hover_stop_ = true;
+      flag_escape_emergency_ = true;
+      publishPlanningStatus("WAITING_FOR_CLEARANCE", "goal_unreachable_observed");
+      RCLCPP_WARN(node_->get_logger(),
+                  "Recovery exhausted (local=%d, global=%d); holding at zero speed with target retained",
+                  recovery_ladder_.local_limit, recovery_ladder_.global_limit);
+      changeFSMExecState(EMERGENCY_STOP, "RECOVERY_EXHAUSTED");
+      return;
+    }
+    if (step.stage == navigation::RecoveryLadder::GLOBAL) {
+      force_global_refresh_ = true;
+      publishPlanningStatus("RECOVERY_GLOBAL_REPLAN",
+                            recovery_ladder_.global_attempts <= 1 ? "local_detour_exhausted"
+                                                                  : "global_replan_retry");
+    } else {
+      publishPlanningStatus("RECOVERY_LOCAL_DETOUR", "local_detour_retry");
+    }
+  }
+
+  void SCANReplanFSM::maybeAutoResume()
+  {
+    if (recovery_ladder_.stage != navigation::RecoveryLadder::WAIT) return;
+    if (!node_->get_parameter("recovery.auto_resume").as_bool()) return;
+    const double timeout = node_->get_parameter("recovery.wait_timeout_s").as_double();
+    if (!(timeout > 0.) || node_->now().seconds() - recovery_wait_since_ < timeout) return;
+    resetRecovery();
+    need_hover_stop_ = false;
+    RCLCPP_INFO(node_->get_logger(), "Recovery wait timeout elapsed; retrying the retained target");
+    changeFSMExecState(have_target_ ? GEN_NEW_TRAJ : WAIT_TARGET, "RECOVERY_TIMEOUT");
+  }
+
+  void SCANReplanFSM::publishPlanningStatus(const std::string& phase,const std::string& reason) {
+    const bool global=phase.rfind("GLOBAL",0)==0;
+    auto& state=global?global_phase_:local_phase_;auto& why=global?global_reason_:local_reason_;
+    const double now=node_->now().seconds();
+    if(state!=phase || why!=reason)planning_phase_since_=now;
+    state=phase;why=reason;
+    auto map=planner_manager_->grid_map_;
+    nlohmann::json data={{"goal_id",navigation_goal_id_},{"phase",phase},{"reason",reason},
+      {"global_phase",global_phase_},{"global_reason",global_reason_},{"local_phase",local_phase_},{"local_reason",local_reason_},
+      {"stamp_ns",node_->now().nanoseconds()},{"scene_stamp_ns",map->sceneStamp()},
+      {"scene_age_s",map->sceneStamp()>0?(node_->now().nanoseconds()-map->sceneStamp())*1e-9:-1.},
+      {"stage",global?"global":"scan"},
+      {"waiting_since_s",planning_phase_since_},{"local_attempts",local_attempts_},{"global_replans",global_replans_},
+      {"local_target",{local_target_pt_.x(),local_target_pt_.y(),local_target_pt_.z()}},
+      {"final_goal",{end_pt_.x(),end_pt_.y(),end_pt_.z()}},
+      {"recovery",global?"update_goal_or_scene":"retry_on_fused_scene"},
+      {"recovery_stage",recovery_ladder_.stage==navigation::RecoveryLadder::WAIT?"wait":(recovery_ladder_.stage==navigation::RecoveryLadder::GLOBAL?"global_replan":"local_detour")},
+      {"recovery_local_attempts",recovery_ladder_.local_attempts},
+      {"recovery_global_attempts",recovery_ladder_.global_attempts},
+      {"recovery_local_limit",recoveryLimit("recovery.local_attempts",15)},
+      {"recovery_global_limit",recoveryLimit("recovery.global_attempts",5)},
+      {"recovery_wait_s",recovery_ladder_.stage==navigation::RecoveryLadder::WAIT?node_->now().seconds()-recovery_wait_since_:0.}};
+    std_msgs::msg::String msg;msg.data=data.dump();planning_status_pub_->publish(msg);
+  }
+
   void SCANReplanFSM::publishGlobalPath()
   {
     auto &gd = planner_manager_->global_data_;
@@ -1037,9 +1176,10 @@ namespace scan_planner
       path.poses.push_back(pose);
     }
     global_path_pub_->publish(path);
+    publishPlanningStatus("GLOBAL_READY","reference_available");
   }
 
-  void SCANReplanFSM::getLocalTarget()
+  bool SCANReplanFSM::getLocalTarget()
   {
     double t;
 
@@ -1074,7 +1214,7 @@ namespace scan_planner
         break;
       }
     }
-    if (t > planner_manager_->global_data_.global_duration_) // Last global point
+    if (t >= planner_manager_->global_data_.global_duration_) // Last global point
     {
       local_target_pt_ = end_pt_;
       target_t = planner_manager_->global_data_.global_duration_;
@@ -1083,6 +1223,36 @@ namespace scan_planner
     auto targetOccupancy = [&](const Eigen::Vector3d &pt) {
       return planner_manager_->grid_map_->getInflateOccupancy(pt, estimateYawFromSegment(odom_pos_, pt));
     };
+
+    if (planner_manager_->grid_map_->usesRealtimeReference()) {
+      const auto map=planner_manager_->grid_map_;
+      const auto lo=map->getLocalMinimum(),hi=map->getLocalMaximum();
+      // Leave room for the robot and braking instead of selecting a SCAN
+      // endpoint outside the rolling map when the ultimate goal is far away.
+      double extent=0.;
+      for(const auto& vertex:map->getFootprintPolygon())extent=std::max(extent,vertex.norm());
+      const double inset=extent+map->getFootprintRadius()+.15;
+      const auto inside=[&](const Eigen::Vector3d& p) {
+        return p.x()>lo.x()+inset && p.x()<hi.x()-inset &&
+               p.y()>lo.y()+inset && p.y()<hi.y()-inset;
+      };
+      if(!inside(local_target_pt_)) {
+        bool found=false;
+        for(double tt=std::min(target_t,planner_manager_->global_data_.global_duration_);
+            tt>=dist_min_t;tt-=t_step) {
+          const auto candidate=planner_manager_->global_data_.getPosition(tt);
+          if(inside(candidate) && targetOccupancy(candidate)==0) {
+            local_target_pt_=candidate;target_t=tt;found=true;break;
+          }
+        }
+        if(!found) {
+          local_target_pt_=start_pt_;local_target_vel_.setZero();
+          RCLCPP_WARN_THROTTLE(node_->get_logger(),*node_->get_clock(),2000,
+              "Realtime goal retained; waiting for a reachable local observation window");
+          return false;
+        }
+      }
+    }
 
     if (targetOccupancy(local_target_pt_) != 0)
     {
@@ -1142,6 +1312,7 @@ namespace scan_planner
       local_target_vel_ = planner_manager_->global_data_.getVelocity(target_t);
       // cout << "AA" << endl;
     }
+    return true;
   }
 
 } // namespace scan_planner

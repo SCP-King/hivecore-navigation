@@ -46,3 +46,28 @@ def test_only_integrated_out_joints_can_be_missing():
     j=sweep_joints(m,{'leg_pitch':.35})
     assert j=={'leg_pitch':.35,'fl_ankle_yaw':0.,'wheel_fl':0.}
     with pytest.raises(ValueError,match='leg_pitch'):sweep_joints(m,{})
+
+
+def test_review_and_planner_share_three_second_model_budget():
+    import pytest,rclpy
+    from rclpy.node import Node
+    from rclpy.duration import Duration
+    from geometry_msgs.msg import PolygonStamped,Point32
+    from n01_live_navigation.footprint_client import FootprintClient
+    own_context=not rclpy.ok()
+    if own_context:rclpy.init()
+    node=Node('test_review_model_budget')
+    try:
+        client=FootprintClient(node)
+        def model(age):
+            msg=PolygonStamped();msg.header.frame_id='base_link'
+            msg.header.stamp=(node.get_clock().now()-Duration(seconds=age)).to_msg()
+            msg.polygon.points=[Point32(x=float(x),y=float(y)) for x,y in BOX]
+            client.receive(msg)
+        model(1.5)
+        assert len(client.get())==4
+        model(4.)
+        with pytest.raises(ValueError,match='missing_or_stale'):client.get()
+    finally:
+        node.destroy_node()
+        if own_context:rclpy.shutdown()

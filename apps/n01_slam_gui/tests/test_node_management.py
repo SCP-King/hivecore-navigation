@@ -30,6 +30,30 @@ class NodeManagementTests(unittest.TestCase):
         self.assertEqual(plan['killable'], [])
         self.assertEqual(plan['protected'], [row])
 
+    def test_external_navigation_node_is_listed_but_not_auto_killable(self):
+        row = dict(pid=991100, ppid=1, pgid=991100,
+                   cmd="/home/demo/lyy/hivecore-navigation/install/scan_planner/lib/scan_planner/scan_planner_node")
+        plan = g.node_kill_plan("scan_planner_node", [row])
+        self.assertTrue(plan["supported"])
+        self.assertEqual(plan["killable"], [])
+        self.assertEqual(plan["unmanaged"], [row])
+
+    def test_unknown_long_name_falls_back_to_command_match(self):
+        row = dict(pid=991101, ppid=1, pgid=991101,
+                   cmd="python3 -m some_external_bridge --node external_bridge_7")
+        plan = g.node_kill_plan("external_bridge_7", [row])
+        self.assertTrue(plan["supported"])
+        self.assertFalse(plan["known"])
+        self.assertEqual(plan["unmanaged"], [row])
+        self.assertFalse(g.node_kill_plan("ab", [row])["supported"])
+
+    def test_protected_process_never_becomes_killable(self):
+        row = dict(pid=991102, ppid=1, pgid=991102,
+                   cmd="/opt/hivecore/hive2-motion/steer_drive_node")
+        plan = g.node_kill_plan("steer_drive_node", [row])
+        self.assertEqual(plan["killable"], [])
+        self.assertEqual(plan["unmanaged"], [])
+
     def test_driver_preflight_reuses_single_compatible_source(self):
         pc2 = SimpleNamespace(topic_type='sensor_msgs/msg/PointCloud2')
         custom = SimpleNamespace(topic_type='livox_ros_driver2/msg/CustomMsg')

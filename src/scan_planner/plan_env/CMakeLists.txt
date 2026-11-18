@@ -17,6 +17,7 @@ find_package(Eigen3 REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(message_filters REQUIRED)
 find_package(nav_msgs REQUIRED)
+find_package(nlohmann_json REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(PCL REQUIRED COMPONENTS common io filters)
 find_package(pcl_conversions REQUIRED)
@@ -38,17 +39,25 @@ ament_target_dependencies(plan_env
   cv_bridge geometry_msgs message_filters nav_msgs pcl_conversions rclcpp
   sensor_msgs std_msgs tf2 tf2_ros visualization_msgs
 )
-target_link_libraries(plan_env Eigen3::Eigen ${PCL_LIBRARIES} ${OpenCV_LIBS})
+target_link_libraries(plan_env Eigen3::Eigen ${PCL_LIBRARIES} ${OpenCV_LIBS} nlohmann_json::nlohmann_json)
 
 install(TARGETS plan_env EXPORT export_plan_env
   ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
 install(DIRECTORY include/ DESTINATION include)
 ament_export_targets(export_plan_env HAS_LIBRARY_TARGET)
 ament_export_dependencies(
-  cv_bridge Eigen3 geometry_msgs message_filters nav_msgs pcl_conversions
+  cv_bridge Eigen3 geometry_msgs message_filters nav_msgs nlohmann_json pcl_conversions
   rclcpp sensor_msgs std_msgs tf2 tf2_ros visualization_msgs)
 if(BUILD_TESTING)
   enable_testing()
+  add_executable(test_live_observations test/test_live_observations.cpp)
+  target_link_libraries(test_live_observations plan_env)
+  ament_target_dependencies(test_live_observations rclcpp)
+  add_test(NAME test_live_observations COMMAND test_live_observations)
+  set_tests_properties(test_live_observations PROPERTIES ENVIRONMENT "ROS_DOMAIN_ID=187;ROS_LOCALHOST_ONLY=1" TIMEOUT 20)
+  add_executable(test_world_evidence test/test_world_evidence.cpp)
+  target_include_directories(test_world_evidence PRIVATE include)
+  add_test(NAME test_world_evidence COMMAND test_world_evidence)
   add_executable(test_reference_updates test/test_reference_updates.cpp)
   target_link_libraries(test_reference_updates plan_env)
   ament_target_dependencies(test_reference_updates rclcpp pcl_conversions)

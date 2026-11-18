@@ -4,9 +4,46 @@
     max_speed_mps: 0.05
     max_accel_mps2: 0.04
     max_yaw_rate_radps: 0.12
+    # Feedback freshness gates: our own limits, declared parameters and live.
+    feedback.pose_max_age_s: 3.0
+    feedback.pose_stamp_max_age_s: 3.0
+    feedback.odom_max_age_s: 3.0
+    feedback.joints_max_age_s: 3.0
+    feedback.packet_max_age_s: 3.0
+    feedback.scene_max_age_s: 3.0
+    feedback.observed_space_max_age_s: 3.0
+    arrival.confirm_s: 3.0
     execution_preview_m: 1.0
     enabled: false
     dry_run: false
     cbf_enabled: false
     require_final_yaw: false
     follow_goal_updates: false
+    # Internal environment/recovery settings; not new contractual thresholds.
+    # Planning relaxation: unobserved space is a cost/speed influence, not a
+    # hard obstacle. Execution admission still requires observed coverage for
+    # the executed prefix (trajectory_monitor), so this does not authorise
+    # driving through unknown space.
+    grid_map.unknown_as_obstacle: false
+    # Blind spots are not navigation evidence. Goals outside the loaded map
+    # stay plannable; only explicit obstacles reject a route or a goal.
+    grid_map.extend_reference_to_goal: true
+    # Bounded recovery ladder (REC-01/SAFE-01). Read live, editable in the GUI.
+    recovery.local_attempts: 15
+    recovery.global_attempts: 5
+    recovery.wait_timeout_s: 0.0   # 0 = wait for operator resume
+    recovery.auto_resume: true
+    grid_map.observation_ttl_s: 3.0
+    grid_map.footprint_max_age_s: 3.0
+    perception.self_margin_m: 0.005
+    perception.ground_patch_size_m: 1.0
+    perception.ground_band_m: 0.015
+    perception.ground_max_prior_shift_m: 0.02
+    perception.prediction_horizons_s: [0.25, 0.5, 0.75]
+    # Internal freshness gates for trajectory review, not contractual values.
+    # Header stamp is the source scan time; raise only after measuring real lag.
+    perception.scene_max_age_s: 3.0
+    perception.observed_free_max_age_s: 3.0
+    perception.ground_max_age_s: 3.0
+    # Soft advice only; unconfirmed history/forecasts are not measured hard occupancy.
+    perception.risk_speed_scale: 0.5

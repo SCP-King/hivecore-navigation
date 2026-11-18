@@ -42,7 +42,7 @@ def monitor():
         _yaw_from_quaternion=Monitor._yaw_from_quaternion,
         _clear_candidate_visualization=Mock(),_pitch_reference_match=lambda:True,get_logger=lambda:Mock())
     n.scene_inputs_ready=lambda:Monitor.scene_inputs_ready(n)
-    n.check_native_scene=lambda states:Monitor.check_native_scene(n,states)
+    n.check_native_scene=lambda states,**kw:Monitor.check_native_scene(n,states,**kw)
     n.on_bspline=lambda msg,replay=False:Monitor.on_bspline(n,msg,replay)
     return n
 
@@ -75,7 +75,8 @@ def test_scene_review_rejects_collision_and_stale_perception():
         assert 'fresh' in review(n)['reason']
     n=monitor();n.obstacles=np.array([[.8,0.,.5]]);n.on_bspline(spline())
     assert 'collision' in review(n)['reason']
-    assert not review(n)['candidate_review_ready']
+    assert review(n)['candidate_review_ready'] and review(n)['prefix_limited']
+    assert review(n)['failure_context']['position'][0]<.8
 
 
 def test_duplicate_delivery_preserves_source_event_and_receive_clock():

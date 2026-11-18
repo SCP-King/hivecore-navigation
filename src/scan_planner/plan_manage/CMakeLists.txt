@@ -54,6 +54,11 @@ install(DIRECTORY include/ DESTINATION include)
 install(DIRECTORY launch config DESTINATION share/${PROJECT_NAME} OPTIONAL)
 
 if(BUILD_TESTING)
+  add_executable(test_recovery_ladder test/test_recovery_ladder.cpp)
+  target_include_directories(test_recovery_ladder PRIVATE include)
+  target_compile_options(test_recovery_ladder PRIVATE -UNDEBUG)
+  add_test(NAME navigation_recovery_ladder COMMAND test_recovery_ladder)
+
   add_executable(test_tracking_core test/test_tracking_core.cpp)
   target_include_directories(test_tracking_core PRIVATE include)
   target_compile_options(test_tracking_core PRIVATE -UNDEBUG)

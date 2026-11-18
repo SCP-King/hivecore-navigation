@@ -760,7 +760,13 @@ namespace scan_planner
         }
         if (j < 0) // fail to get the obs free point
         {
-          RCLCPP_ERROR(rclcpp::get_logger("bspline_opt"), "The robot is inside an obstacle");
+          const auto blocker = grid_map_->envelopeBlocker(
+              cps_.points.col(0), estimateControlPointYaw(cps_.points, 0));
+          RCLCPP_ERROR(rclcpp::get_logger("bspline_opt"),
+                       "The robot is inside an obstacle at (%.3f,%.3f,%.3f) blocker=%s@(%.2f,%.2f,%.2f) hull=%d",
+                       cps_.points(0, 0), cps_.points(1, 0), cps_.points(2, 0),
+                       blocker.code.c_str(), blocker.x, blocker.y, blocker.z,
+                       blocker.polygon_points);
           in_id = 0;
         }
 

@@ -63,3 +63,16 @@ class NavigationTaskView:
 
     @property
     def label(self):return LABELS[self.phase]
+
+
+def planning_wait_description(status,goal_id,raw_reason):
+    if raw_reason!='waiting_for_native_scan_trajectory':return raw_reason
+    if status.get('goal_id')!=goal_id:return '等待本次目标的 SCAN 局部轨迹；尚无关联诊断'
+    phase=status.get('local_phase',status.get('phase',''));reason=status.get('local_reason',status.get('reason',''))
+    if status.get('global_phase',status.get('phase'))=='GLOBAL_FAILED':
+        return '全局规划失败：'+str(status.get('global_reason',status.get('reason','未知原因')))
+    if phase=='WAITING_FOR_OBSERVATION':
+        return '全局路线已生成；局部前沿不可达，需检查雷达覆盖与碰撞；已搜索'+str(status.get('frontier_expanded','—'))+'格'
+    if phase=='LOCAL_FAILED':return 'SCAN局部规划失败：'+str(reason)+'；自动重试'+str(status.get('local_attempts',0))+'次'
+    if phase=='LOCAL_READY':return 'SCAN已生成轨迹；执行器尚未取得有效检查结果，查看运行流程'
+    return '全局路线已生成；SCAN正在计算局部轨迹'

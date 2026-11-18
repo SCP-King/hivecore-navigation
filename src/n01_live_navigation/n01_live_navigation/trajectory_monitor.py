@@ -11,7 +11,7 @@ from rclpy.qos import qos_profile_sensor_data, QoSProfile, ReliabilityPolicy, Du
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry, Path
 from sensor_msgs.msg import JointState, PointCloud2, PointField
-from std_msgs.msg import String
+from std_msgs.msg import String, Bool
 from visualization_msgs.msg import Marker, MarkerArray
 from scan_planner_msgs.msg import Bspline, NavigationTrajectory
 from geometry_msgs.msg import Point
@@ -28,6 +28,14 @@ PITCH1_JOINTS = (
     "fl_leg_pitch1", "fr_leg_pitch1", "rl_leg_pitch1", "rr_leg_pitch1")
 PITCH2_JOINTS = (
     "fl_leg_pitch2", "fr_leg_pitch2", "rl_leg_pitch2", "rr_leg_pitch2")
+
+
+def _live_param(obj,name,fallback):
+    """Read a declared parameter at use time so GUI changes apply without restart."""
+    try:
+        return obj.get_parameter(name).value
+    except Exception:  # noqa: BLE001
+        return fallback
 
 
 class Hive2TrajectoryMonitor(Node):
@@ -47,6 +55,7 @@ class Hive2TrajectoryMonitor(Node):
             "delta_y_m": 0.085,
             "steering_limit_rad": 3.141592653589793,
             "execution_preview_m": 1.0,
+            "require_observed_space": False,
             "pitch1_home_reference_rad": 0.7853981633974483,
             "pitch2_home_reference_rad": -1.3089969389957472,
             "pitch_reference_tolerance_rad": 0.08,
@@ -104,6 +113,33 @@ class Hive2TrajectoryMonitor(Node):
 
         latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
                              durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self.require_observed_space=bool(self.get_parameter('require_observed_space').value)
+        self.observed_free=None;self.observed_free_rx=0.;self.observed_free_stamp=0
+        self.create_subscription(PointCloud2,'/grid_map/observed_free',self.on_observed_free,qos_profile_sensor_data)
+        from .scene_perception import setup as setup_scene_perception
+        self.scene_perception=setup_scene_perception(self,None)
+        from .dynamic_obstacles import ObstacleTracks
+        self.dynamic_tracks=ObstacleTracks(self.declare_parameter("perception.prediction_horizons_s",[.25,.5,.75]).value)
+        self.risk_speed_scale=float(self.declare_parameter('perception.risk_speed_scale',.5).value)
+        # Scene freshness for trajectory review. These are our internal gates,
+        # not a contractual number; the header stamp is the source scan time.
+        self.scene_max_age_s=float(self.declare_parameter('perception.scene_max_age_s',3.0).value)
+        self.ground_max_age_s=float(self.declare_parameter('perception.ground_max_age_s',3.0).value)
+        self.observed_free_max_age_s=float(self.declare_parameter('perception.observed_free_max_age_s',3.0).value)
+        if not .1<=self.observed_free_max_age_s<=3.:
+            raise ValueError('perception.observed_free_max_age_s must be in [0.1, 3.0]')
+        if not .1<=self.scene_max_age_s<=3.:
+            raise ValueError('perception.scene_max_age_s must be in [0.1, 3.0]')
+        if not .5<=self.ground_max_age_s<=10.:
+            raise ValueError('perception.ground_max_age_s must be in [0.5, 10.0]')
+        if not 0<self.risk_speed_scale<=1:raise ValueError('invalid_risk_speed_scale')
+        self.unconfirmed_risk=np.empty((0,3))
+        def risk(msg):
+            try:self.unconfirmed_risk=decode_pointcloud_xyz(msg,120000,None)if msg.width else np.empty((0,3))
+            except ValueError:pass
+        self.create_subscription(PointCloud2,'/grid_map/unconfirmed_risk',risk,qos_profile_sensor_data)
+        self.prediction_pub=self.create_publisher(PointCloud2,'/n01/live_navigation/predicted_obstacles',qos_profile_sensor_data)
+
         self.create_subscription(PointCloud2, '/grid_map/occupancy', self.on_obstacles, qos_profile_sensor_data)
         self.create_subscription(String, '/grid_map/static_overlay_status', self.on_window, latched)
         self.create_subscription(String, '/n01/ground_reference/status', self.on_plane, 10)
@@ -115,6 +151,8 @@ class Hive2TrajectoryMonitor(Node):
             Path, "/n01/live_navigation/hive2_candidate_path", 10)
         self.wheel_marker_pub = self.create_publisher(
             MarkerArray, "/n01/live_navigation/hive2_wheel_kinematics", 10)
+        self.replan_pub=self.create_publisher(Bool,'/n01/navigation/replan',10)
+        self.last_prefix_replan_key=None
         self.diag_pub = self.create_publisher(
             String, "/n01/live_navigation/hive2_feasibility", 10)
         self.create_subscription(
@@ -190,6 +228,8 @@ class Hive2TrajectoryMonitor(Node):
             self.last_watchdog_status = status
         self.diag_pub.publish(String(data=json.dumps({
             "schema": "n01.hive2_candidate_feasibility.v1",
+            "goal_id": self.accepted_goal_ns,
+            "issues": Hive2TrajectoryMonitor.scene_issues(self),
             "planning_footprint": self.footprint_client.description(),
             "status": status,
             "reason": reason,
@@ -213,17 +253,43 @@ class Hive2TrajectoryMonitor(Node):
         self.last_bspline=None;self.last_curve=None;self.last_bspline_rx=None;self.last_trajectory_window=None
         self._clear_candidate_visualization()
 
-    def on_obstacles(self, msg):
-        self.obstacles = None
-        if msg.header.frame_id != self.frame:
+    def stage_scene(self,kind,stamp,points):
+        if stamp<=0:return
+        if not getattr(self,'require_observed_space',False):
+            if kind=='occupied' and stamp>self.obstacles_stamp_ns:
+                self.obstacles=points;self.obstacles_stamp_ns=stamp;self.obstacles_rx=time.monotonic()
             return
+        if stamp<=self.obstacles_stamp_ns:return
+        pending=getattr(self,'pending_scenes',{})
+        pending.setdefault(stamp,{})[kind]=(points,time.monotonic())
+        pair=pending[stamp]
+        if 'occupied'in pair and 'free'in pair:
+            self.obstacles,self.obstacles_rx=pair['occupied'];self.obstacles_stamp_ns=stamp
+            self.observed_free,self.observed_free_rx=pair['free'];self.observed_free_stamp=stamp
+            pending={k:v for k,v in pending.items()if k>stamp}
+        self.pending_scenes=dict(sorted(pending.items())[-3:])
+
+    def on_observed_free(self,msg):
+        if msg.header.frame_id!=self.frame:return
         try:
-            self.obstacles = (np.empty((0, 3)) if msg.width == 0 and not msg.data
-                              else decode_pointcloud_xyz(msg, 1000000, None))
-            self.obstacles_rx = time.monotonic()
-            self.obstacles_stamp_ns = msg.header.stamp.sec*10**9+msg.header.stamp.nanosec
-        except ValueError:
-            pass
+            points=decode_pointcloud_xyz(msg,200000,None) if msg.width else np.empty((0,3))
+            stamp=msg.header.stamp.sec*10**9+msg.header.stamp.nanosec
+            Hive2TrajectoryMonitor.stage_scene(self,'free',stamp,points)
+        except ValueError:self.last_error='invalid_observation_coverage'
+
+    def observed_ready(self):
+        if not getattr(self,'require_observed_space',False):return True
+        return (self.observed_free is not None and self.observed_free_stamp==self.obstacles_stamp_ns and
+                time.monotonic()-self.observed_free_rx<=_live_param(self,'perception.observed_free_max_age_s',getattr(self,'observed_free_max_age_s',.6)) and
+                -.1<=(self.get_clock().now().nanoseconds-self.observed_free_stamp)/1e9<=_live_param(self,'perception.observed_free_max_age_s',getattr(self,'observed_free_max_age_s',.6)))
+
+    def on_obstacles(self,msg):
+        if msg.header.frame_id!=self.frame:return
+        try:
+            points=(np.empty((0,3)) if msg.width==0 and not msg.data else decode_pointcloud_xyz(msg,1000000,None))
+            stamp=msg.header.stamp.sec*10**9+msg.header.stamp.nanosec
+            Hive2TrajectoryMonitor.stage_scene(self,'occupied',stamp,points)
+        except ValueError:self.last_error='invalid_obstacle_cloud'
 
     def on_window(self, msg):
         self.map_window = None
@@ -245,30 +311,85 @@ class Hive2TrajectoryMonitor(Node):
         except (ValueError, KeyError, TypeError):
             pass
 
-    def scene_inputs_ready(self):
-        now=time.monotonic();ns=self.get_clock().now().nanoseconds
-        if self.body_pose is None or self.body_pose_stamp_ns is None or self.body_pose_rx is None:return False
-        if self.body_pose.header.frame_id!=self.frame or not control_pose_fresh((ns-self.body_pose_stamp_ns)/1e9,now-self.body_pose_rx):return False
-        if (self.obstacles is None or now-self.obstacles_rx>.6 or not -.1<=(ns-self.obstacles_stamp_ns)/1e9<=.6
-                or self.ground_plane is None or now-self.plane_rx>2. or self.map_window is None):return False
-        if self.joint_rx is None or self.joint_stamp_ns is None:return False
-        return now-self.joint_rx<=.5 and -.2<=(ns-self.joint_stamp_ns)/1e9<=.5 and self._pitch_reference_match()is True
+    def scene_issues(self):
+        now=time.monotonic();ns=self.get_clock().now().nanoseconds;issues=[]
+        def issue(code,**facts):issues.append(dict(reason=code,**facts))
+        if not Hive2TrajectoryMonitor.observed_ready(self):
+            issue('waiting_for_observed_local_space',occupied_stamp_ns=self.obstacles_stamp_ns,
+                  coverage_stamp_ns=getattr(self,'observed_free_stamp',0),pending_versions=list(getattr(self,'pending_scenes',{})))
+        if self.body_pose is None or self.body_pose_stamp_ns is None or self.body_pose_rx is None:issue('body_pose_missing')
+        else:
+            age=(ns-self.body_pose_stamp_ns)/1e9;rx=now-self.body_pose_rx
+            if self.body_pose.header.frame_id!=self.frame:issue('body_pose_frame_mismatch',actual=self.body_pose.header.frame_id,expected=self.frame)
+            if not control_pose_fresh(age,rx):issue('control_pose_stale',stamp_age_s=age,receive_age_s=rx)
+        if self.obstacles is None:issue('occupancy_missing')
+        else:
+            age=(ns-self.obstacles_stamp_ns)/1e9;rx=now-self.obstacles_rx
+            lim=float(_live_param(self, 'perception.scene_max_age_s',getattr(self,'scene_max_age_s',.6)))
+            if rx>lim or not -.1<=age<=lim:issue('occupancy_stale',stamp_age_s=age,receive_age_s=rx,limit_s=lim)
+        if self.ground_plane is None:issue('ground_plane_unavailable')
+        elif now-self.plane_rx>float(_live_param(self, 'perception.ground_max_age_s',getattr(self,'ground_max_age_s',2.))):issue('ground_plane_stale',receive_age_s=now-self.plane_rx,limit_s=float(_live_param(self, 'perception.ground_max_age_s',getattr(self,'ground_max_age_s',2.))))
+        if self.map_window is None:issue('local_window_missing')
+        if self.joint_rx is None or self.joint_stamp_ns is None:issue('wheel_feedback_missing')
+        else:
+            age=(ns-self.joint_stamp_ns)/1e9;rx=now-self.joint_rx
+            if rx>.5 or not -.2<=age<=.5:issue('wheel_feedback_stale',stamp_age_s=age,receive_age_s=rx,limit_s=.5)
+        if self._pitch_reference_match()is not True:issue('leg_feedback_reference_mismatch')
+        return issues
 
-    def check_native_scene(self, states):
+    def scene_inputs_ready(self):
+        return not Hive2TrajectoryMonitor.scene_issues(self)
+
+    def check_native_scene(self, states, allow_prefix=False):
         """Review the original SCAN samples without searching for another path."""
         now = time.monotonic()
         stamp_age = (self.get_clock().now().nanoseconds-self.obstacles_stamp_ns)/1e9
-        if (self.obstacles is None or now-self.obstacles_rx > .6 or not -.1 <= stamp_age <= .6
-                or self.ground_plane is None or now-self.plane_rx > 2.
+        scene_limit=float(_live_param(self, 'perception.scene_max_age_s',getattr(self,'scene_max_age_s',.6)))
+        ground_limit=float(_live_param(self, 'perception.ground_max_age_s',getattr(self,'ground_max_age_s',2.)))
+        if (self.obstacles is None or now-self.obstacles_rx > scene_limit
+                or not -.1 <= stamp_age <= scene_limit
+                or self.ground_plane is None or now-self.plane_rx > ground_limit
                 or self.map_window is None):
-            raise ValueError('scan_review_waiting_for_fresh_map_or_ground')
+            # Name the missing input instead of one generic code.
+            missing=[]
+            if self.obstacles is None:missing.append('occupancy_missing')
+            elif now-self.obstacles_rx > .6 or not -.1 <= stamp_age <= .6:missing.append('occupancy_stale')
+            if self.ground_plane is None:missing.append('ground_plane_unavailable')
+            elif now-self.plane_rx > ground_limit:missing.append('ground_plane_stale')
+            if self.map_window is None:missing.append('local_window_missing')
+            raise ValueError('scan_review_waiting_for_fresh_map_or_ground; '+','.join(missing or ['scene_unknown']))
+        if not Hive2TrajectoryMonitor.observed_ready(self):raise ValueError('waiting_for_observed_local_space')
         footprint = self.footprint_client.get()
         if footprint is None:
             raise ValueError('scan_review_waiting_for_urdf_footprint')
-        collision = FootprintCollision(self.obstacles, self.ground_plane,
-            self.body_pose.pose.pose.position.z, self.map_window, footprint=footprint)
-        if not collision.free([(x, y, yaw) for x, y, z, yaw in states]):
-            raise ValueError('scan_prefix_collision_or_outside_window; replan_required')
+        from .observed_space import observed_states,executable_prefix
+        states=np.asarray(states,float).reshape(-1,4)
+        observed=np.ones(len(states),bool)
+        if getattr(self,'require_observed_space',False):
+            observed=observed_states(states,footprint,self.observed_free)
+        collision=FootprintCollision(self.obstacles,self.ground_plane,
+            self.body_pose.pose.pose.position.z,self.map_window,footprint=footprint)
+        geometry=collision.free_batch(states[:,[0,1,3]][:,None,:])
+        valid=observed & geometry
+        bad=np.flatnonzero(~valid)
+        self.current_prefix_speed=self.max_speed
+        self.prefix_limited=False
+        if len(bad):
+            i=int(bad[0]);self.failure_context={'position':states[i,:3].tolist(),'yaw':float(states[i,3]),
+                'scene_stamp_ns':self.obstacles_stamp_ns,'coverage_stamp_ns':getattr(self,'observed_free_stamp',0),
+                'reason':'footprint_coverage_missing'if not observed[i]else'collision_or_window_boundary'}
+            if allow_prefix:
+                prefix,speed=executable_prefix(states,valid,self.max_speed,self.max_accel,.6)
+                self.current_prefix_speed=speed;self.prefix_limited=True
+                key=(self.accepted_goal_ns,getattr(getattr(self,'last_bspline',None),'traj_id',-1),tuple(np.round(states[i,:2]/.05).astype(int)))
+                if getattr(self,'last_prefix_replan_key',None)!=key:
+                    if getattr(self,'replan_pub',None) is not None:self.replan_pub.publish(Bool(data=True))
+                    self.last_prefix_replan_key=key
+                return prefix
+            raise ValueError('scan_footprint_enters_unknown_space; frontier_required'if not observed[i]
+                else'scan_prefix_collision_or_outside_window; replan_required')
+        self.failure_context={}
+        return states.tolist()
 
     def on_body_pose(self, msg):
         self.body_pose = msg
@@ -384,7 +505,7 @@ class Hive2TrajectoryMonitor(Node):
                 raise ValueError('missing_body_pose_for_execution_preview')
             body = self.body_pose.pose.pose.position
             states = sample_native_prefix(curve, body.x, body.y, self.execution_preview)
-            self.check_native_scene(states)
+            states=self.check_native_scene(states,allow_prefix=True)
             candidate_points = [p[:3] for p in states]
             points = candidate_points
             full_candidate_points = len(curve.table_xyz)
@@ -415,9 +536,12 @@ class Hive2TrajectoryMonitor(Node):
                 except (ValueError,TypeError,KeyError):pass
             self.diag_pub.publish(String(data=json.dumps({
                 "schema": "n01.hive2_candidate_feasibility.v1",
+            "goal_id": self.accepted_goal_ns,
+            "issues": Hive2TrajectoryMonitor.scene_issues(self),
             "planning_footprint": self.footprint_client.description(),
                 "status": "INVALID_OR_UNSUPPORTED_BSPLINE",
                 "reason": self.last_error,
+                "failure_context": getattr(self,"failure_context",{}),
                 "trajectory_active": False,
                 "candidate_review_ready": False,
                 "candidate_only": True,
@@ -480,6 +604,8 @@ class Hive2TrajectoryMonitor(Node):
             and body_feedback_fresh and joint_feedback_fresh and pitch_match is True)
         data = {
             "schema": "n01.hive2_candidate_feasibility.v1",
+            "goal_id": self.accepted_goal_ns,
+            "issues": Hive2TrajectoryMonitor.scene_issues(self),
             "path_model": "scan_bspline",
             "execution_stage": "forward",
             "goal_stamp_ns": self.accepted_goal_ns,
@@ -533,10 +659,16 @@ class Hive2TrajectoryMonitor(Node):
             "wheel_contact_geometry_verified": False,
             "collision_envelope_verified": False,
             "collision_prefix_checked": True,
+            "prefix_limited": getattr(self,'prefix_limited',False),
+            "failure_context": getattr(self,'failure_context',{}),
+            "reason": ('verified_prefix_retained; '+str(getattr(self,'failure_context',{}).get('reason',''))
+                       if getattr(self,'prefix_limited',False) else ('admitted' if candidate_review_ready else 'feedback_or_native_model_not_ready')),
             "actuator_output": "DISABLED",
             "safety_authorization": "NEVER",
         }
         self.publish_trajectory(msg, curve, states, screen, candidate_review_ready)
+        data['risk_speed_advice_active']=getattr(self,'risk_advice_active',False)
+        data['dynamic_predictions']=getattr(getattr(self,'dynamic_tracks',None),'stats',{})
         self.diag_pub.publish(String(data=json.dumps(data, sort_keys=True)))
         self.last_error = ""
 
@@ -553,7 +685,7 @@ class Hive2TrajectoryMonitor(Node):
         out.goal=Point(x=float(self.accepted_goal_xy[0]),y=float(self.accepted_goal_xy[1]))
         out.goal_yaw=float(self.accepted_goal_yaw)
         out.max_speed=float(screen.get('recommended_speed_mps',self.max_speed))
-        out.max_speed=min(out.max_speed,self.max_speed)
+        out.max_speed=min(out.max_speed,self.max_speed,getattr(self,"current_prefix_speed",self.max_speed))
         out.max_accel=self.max_accel;out.environment_margin=.06
         out.chassis_geometry=self.native_model_sync.geometry().array().tolist()
         limits=self.native_model_sync.limits()
@@ -563,12 +695,40 @@ class Hive2TrajectoryMonitor(Node):
         out.ground_plane=list(map(float,self.ground_plane))
         lo,hi=self.map_window;out.window_bounds=[float(lo[0]),float(lo[1]),float(hi[0]),float(hi[1])]
         out.scene_stamp.sec=self.obstacles_stamp_ns//10**9;out.scene_stamp.nanosec=self.obstacles_stamp_ns%10**9
+        out.require_observed_space=getattr(self,'require_observed_space',False)
+        out.observed_resolution=.1
+        if out.require_observed_space and Hive2TrajectoryMonitor.observed_ready(self):
+            free=self.observed_free
+            out.observed_free=PointCloud2()
+            out.observed_free.header.frame_id='map';out.observed_free.header.stamp.sec=self.observed_free_stamp//10**9;out.observed_free.header.stamp.nanosec=self.observed_free_stamp%10**9
+            out.observed_free.height=1;out.observed_free.width=len(free);out.observed_free.point_step=12;out.observed_free.row_step=len(free)*12;out.observed_free.is_dense=True
+            out.observed_free.fields=[PointField(name=name,offset=offset,datatype=PointField.FLOAT32,count=1)for name,offset in [('x',0),('y',4),('z',8)]]
+            out.observed_free.data=np.asarray(free,dtype='<f4').tobytes()
+
+        self.risk_advice_active=False
+        historical=getattr(self,'unconfirmed_risk',np.empty((0,3)))
+        if len(historical) and len(states):
+            risk=FootprintCollision(historical,self.ground_plane,self.body_pose.pose.pose.position.z,
+                self.map_window,footprint=self.footprint_client.get())
+            if not risk.free([(x,y,yaw)for x,y,z,yaw in states]):
+                out.max_speed=min(out.max_speed,self.max_speed*_live_param(self, 'perception.risk_speed_scale',self.risk_speed_scale));self.risk_advice_active=True
         scene=self.obstacles
         try:
             from .rotation_scene import live_points
             raw,raw_stamp=live_points(self,with_stamp=True)
             out.rotation_stamp.sec=raw_stamp//10**9;out.rotation_stamp.nanosec=raw_stamp%10**9
             scene=np.concatenate((scene,raw));out.rotation_observed=True
+            if getattr(self,'dynamic_tracks',None) is not None:
+                predicted=self.dynamic_tracks.update(raw,raw_stamp/1e9)
+                forecast=PointCloud2();forecast.header.frame_id='map';forecast.header.stamp=out.rotation_stamp
+                forecast.height=1;forecast.width=len(predicted);forecast.point_step=12;forecast.row_step=len(predicted)*12;forecast.is_dense=True
+                forecast.fields=[PointField(name=n,offset=i*4,datatype=PointField.FLOAT32,count=1)for i,n in enumerate(('x','y','z'))]
+                forecast.data=np.asarray(predicted,dtype='<f4').tobytes();self.prediction_pub.publish(forecast)
+                if len(predicted) and len(states):
+                    risk=FootprintCollision(predicted,self.ground_plane,self.body_pose.pose.pose.position.z,
+                        self.map_window,footprint=self.footprint_client.get())
+                    if not risk.free([(x,y,yaw)for x,y,z,yaw in states]):
+                        out.max_speed=min(out.max_speed,self.max_speed*_live_param(self, 'perception.risk_speed_scale',self.risk_speed_scale));self.risk_advice_active=True
         except ValueError:out.rotation_observed=False
         p=self.body_pose.pose.pose.position
         floor=scene[:,:2]@np.asarray(self.ground_plane)[:2]+self.ground_plane[2]
@@ -588,7 +748,7 @@ class Hive2TrajectoryMonitor(Node):
                 for name,offset in [('x',0),('y',4),('z',8)]]
             out.obstacles.point_step=12;out.obstacles.row_step=len(scene)*12;out.obstacles.is_dense=True
             out.obstacles.data=np.asarray(scene,dtype='<f4').tobytes()
-            out.valid=bool(ready);out.reason='admitted'if ready else'feedback_or_native_model_not_ready'
+            out.valid=bool(ready);out.reason='admitted'if ready else (self.last_error or '; '.join(i['reason']for i in Hive2TrajectoryMonitor.scene_issues(self)) or 'native_model_not_ready')
         out.samples=[]
         for x,y,z,yaw in states:
             from geometry_msgs.msg import Pose

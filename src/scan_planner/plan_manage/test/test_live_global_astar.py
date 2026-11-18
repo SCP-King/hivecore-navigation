@@ -23,6 +23,7 @@ def test_production_astar_reroutes_current_hits_and_recovers_when_removed():
 #include <algorithm>
 #include <cassert>
 #include <iostream>
+#include <functional>
 #define RCLCPP_ERROR(...) ((void)0)
 '''
     main='''
@@ -94,14 +95,14 @@ int main(){
  auto low_obstacle=globalAStar2D(sloped,{Eigen::Vector3d(2,0,-.89+.04+.08)},lo,hi,
      .1,.25,-1.1,.3,.4,start,goal,{Eigen::Vector2d::Zero()},floor_cutoff);
  assert(low_obstacle.empty());
- // Historical occupancy is a cost only inside the active local window;
+ // Known historical occupancy remains hard inside and outside the local window;
  // live occupancy is always hard, including at the start and goal.
  pcl::PointCloud<pcl::PointXYZ> historical=cloud;
  historical.push_back(pcl::PointXYZ(start.x(),start.y(),start.z()));
  historical.push_back(pcl::PointXYZ(goal.x(),goal.y(),goal.z()));
  auto reference=globalAStar2D(historical,{},lo,hi,.1,.25,.35,1.45,.4,
      start,goal,{Eigen::Vector2d::Zero()},Eigen::Vector3d(0,0,-10),true,lo,hi);
- assert(reference.size()>1);
+ assert(reference.empty()); // Entering the window cannot make known start/goal obstacles traversable.
  auto current_block=globalAStar2D(historical,{goal},lo,hi,.1,.25,.35,1.45,.4,
      start,goal,{Eigen::Vector2d::Zero()},Eigen::Vector3d(0,0,-10),true,lo,hi);
  assert(current_block.empty());
@@ -109,6 +110,21 @@ int main(){
      start,goal,{Eigen::Vector2d::Zero()},Eigen::Vector3d(0,0,-10),true,
      Eigen::Vector3d(-3,-1,0),Eigen::Vector3d(0,1,2));
  assert(unobserved.empty());
+ // Offline bounds stay immutable; realtime reference can retain a far goal.
+ Eigen::Vector3d far(12.,0.,.9);
+ auto offline_far=globalAStar2D(cloud,{},lo,hi,.1,.25,.35,1.45,.4,start,far);
+ assert(offline_far.empty());
+ auto realtime=[&](const Eigen::Vector3d& target,const std::vector<Eigen::Vector3d>& hits){
+   return globalAStar2D(cloud,hits,lo,hi,.1,.25,.35,1.45,.4,start,target,
+     {Eigen::Vector2d::Zero()},Eigen::Vector3d(0,0,-10),true,
+     Eigen::Vector3d(-3,-2,0),Eigen::Vector3d(3,2,2),{},true);
+ };
+ auto far_path=realtime(far,{});assert(far_path.size()>2);
+ assert((far_path.front()-start).norm()<1e-10);
+ assert((far_path.back()-far).norm()<1e-10);
+ assert(realtime(far,{far}).empty()); // extending a reference never overrides a hit
+ assert(realtime(Eigen::Vector3d(1e100,0,.9),{}).empty());
+ assert(realtime(Eigen::Vector3d(std::numeric_limits<double>::quiet_NaN(),0,.9),{}).empty());
  std::cout<<"live obstacle detour="<<excursion<<" m; removal restored route; occupied goal refused\\n";
 }
 '''

@@ -36,6 +36,7 @@ namespace scan_planner
 
     void initPlanModules(rclcpp::Node *node, PlanningVisualization::Ptr vis = nullptr);
 
+    std::string last_global_error_,last_local_error_;
     PlanParameters pp_;
     LocalTrajData local_data_;
     GlobalTrajData global_data_;

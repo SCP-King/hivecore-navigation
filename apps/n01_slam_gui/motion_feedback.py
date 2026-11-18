@@ -15,10 +15,15 @@ class MotionFeedback:
         self.last_rx = None
         self.terminal = False
         self.timeout_reported = False
+        self.reported_reason = None
 
     def feed(self, data, now):
         if self.terminal:return []
         state = str(data.get('state', 'UNKNOWN'))
+        reason = str(data.get('reason') or '')
+        rejection=data.get('trajectory_rejection') or {}
+        if reason=='waiting_for_native_scan_trajectory' and rejection.get('reason'):
+            reason=str(rejection['reason'])
         changed = state != self.state
         self.state = state
         self.last_rx = now
@@ -27,10 +32,13 @@ class MotionFeedback:
             self.started = now
         if self.terminal:
             return []
-        if not changed and (state != 'MOVING' or now - self.last_progress < 5):
-            return []
+        if not changed:
+            if reason == self.reported_reason and (state != 'MOVING' or now-self.last_progress<5):
+                return []
+            if reason != self.reported_reason and now-self.last_progress<5:
+                return []
         self.last_progress = now
-        reason = str(data.get('reason') or '')
+        self.reported_reason = reason
         labels = {'MOVING': '正在沿动态更新路径行驶', 'ARRIVED': '到达目标成功',
                   'COMMAND_SOURCE_CONFLICT': '行驶受阻：速度指令源冲突',
                   'ESTOP': '行驶暂停：急停生效', 'SESSION_COMPLETE': '执行结束，未确认到达目标',
@@ -59,7 +67,13 @@ class MotionFeedback:
             labels['MOVING']='降速行驶'
         text = labels.get(state, '行驶暂停/等待：' + state)
         if reason:
-            text += '；原因：' + reason
+            from navigation_flow import describe
+            text += '；原因：' + describe(reason)
+            if reason=='packet_or_scene_stale' and isinstance(rejection.get('scene_age_s'),(int,float)):
+                text+=f"（场景年龄 {rejection['scene_age_s']:.2f}s"
+                if isinstance(rejection.get('scene_limit_s'),(int,float)):
+                    text+=f"，时限 {rejection['scene_limit_s']:.2f}s"
+                text+='）'
         if data.get('tracking_continuity')=='PREDICTED_TRACKING':
             text += ' · 里程计预测跟踪（等待全局定位修正）'
         if isinstance(data.get('cbf_enabled'), bool):

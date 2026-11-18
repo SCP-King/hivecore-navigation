@@ -13,6 +13,8 @@ import math
 import time
 from bisect import bisect_left
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
 
 import numpy as np
 import rclpy
@@ -89,6 +91,8 @@ class LiveScanBridge(Node):
             "max_tf_wait_s": 0.55,
             "tf_retry_period_s": 0.02,
             "max_pending_clouds": 1,
+            "ground_plane": [0.,0.,0.],
+            "ground_configured": False,
             "max_points": 100000,
             "max_point_range_m": 12.0,
         }
@@ -244,6 +248,12 @@ class LiveScanBridge(Node):
             Odometry, self.pose_topic, self.on_robot_pose, qos_profile_sensor_data)
         self.odom_sub = self.create_subscription(
             Odometry, self.odom_topic, self.on_odometry, odometry_integration_qos())
+        from .scene_perception import setup as setup_perception
+        self.scene_perception=setup_perception(self,get('ground_plane') if get('ground_configured') else None)
+        self.cloud_executor=ThreadPoolExecutor(max_workers=1,thread_name_prefix='navigation_perception')
+        self.cloud_future=None;self.cloud_context=None;self.cloud_work_stamp_ns=0
+        self.perception_processing_ms=0.
+
         self.cloud_sub = self.create_subscription(
             PointCloud2, self.cloud_topic, self.on_cloud, qos_profile_sensor_data)
         self.cloud_pub = self.create_publisher(PointCloud2, "/cloud", qos_profile_sensor_data)
@@ -708,11 +718,16 @@ class LiveScanBridge(Node):
         self.motion_compensation_ready = True
         return pose
 
-    def _xyz_map_cloud(self, msg, translation, quaternion):
+    def _xyz_map_cloud(self, msg, translation, quaternion, body_pose=None, perception_snapshot=None):
         points = decode_pointcloud_xyz(msg, self.max_points, self.max_range)
         world = transform_points(points, translation, quaternion)
+        labels=None
+        if getattr(self,'scene_perception',None) is not None:
+            if body_pose is None:raise ValueError('scan_time_body_pose_required')
+            world,labels=self.scene_perception.process(world,body_pose,self._stamp_ns(msg.header.stamp)/1e9,snapshot=perception_snapshot)
+            if not self.scene_perception.status.get('ground_plane_ready',False):labels=None
         cloud = PointCloud2()
-        cloud.header = msg.header
+        cloud.header.stamp = msg.header.stamp
         cloud.header.frame_id = self.map_frame
         cloud.height = 1
         cloud.width = int(world.shape[0])
@@ -722,9 +737,12 @@ class LiveScanBridge(Node):
             PointField(name="z", offset=8, datatype=PointField.FLOAT32, count=1),
         ]
         cloud.is_bigendian = False
-        cloud.point_step = 12
-        cloud.row_step = 12 * cloud.width
+        cloud.point_step = 12 if labels is None else 16
+        cloud.row_step = cloud.point_step * cloud.width
         cloud.is_dense = True
+        if labels is not None:
+            cloud.fields.append(PointField(name='ground',offset=12,datatype=PointField.FLOAT32,count=1))
+            world=np.column_stack((world,labels.astype(float)))
         cloud.data = np.asarray(world, dtype="<f4").tobytes(order="C")
         return cloud
 
@@ -757,7 +775,7 @@ class LiveScanBridge(Node):
         if stamp_ns <= 0 or age_s > self.max_cloud_age or age_s < -0.2:
             self.counts["drop_stamp"] += 1
             return
-        if stamp_ns <= self.last_processed_scan_stamp_ns:
+        if stamp_ns <= max(self.last_processed_scan_stamp_ns,getattr(self,'cloud_work_stamp_ns',0)):
             self.counts["drop_out_of_order"] += 1
             return
         if self.pending_clouds:
@@ -780,6 +798,17 @@ class LiveScanBridge(Node):
         self.counts["cloud_queued"] += 1
 
     def process_pending_clouds(self):
+        if self.cloud_future is not None:
+            if not self.cloud_future.done():return
+            context=self.cloud_context;future=self.cloud_future
+            self.cloud_future=None;self.cloud_context=None
+            try:
+                output=future.result()
+                self.perception_processing_ms=(time.monotonic()-context.started)*1000.
+                self._finish_cloud(context,output)
+            except Exception as exc:
+                self.motion_compensation_ready=False;self.last_motion_compensation_error='cloud_conversion_failed: '+str(exc)
+                self.counts['drop_cloud']+=1;self.get_logger().warning(str(exc))
         # on_cloud maintains a latest-only queue; no stale FIFO backlog is retained.
         while self.pending_clouds:
             msg, enqueued, wait_counted = self.pending_clouds[0]
@@ -841,56 +870,45 @@ class LiveScanBridge(Node):
                     continue
                 break
 
-            try:
-                cloud_map = self._xyz_map_cloud(
-                    msg, map_lidar_translation, map_lidar_quaternion)
-            except (ValueError, OverflowError) as exc:
-                self.pending_clouds.popleft()
-                self.motion_compensation_ready = False
-                self.last_motion_compensation_error = "cloud_conversion_failed: %s" % exc
-                self.counts["drop_cloud"] += 1
-                self.get_logger().warning("drop cloud: invalid XYZ payload: %s" % exc)
-                continue
-
-            output_age_s = (self.get_clock().now().nanoseconds - stamp_ns) / 1e9
-            if output_age_s > self.max_cloud_age:
-                self.pending_clouds.popleft()
-                self.motion_compensation_ready = False
-                self.last_motion_compensation_error = "scan_stale_after_motion_compensation"
-                self.counts["drop_stale_after_wait"] += 1
-                continue
-
-            body_xyz = map_body_translation
-            velocity, velocity_valid = estimate_velocity(
-                self.last_body, (body_xyz, stamp_ns / 1e9))
-            self.last_body = (body_xyz, stamp_ns / 1e9)
-            body_odom = self._odom(
-                msg.header.stamp, self.map_frame, self.body_frame,
-                map_body_translation, map_body_quaternion, velocity)
-            sensor_odom = self._odom(
-                msg.header.stamp, self.map_frame, self.cloud_frame,
-                map_lidar_translation, map_lidar_quaternion)
-
-            # All outputs retain the exact original LiDAR scan timestamp.
-            self.sensor_pose_pub.publish(sensor_odom)
-            self.scan_body_pose_pub.publish(body_odom)
-            self.cloud_pub.publish(cloud_map)
+            snapshot=self.scene_perception.snapshot(stamp_ns/1e9)
+            context=SimpleNamespace(msg=msg,stamp_ns=stamp_ns,body=(map_body_translation,map_body_quaternion),
+                sensor=(map_lidar_translation,map_lidar_quaternion),snapshot=snapshot,waited_s=waited_s,
+                wait_counted=wait_counted,compensation=dict(self.last_motion_compensation),started=time.monotonic())
             self.pending_clouds.popleft()
+            self.cloud_work_stamp_ns=stamp_ns;self.cloud_context=context
+            # Pure CPU work only. ROS publishing and state commitment stay here
+            # in the executor; callbacks can keep receiving pose/odometry.
+            self.cloud_future=self.cloud_executor.submit(self._xyz_map_cloud,msg,*context.sensor,context.body,snapshot)
+            return
 
-            self.sensor_extrinsic_ready = True
-            self.last_tf_error = ""
-            self.last_velocity_valid = velocity_valid
-            self.last_cloud_out_monotonic = time.monotonic()
-            self.last_cloud_age_s = output_age_s
-            self.last_tf_wait_s = waited_s
-            self.max_tf_wait_observed_s = max(
-                self.max_tf_wait_observed_s, waited_s)
-            if wait_counted:
-                self.counts["cloud_tf_wait_completed"] += 1
-            self.last_processed_scan_stamp_ns = stamp_ns
-            self.last_output_compensation = dict(self.last_motion_compensation,
-                extrinsic_verified=True)
-            self.counts["cloud_out"] += 1
+    def _finish_cloud(self,context,cloud_map):
+        msg=context.msg;stamp_ns=context.stamp_ns
+        output_age_s=(self.get_clock().now().nanoseconds-stamp_ns)/1e9
+        lag=0. if self.last_cloud_input_stamp_ns is None else (self.last_cloud_input_stamp_ns-stamp_ns)/1e9
+        if (output_age_s>self.max_cloud_age or lag>self.max_latest_scan_lag or not self._status_is_fresh()
+                or context.snapshot[0] is not self.scene_perception.body):
+            self.counts['drop_stale_after_wait']+=1
+            self.last_motion_compensation_error='perception_result_stale_or_model_changed';return
+        body_xyz=context.body[0]
+        velocity,velocity_valid=estimate_velocity(self.last_body,(body_xyz,stamp_ns/1e9))
+        self.last_body=(body_xyz,stamp_ns/1e9)
+        body_odom=self._odom(msg.header.stamp,self.map_frame,self.body_frame,*context.body,velocity)
+        sensor_odom=self._odom(msg.header.stamp,self.map_frame,self.cloud_frame,*context.sensor)
+        self.sensor_pose_pub.publish(sensor_odom);self.scan_body_pose_pub.publish(body_odom);self.cloud_pub.publish(cloud_map)
+        self.motion_compensation_ready=True;self.last_motion_compensation_error=''
+        self.sensor_extrinsic_ready=True;self.last_tf_error='';self.last_velocity_valid=velocity_valid
+        self.last_cloud_out_monotonic=time.monotonic();self.last_cloud_age_s=output_age_s
+        self.last_tf_wait_s=context.waited_s
+        self.max_tf_wait_observed_s=max(self.max_tf_wait_observed_s,context.waited_s)
+        if context.wait_counted:self.counts['cloud_tf_wait_completed']+=1
+        self.last_processed_scan_stamp_ns=stamp_ns
+        self.last_output_compensation=dict(context.compensation,extrinsic_verified=True)
+        self.counts['cloud_out']+=1
+
+    def destroy_node(self):
+        worker=getattr(self,'cloud_executor',None)
+        if worker is not None:worker.shutdown(wait=False,cancel_futures=True)
+        return super().destroy_node()
 
     def _refresh_pose_publisher_endpoints(self, now_mono):
         if now_mono - self.pose_publisher_query_monotonic < 2.0:
@@ -1127,6 +1145,9 @@ class LiveScanBridge(Node):
             "body_pose_live_tf_latest_fallback_count": self.live_body_tf_latest_fallback_count,
             "body_pose_live_error": self.last_live_body_pose_error,
             "body_pose_publish_period_s": self.body_pose_publish_period,
+            "navigation_perception": getattr(getattr(self,'scene_perception',None),'status',{}),
+            "perception_processing_ms": getattr(self,'perception_processing_ms',0.),
+            "perception_worker_busy": bool(getattr(self,'cloud_future',None) is not None),
             "cloud_output_fresh": bool(cloud_fresh),
             "cloud_output_age_s": output_age,
             "cloud_output_stamp_ns": self.last_processed_scan_stamp_ns or None,
