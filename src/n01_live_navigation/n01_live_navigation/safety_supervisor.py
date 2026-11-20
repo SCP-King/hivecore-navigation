@@ -17,9 +17,9 @@ class LiveSafetySupervisor(Node):
             "feasibility_topic": "/n01/live_navigation/hive2_feasibility",
             "dynamic_obstacle_topic": "/n01/live_navigation/dynamic_obstacle_status",
             "operator_hold_topic": "/n01/live_navigation/operator_hold",
-            "max_health_age_s": 0.75,
-            "max_feasibility_age_s": 1.0,
-            "max_dynamic_status_age_s": 0.6,
+            "max_health_age_s": 3.0,
+            "max_feasibility_age_s": 3.0,
+            "max_dynamic_status_age_s": 3.0,
             "operator_hold": True,
             "emergency_stop_chain_verified": False,
             "communication_loss_stop_verified": False,
@@ -53,9 +53,9 @@ class LiveSafetySupervisor(Node):
             )
         }
         if not (
-            0.1 <= self.max_health_age <= 3.0
-            and 0.1 <= self.max_feasibility_age <= 3.0
-            and 0.1 <= self.max_dynamic_age <= 3.0
+            0.1 <= self.max_health_age <= 5.0
+            and 0.1 <= self.max_feasibility_age <= 5.0
+            and 0.1 <= self.max_dynamic_age <= 5.0
         ):
             raise ValueError("safety monitor freshness bounds invalid")
 

@@ -1,7 +1,7 @@
 import sys
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from navigation_flow import build_flow,render_flow
+from navigation_flow import build_flow,render_flow,fault_domains
 
 
 def test_missing_model_does_not_claim_a_measured_obstacle_at_start():
@@ -66,3 +66,16 @@ def test_static_ready_and_fresh_heartbeat_do_not_hide_stale_scan_without_goal():
     assert scene['state']=='waiting'
     assert '75.0s' in scene['detail'] and '/cloud' in scene['detail']
     assert any('原始扫描过期' in cause for cause in f['causes'])
+
+
+def test_fault_domain_attribution_prefers_evidence_domains():
+    assert fault_domains('goal_footprint_occupied')['primary']=='map'
+    assert fault_domains('global_no_route')['primary']=='map'
+    assert fault_domains('scan_optimizer_no_collision_free_solution')['primary']=='planning'
+    assert fault_domains('packet_scene_inputs_not_ready')['primary']=='execution'
+    assert fault_domains('chassis stop or emergency stop')['primary']=='chassis'
+    assert fault_domains('')['primary']=='unknown'
+    start=fault_domains('start_occupied')
+    assert start['primary']=='map'
+    assert any(c['domain']=='localization' for c in start['candidates'])
+    assert start['action']

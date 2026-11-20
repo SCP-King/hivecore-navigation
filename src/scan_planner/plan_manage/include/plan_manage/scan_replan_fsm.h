@@ -142,6 +142,13 @@ namespace scan_planner
     double planning_phase_since_{0.};
     int local_attempts_{0},global_replans_{0};
     void publishGlobalPath();
+    void refreshGlobalPathSamples();
+    bool checkAndRepairDirtyGlobal();
+    std::vector<Eigen::Vector3d> global_path_samples_;
+    std::vector<uint32_t> global_path_versions_;
+    double last_dirty_check_s_{0.};
+    double end_yaw_{0.};
+    void clearGlobalPath();
     void publishPlanningStatus(const std::string& phase,const std::string& reason);
     void publishSelfInflationMarker();
     double getOdomYaw() const;

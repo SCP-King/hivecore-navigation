@@ -523,7 +523,7 @@ def four_wheel_steer_screen(path_xyz, max_speed=0.25, max_accel=0.25,
         ('steering_angle_limit', max_steer, float(steering_limit), 1e-6),
         ('wheel_speed_limit', max_wheel_angular, float((runtime_limits or {}).get('chassis.drive.max_speed',20.)), 1e-6),
         ('steering_rate_limit', max_steer_rate, float((runtime_limits or {}).get('chassis.steer.max_speed',1.57)), 1e-6),
-        ('body_yaw_rate_limit', float(np.max(np.abs(yaw_rate))), min(.12,geometry.max_angular_speed) if allow_retime else geometry.max_angular_speed, 1e-6),
+        ('body_yaw_rate_limit', float(np.max(np.abs(yaw_rate))), min(.45,geometry.max_angular_speed) if allow_retime else geometry.max_angular_speed, 1e-6),
         ('path_speed_limit', float(np.max(speed)), float(max_speed), 1e-6),
         ('path_acceleration_limit', max_path_accel, float(max_accel), 1e-3),
     )

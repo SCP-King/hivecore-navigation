@@ -63,7 +63,7 @@ def ps_snapshot():
 def tree_tag(cmd):
     if "/opt/hivecore" in cmd:
         return "甲方栈 /opt/hivecore"
-    if any(root in cmd for root in ("/opt/slam3d_release", "/home/demo/lyy/slam3d_lite_20261106_test")):
+    if any(root in cmd for root in ("/opt/slam3d_release", "/home/demo/lyy/slam3d_20261118", "/home/demo/lyy/slam3d_lite_20261106_test")):
         return "甲方 SLAM3D Lite 综合包"
     return "其他"
 

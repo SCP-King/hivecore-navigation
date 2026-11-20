@@ -33,6 +33,9 @@ class NavigationController:public rclcpp::Node {
     vmax_=declare_parameter("max_speed_mps",.05);wmax_=declare_parameter("max_yaw_rate_radps",.12);
     accel_=declare_parameter("max_accel_mps2",.04);
     final_yaw_=declare_parameter("require_final_yaw",false);follow_updates_=declare_parameter("follow_goal_updates",false);
+    final_yaw_tolerance_=declare_parameter("final_yaw_tolerance_rad",0.10472);
+    if(!std::isfinite(final_yaw_tolerance_)||final_yaw_tolerance_<=0.||final_yaw_tolerance_>0.5)
+      throw std::invalid_argument("invalid final_yaw_tolerance_rad");
     expected_=declare_parameter("require_expected_goal",false);
     expected_x_=declare_parameter("expected_goal_x",0.);expected_y_=declare_parameter("expected_goal_y",0.);
     bool cbf=declare_parameter("cbf_enabled",false);
@@ -41,7 +44,7 @@ class NavigationController:public rclcpp::Node {
     // be tuned at runtime. Defaults keep the previous behaviour.
     const auto fresh_limit=[&](const char* name,double fallback){
       const double v=declare_parameter(name,fallback);
-      if(!std::isfinite(v)||v<.1||v>3.)throw std::invalid_argument(std::string("invalid ")+name);
+      if(!std::isfinite(v)||v<.1||v>5.)throw std::invalid_argument(std::string("invalid ")+name);
       return v;};
     fresh_limit("feedback.pose_max_age_s",3.0);
     fresh_limit("feedback.pose_stamp_max_age_s",3.0);
@@ -286,7 +289,7 @@ class NavigationController:public rclcpp::Node {
       auto p=b.at("pose_prediction");if(!p.at("fault").is_null()&&p.at("fault")!=false&&p.at("fault")!="")return false;
       if(p.at("source_stamp_ns").get<int64_t>()<after)return false;
       auto q=p.at("source_pose");if(std::hypot(q.at("x").get<double>()-packet_->goal.x,q.at("y").get<double>()-packet_->goal.y)>.10)return false;
-      if(final_yaw_){auto a=q.at("quaternion");double x=a[0],y=a[1],z=a[2],w=a[3];double yaw=std::atan2(2*(w*z+x*y),1-2*(y*y+z*z));if(std::abs(wrap(yaw-packet_->goal_yaw))>.0262)return false;}
+      if(final_yaw_){auto a=q.at("quaternion");double x=a[0],y=a[1],z=a[2],w=a[3];double yaw=std::atan2(2*(w*z+x*y),1-2*(y*y+z*z));if(std::abs(wrap(yaw-packet_->goal_yaw))>final_yaw_tolerance_)return false;}
       return true;
     }catch(...){return false;}
   }
@@ -311,7 +314,7 @@ class NavigationController:public rclcpp::Node {
         if(terminal&&distance<.35&&!at_goal)p.yaw=std::atan2(packet_->goal.y-y_,packet_->goal.x-x_);
         double yaw_error=wrap(p.yaw-yaw_);
         double desired=at_goal&&final_yaw_?packet_->goal_yaw:p.yaw;
-        if((at_goal&&final_yaw_&&std::abs(wrap(desired-yaw_))>.0262)||(!at_goal&&(std::abs(yaw_error)>.85||std::min({vmax_,packet_->max_speed,admitted_speed_})*std::max(0.,std::cos(yaw_error))<=packet_->chassis_geometry[6]+.001))){
+        if((at_goal&&final_yaw_&&std::abs(wrap(desired-yaw_))>final_yaw_tolerance_)||(!at_goal&&(std::abs(yaw_error)>.85||std::min({vmax_,packet_->max_speed,admitted_speed_})*std::max(0.,std::cos(yaw_error))<=packet_->chassis_geometry[6]+.001))){
           state_="ALIGN";
           if(measured_v_>.01||std::abs(v_)>.005){reason="braking before alignment";}
           else if(sweep(desired)){w=navigation::limit(1.2*wrap(desired-yaw_),wmax_);state_="ROTATING";}
@@ -396,7 +399,7 @@ class NavigationController:public rclcpp::Node {
   int dec_=-1;uint64_t goal_=0;int64_t revision_=-1,pose_stamp_=0,odom_stamp_=0,arrival_stamp_=0;
   double x_=0,y_=0,z_=0,yaw_=0,v_=0,w_=0,vmax_,wmax_,accel_,expected_x_,expected_y_;
   double progress_s_=0,execution_time_=0,packet_rx_=0,pose_rx_=0,odom_rx_=0,health_rx_=0,measured_v_=0,measured_w_=0,travel_=0;
-  double last_manual_=-100,last_tick_=0,status_at_=0,replan_at_=0,arrival_since_=0,max_cost_=0,steering_scale_=1.,admitted_speed_=0.;std::string physical_reason_,terminal_reason_,map_id_,feedback_reason_,task_,state_="DISABLED";
+  double last_manual_=-100,last_tick_=0,status_at_=0,replan_at_=0,arrival_since_=0,max_cost_=0,steering_scale_=1.,admitted_speed_=0.,final_yaw_tolerance_=0.10472;std::string physical_reason_,terminal_reason_,map_id_,feedback_reason_,task_,state_="DISABLED";
 };
 static volatile std::sig_atomic_t stop_requested=0;
 static void request_stop(int){stop_requested=1;}

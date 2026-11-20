@@ -15,6 +15,7 @@
 #include <nav_msgs/msg/odometry.hpp>
 #include <nav_msgs/msg/occupancy_grid.hpp>
 #include <queue>
+#include <unordered_map>
 #include <rclcpp/rclcpp.hpp>
 #include <rmw/qos_profiles.h>
 #include <tuple>
@@ -186,7 +187,7 @@ public:
   inline void setOccupied(Eigen::Vector3d pos);
   inline int getOccupancy(Eigen::Vector3d pos);
   inline int getOccupancy(Eigen::Vector3i id);
-  inline int getInflateOccupancy(Eigen::Vector3d pos, double yaw, bool allow_unknown=false);
+  inline int getInflateOccupancy(Eigen::Vector3d pos, double yaw, bool allow_unknown=false, bool honor_fixed_heading=true);
 
   inline void boundIndex(Eigen::Vector3i& id);
   inline bool isUnknown(const Eigen::Vector3i& id);
@@ -257,7 +258,7 @@ public:
   bool hasStaticSource() const { return static_source_valid_; }
   const pcl::PointCloud<pcl::PointXYZ>& getStaticSourceCloud() {
     refreshStaticObservations(true);
-    return static_observation_refresh_ ? effective_static_source_ : static_source_decoded_;
+    return effective_static_source_.empty() ? static_source_decoded_ : effective_static_source_;
   }
   Eigen::Vector3d getStaticSourceMin() const { return static_source_min_; }
   Eigen::Vector3d getStaticSourceMax() const { return static_source_max_; }
@@ -311,6 +312,20 @@ public:
     }
     return out;
   }
+  void rebuildGlobalGrid();
+  void refreshGlobalGrid(bool force=false);
+  bool hasGlobalGrid() const { return global_w_ > 0 && global_h_ > 0 && !global_grid_.empty(); }
+  size_t egoTrailCellCount() const { return ego_trail_z_.size(); }
+  // Diagnostics: -2 outside, -1 unknown, 0 free, 100 occupied.
+  int globalCellState(double x, double y) const;
+  int globalFreeComponentSize(double x, double y) const;
+  bool clearGlobalStart(double x, double y, double radius);
+  void globalCounts(int& free_cells, int& occupied_cells, int& unknown_cells) const;
+  const pcl::PointCloud<pcl::PointXYZ>& getGlobalOccupancyCloud() { refreshGlobalGrid(); return global_cloud_; }
+  Eigen::Vector3d getGlobalMin() const { return Eigen::Vector3d(global_origin_.x(), global_origin_.y(), 0.); }
+  Eigen::Vector3d getGlobalMax() const { return Eigen::Vector3d(global_origin_.x()+global_w_*global_res_, global_origin_.y()+global_h_*global_res_, 0.); }
+  double getGlobalResolution() const { return global_res_; }
+  uint32_t globalTileVersion(double x,double y) const;
   Eigen::Vector3d getLocalMinimum() const { return mp_.map_min_boundary_; }
   Eigen::Vector3d getLocalMaximum() const { return mp_.map_max_boundary_; }
   std::vector<Eigen::Vector3d> getLiveObstaclePoints() {
@@ -423,6 +438,7 @@ private:
   int setCacheOccupancy(Eigen::Vector3d pos, int occ);
   Eigen::Vector3d closetPointInMap(const Eigen::Vector3d& pt, const Eigen::Vector3d& ray_pos);
   void updateSlidingMap(const Eigen::Vector3d& center);
+  void noteEgoTrailPose();
   void updateMapBoundaryFromIndex();
   void resetAllMapData();
   void resetCellByAddress(int addr);
@@ -476,6 +492,21 @@ private:
   plan_env_detail::WorldChanges world_changes_;
   std::vector<char> static_prior_mask_;
   bool static_observation_refresh_{false}, static_refresh_pending_{false}, static_restore_urgent_{false};
+  bool static_ego_filter_enabled_{true};
+  double static_ego_filter_radius_{0.30};
+  double static_ego_filter_margin_{0.06};
+  double static_ego_filter_z_down_{0.80};
+  double static_ego_filter_z_up_{0.90};
+  bool live_ego_filter_enabled_{true};
+  double live_ego_filter_margin_{0.06};
+  double raycast_dedup_resolution_{0.10};
+  bool ego_history_enabled_{true};
+  double ego_history_step_m_{0.25};
+  size_t ego_history_max_cells_{500000};
+  Eigen::Vector3d last_ego_history_pose_{Eigen::Vector3d::Constant(1e9)};
+  double last_ego_history_yaw_{0.0};
+  bool last_ego_history_valid_{false};
+  std::unordered_map<uint64_t, std::pair<double, double>> ego_trail_z_;
   bool static_prior_as_cost_{false};
   bool unknown_as_obstacle_{true};
   bool extend_reference_to_goal_{false};
@@ -531,7 +562,23 @@ private:
   default_random_engine eng_;
   void publishPlanningView();
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr fused_view_pub_,risk_view_pub_;
-  rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr reference_grid_pub_, live_grid_pub_;
+  rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr reference_grid_pub_, live_grid_pub_, global_grid_pub_;
+  // Persistent global 2-D layer (static + live + observed free), independent of the sliding window.
+  std::vector<int8_t> global_grid_;
+  std::vector<uint32_t> global_tile_version_;
+  pcl::PointCloud<pcl::PointXYZ> global_cloud_;
+  Eigen::Vector2d global_origin_{Eigen::Vector2d::Zero()};
+  double global_res_{0.1};
+  int global_w_{0}, global_h_{0};
+  int global_tile_m_{2};
+  double last_global_rebuild_s_{-1.};
+  uint64_t global_version_{0};
+  std::vector<int8_t> reference_grid_data_, live_grid_data_;
+  Eigen::Vector2d reference_grid_origin_{Eigen::Vector2d::Zero()};
+  double reference_grid_res_{0.1};
+  int reference_grid_w_{0}, reference_grid_h_{0};
+  std::unordered_map<uint64_t,double> global_live_hits_;
+  double global_hits_res_{-1.};
   double last_planning_view_s_{-1.};
   std::vector<Eigen::Vector3i> static_window_prior_cells_;
   std::unordered_map<int,int64_t> prior_observation_since_;
@@ -642,13 +689,13 @@ inline int GridMap::getOccupancy(Eigen::Vector3d pos) {
            static_occupancy_buffer_[addr] == 1)) ? 1 : 0;
 }
 
-inline int GridMap::getInflateOccupancy(Eigen::Vector3d pos, double yaw, bool allow_unknown) {
+inline int GridMap::getInflateOccupancy(Eigen::Vector3d pos, double yaw, bool allow_unknown, bool honor_fixed_heading) {
   // Hard occupancy and observation certainty are separate decisions. Real
   // obstacles always block; an unobserved cell only blocks when the caller
   // asks for strict observation (execution/admission) or when the configured
   // planning policy still treats unknown as an obstacle. Planning may relax
   // unknown to a cost/speed influence while execution keeps the strict gate.
-  if (mp_.fixed_body_heading_) yaw=md_.body_yaw_;
+  if (mp_.fixed_body_heading_ && honor_fixed_heading) yaw=md_.body_yaw_;
   const bool check_observed=require_observed_space_ && !allow_unknown;
   bool unobserved=false;
   const auto sample=[&](const Eigen::Vector3d& point)->int {

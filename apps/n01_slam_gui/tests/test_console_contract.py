@@ -80,7 +80,7 @@ checks = {
         "总控 / 适配器", "适配器链路", "/n01/localization/pose",
         "/n01/localization/status", "/body_pose")),
     "localization match/freshness": all(x in source for x in (
-        "阈值 0.045", 'UI["loc_match"]', 'UI["loc_pose_age"]',
+        "阈值 {FITNESS_THRESHOLD}", 'UI["loc_match"]', 'UI["loc_pose_age"]',
         'UI["l_fresh"]', 'UI["loc_map_loaded"]')),
     "Chinese service labels": all(x in source for x in (
         "激活定位", "进入跟踪", "进入重定位", "停止定位服务",

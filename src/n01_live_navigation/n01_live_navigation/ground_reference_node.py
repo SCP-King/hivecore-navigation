@@ -39,6 +39,7 @@ class GroundReferenceNode(Node):
             raise ValueError('invalid ground reference configuration')
         self.pose = self.plane = self.reference_xy = None
         self.plane_time, self.last_fit = 0., -float('inf')
+        self.fit_error = ""
         self.fixed_conflict, self.rsp_seen = False, False
         self.reason = 'waiting_for_body_pose_and_map_floor'
         self.tf_pub = TransformBroadcaster(self)
@@ -119,8 +120,10 @@ class GroundReferenceNode(Node):
             if plane.residual > self.cfg['max_residual_m']:
                 raise ValueError('floor_residual_too_large')
             self.plane, self.reference_xy, self.plane_time = plane, np.array([p.x,p.y]), now
+            self.fit_error = ""
         except ValueError as exc:
             self.plane = None  # Never fall back to a fixed 0.9m height.
+            self.fit_error = str(exc)
             self.reason = str(exc)
 
     def on_pose(self, msg):
@@ -138,7 +141,8 @@ class GroundReferenceNode(Node):
             self.reason = 'conflicting_fixed_footprint_tf' if self.fixed_conflict else 'waiting_for_body_root_model'
             return
         if self.plane is None or time.monotonic()-self.plane_time > self.cfg['max_plane_age_s']:
-            self.reason = 'floor_unavailable_or_stale'
+            self.reason = ('floor_unavailable_or_stale' +
+                           (f':{self.fit_error}' if self.fit_error else ''))
             return
         p, q = msg.pose.pose.position, msg.pose.pose.orientation
         if np.linalg.norm(np.array([p.x,p.y])-self.reference_xy) > self.cfg['fit_radius_m']/2:

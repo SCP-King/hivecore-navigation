@@ -7,7 +7,7 @@
 先确认建图节点未运行，再执行：
 
 ```bash
-source /home/demo/lyy/slam3d_lite_20261106_test/setup_runtime.sh
+source /home/demo/lyy/slam3d_20261118/setup_runtime.sh
 ros2 launch hivecore_slam3d_lite_console localization_lite_desk.launch.py
 ```
 
@@ -28,7 +28,7 @@ ros2 launch hivecore_slam3d_lite_console localization_lite_desk.launch.py
 
 ## 重定位与 Tracking
 
-以 `reloc_ok=true` 且 `reloc_fitness` 满足当前实际配置阈值作为重定位通过条件。已核对的 `/home/demo/lyy/slam3d_lite_20261106_test` 配置阈值为 `0.045`，但现场应以运行节点实际参数为准。
+以 `reloc_ok=true` 且 `reloc_fitness` 满足当前实际配置阈值作为重定位通过条件。已核对的 `/home/demo/lyy/slam3d_20261118` 配置阈值为 `0.030`，但现场应以运行节点实际参数为准。
 
 确认重定位通过后，点击 `enter_tracking`。随后检查：
 

@@ -3,7 +3,7 @@
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/ros_env.sh"
 
 n01_select_slam_runtime() {
-  export SLAM_ROSK="${SLAM_ROSK:-/home/demo/lyy/slam3d_lite_20261106_test}"
+  export SLAM_ROSK="${SLAM_ROSK:-/home/demo/lyy/slam3d_20261118}"
   if [[ ! -r "$SLAM_ROSK/setup_runtime.sh" ]]; then
     printf '[N01 SLAM] Missing runtime: %s/setup_runtime.sh\n' "$SLAM_ROSK" >&2
     return 2
@@ -27,6 +27,7 @@ n01_source_slam_runtime() {
       [[ -n "$entry" ]] || continue
       case "$entry" in
         */slam3d_release|*/slam3d_release/*|\
+        /home/demo/lyy/slam3d_20261118|/home/demo/lyy/slam3d_20261118/*|\
         /home/demo/lyy/slam3d_lite_20261106_test|/home/demo/lyy/slam3d_lite_20261106_test/*|\
         "$SLAM_ROSK"|"$SLAM_ROSK"/*) continue ;;
       esac

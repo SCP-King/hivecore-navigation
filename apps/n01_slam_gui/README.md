@@ -31,7 +31,7 @@ GUI 实时模式操作：选择“自部署 FAST-LIO2”与“实时（边建图
 ## 运行环境
 
 - Ubuntu + ROS 2 Humble
-- 已安装的 `/home/demo/lyy/slam3d_lite_20261106_test` Lite 综合包
+- 已安装的 `/home/demo/lyy/slam3d_20261118` Lite 综合包
 - Python 依赖：`nicegui`、`numpy`、`Pillow`，以及 Lite 消息包和 ROS 2 Python 接口
 
 ## 启动与退出
@@ -100,7 +100,7 @@ TF与机器人模型、可视化与GUI、其他分类筛选，展示同名数、
 - 地图 PCD 路径 + 设置并加载地图；
 - 初始位姿 x/y/yaw/frame + 发布初始位姿；
 - 检查 TF 链；
-- 状态：定位节点、会话、地图加载、匹配/fitness 阈值 0.045、位姿、局部地面、当前地图路径；
+- 状态：定位节点、会话、地图加载、匹配/fitness 阈值 0.030、位姿、局部地面、当前地图路径；
 - 新鲜度：`/robot_pose`、`/loc_status`、`/localization_map`、`/livox/lidar/geo_filtered`，≤0.5s 绿、≤2s 黄、>2s 红；
 - 地图加载成功只代表 `map_loaded=true`；要 `reloc_ok=true` 才能进入跟踪/导航。
 
@@ -219,7 +219,7 @@ GUI 退出、desk 异常退出或“停止全部 GUI 托管模块”都会先尝
 ## 检查
 
 ```bash
-source /home/demo/lyy/slam3d_lite_20261106_test/setup_runtime.sh
+source /home/demo/lyy/slam3d_20261118/setup_runtime.sh
 python3 -m py_compile slam_lite_gui.py tools/*.py tests/*.py
 bash -n run_slam_lite_gui.sh tools/*.sh
 python3 tests/test_lifecycle.py

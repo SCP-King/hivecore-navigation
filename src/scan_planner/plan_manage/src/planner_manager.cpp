@@ -66,7 +66,9 @@ namespace scan_planner
       const std::vector<Eigen::Vector2d> &footprint_polygon = {},
       bool extend_realtime_reference = false, std::string* error=nullptr,
       const std::vector<Eigen::Vector3d>& uncertain_points={},
-      std::function<bool(const Eigen::Vector3d&)>* free_check=nullptr)
+      std::function<bool(const Eigen::Vector3d&)>* free_check=nullptr,
+      bool allow_start_clear=false, double start_clear_radius=0.40,
+      bool allow_goal_clear=false, double goal_clear_radius=0.40)
   {
     if(error)error->clear();
     const auto fail=[&](const char* reason){if(error)*error=reason;return std::vector<Eigen::Vector3d>{};};
@@ -167,12 +169,42 @@ namespace scan_planner
     }
     return result;
     };
-    const auto inflated=inflate_layer(occupied);
+    auto inflated=inflate_layer(occupied);
     const auto reference_inflated=inflate_layer(reference);
-    if(free_check)*free_check=[index,inflated](const Eigen::Vector3d& p){int id=index(p.x(),p.y());return id>=0 && !inflated[id];};
     const int start_id = index(start.x(), start.y());
     const int goal_id = index(end.x(), end.y());
     if (start_id < 0 || goal_id < 0) return fail("start_or_goal_outside_map_bounds");
+    if (inflated[start_id] && allow_start_clear) {
+      const int r = std::max(1, static_cast<int>(std::ceil(start_clear_radius / resolution)));
+      const int sx = start_id % width, sy = start_id / width;
+      for (int dy = -r; dy <= r; ++dy) {
+        for (int dx = -r; dx <= r; ++dx) {
+          if (dx*dx + dy*dy > r*r) continue;
+          const int x = sx + dx, y = sy + dy;
+          if (x < 0 || x >= width || y < 0 || y >= height) continue;
+          inflated[static_cast<size_t>(y) * width + x] = 0;
+        }
+      }
+      RCLCPP_WARN(rclcpp::get_logger("path_searching"),
+                  "Global A* cleared stale start inflation within %.2f m; local start envelope is free",
+                  start_clear_radius);
+    }
+    if (inflated[goal_id] && allow_goal_clear) {
+      const int r = std::max(1, static_cast<int>(std::ceil(goal_clear_radius / resolution)));
+      const int gx = goal_id % width, gy = goal_id / width;
+      for (int dy = -r; dy <= r; ++dy) {
+        for (int dx = -r; dx <= r; ++dx) {
+          if (dx*dx + dy*dy > r*r) continue;
+          const int x = gx + dx, y = gy + dy;
+          if (x < 0 || x >= width || y < 0 || y >= height) continue;
+          inflated[static_cast<size_t>(y) * width + x] = 0;
+        }
+      }
+      RCLCPP_WARN(rclcpp::get_logger("path_searching"),
+                  "Global A* cleared stale goal inflation within %.2f m; local goal envelope is free",
+                  goal_clear_radius);
+    }
+    if(free_check)*free_check=[index,inflated](const Eigen::Vector3d& p){int id=index(p.x(),p.y());return id>=0 && !inflated[id];};
     if (inflated[start_id] || inflated[goal_id])
     {
       RCLCPP_ERROR(rclcpp::get_logger("path_searching"),
@@ -215,7 +247,7 @@ namespace scan_planner
             (inflated[cy * width + nx] || inflated[ny * width + cx]))
           continue;
         const double step = (d[0] != 0 && d[1] != 0) ? std::sqrt(2.0) : 1.0;
-        const double prior_cost=reference_inflated[nid] ? 12.0 : 1.0;
+        const double prior_cost=1.0;  // unconfirmed history is no longer priced
         const double tentative = g_score[current] + step*prior_cost;
         if (tentative + 1e-9 < g_score[nid])
         {
@@ -697,17 +729,28 @@ namespace scan_planner
           end_pos.y()<grid_map_->getStaticSourceMin().y() || end_pos.y()>grid_map_->getStaticSourceMax().y()))
         RCLCPP_INFO_THROTTLE(node_->get_logger(),*node_->get_clock(),2000,
           "Realtime far goal retained: extending optimistic global reference; local execution still needs current scene");
+      grid_map_->refreshGlobalGrid(true);
+      grid_map_->clearGlobalStart(start_pos.x(),start_pos.y(),0.40);
+      const bool global_grid_ready=grid_map_->hasGlobalGrid();
+      RCLCPP_INFO_THROTTLE(node_->get_logger(),*node_->get_clock(),2000,
+        "Global A* source=%s global_cells=%zu static_points=%zu",
+        global_grid_ready?"persistent_global":"static_fallback",
+        global_grid_ready?grid_map_->getGlobalOccupancyCloud().size():0,
+        grid_map_->getStaticSourceCloud().size());
       inter_points = globalAStar2D(
-          grid_map_->getStaticSourceCloud(),
-          grid_map_->getLiveObstaclePoints(),
-          grid_map_->getStaticSourceMin(),
-          grid_map_->getStaticSourceMax(),
-          grid_map_->getResolution(), grid_map_->getFootprintRadius(),
+          global_grid_ready?grid_map_->getGlobalOccupancyCloud():grid_map_->getStaticSourceCloud(),
+          global_grid_ready?std::vector<Eigen::Vector3d>{}:grid_map_->getLiveObstaclePoints(),
+          global_grid_ready?grid_map_->getGlobalMin():grid_map_->getStaticSourceMin(),
+          global_grid_ready?grid_map_->getGlobalMax():grid_map_->getStaticSourceMax(),
+          global_grid_ready?grid_map_->getGlobalResolution():grid_map_->getResolution(),
+          grid_map_->getFootprintRadius(),
           std::min(start_pos.z(), end_pos.z()) - grid_map_->getBodyDown(),
           std::max(start_pos.z(), end_pos.z()) + grid_map_->getBodyUp(),
           pp_.global_waypoint_spacing_,
           start_pos, end_pos, grid_map_->getFootprintCenters(), grid_map_->getGroundCutoffPlane(),
-          grid_map_->usesStaticReferenceCost(),grid_map_->getLocalMinimum(),grid_map_->getLocalMaximum(),grid_map_->getFootprintPolygon(),(grid_map_->usesRealtimeReference()||grid_map_->extendsReferenceToGoal()),&last_global_error_,grid_map_->getUnconfirmedPoints(),&reference_free);
+          grid_map_->usesStaticReferenceCost(),grid_map_->getLocalMinimum(),grid_map_->getLocalMaximum(),grid_map_->getFootprintPolygon(),(grid_map_->usesRealtimeReference()||grid_map_->extendsReferenceToGoal()),&last_global_error_,grid_map_->getUnconfirmedPoints(),&reference_free,
+          true,0.40,
+          grid_map_->getInflateOccupancy(end_pos,0.,false)<=0,0.40);
       if (inter_points.size() < 2)
       {
         RCLCPP_ERROR(node_->get_logger(),

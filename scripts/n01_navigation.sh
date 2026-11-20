@@ -24,6 +24,7 @@ NAV_GROUND_B="${N01_NAV_GROUND_B:-0.0}"
 NAV_RVIZ="${N01_NAV_RVIZ:-false}"
 NAV_MAP_MODE="${N01_NAV_MAP_MODE:-offline}"
 NAV_REFERENCE_TOPIC="${N01_NAV_REALTIME_REFERENCE_TOPIC:-}"
+NAV_FOOTPRINT_MODEL="${N01_NAV_FOOTPRINT_MODEL:-urdf}"
 SLAM_CONFIG="$ROOT/apps/n01_slam_gui/config/n01_localization_lite.yaml"
 # ROS launch writes ~/.ros/log by default. In this deployment that path can be
 # mounted read-only; fall back to a writable /tmp directory so the stack starts
@@ -181,21 +182,48 @@ start_stack() {
     echo "Reusing localization-owned /n01_localization_adapter."
   fi
 
+  # The scan bridge is part of the navigation stack, but a previous stack (or a
+  # separately managed bridge) may already own it. Reuse it when present, start
+  # it otherwise; requiring it while passing start_scan_bridge:=false deadlocked
+  # every start with "navigation nodes missing".
+  bridge_count="$(grep -Fxc "/n01_live_scan_bridge" <<<"$nodes" || true)"
+  if [[ "${bridge_count:-0}" -gt 1 ]]; then
+    echo "ERROR: duplicate /n01_live_scan_bridge nodes; refusing to start."
+    return 3
+  elif [[ "${bridge_count:-0}" -eq 1 ]]; then
+    start_bridge=false
+    echo "Reusing existing /n01_live_scan_bridge."
+  else
+    start_bridge=true
+    echo "Starting /n01_live_scan_bridge with the navigation stack."
+  fi
+
   launch_log="$LOG_DIR/n01_navigation_launch_$(date +%Y%m%d_%H%M%S).log"
   echo "===== N-01 NAVIGATION START ====="
+  launch_args=(
+    map_mode:="$NAV_MAP_MODE"
+    pcd_path:="$PCD"
+    pcd_map_frame_asserted:="$([[ "$NAV_MAP_MODE" == "offline" ]] && echo true || echo false)"
+    start_localization_adapter:="$start_adapter"
+    start_scan_bridge:=$start_bridge
+    navigation_speed_mps:="${N01_NAV_SPEED:-0.4}"
+    ground_z_map_m:="$NAV_GROUND_Z"
+    ground_slope_x:="$NAV_GROUND_A"
+    ground_slope_y:="$NAV_GROUND_B"
+    rviz:="$NAV_RVIZ"
+    use_urdf_footprint:="$([[ "$NAV_FOOTPRINT_MODEL" == "double_cylinder" ]] && echo false || echo true)"
+    double_cylinder_radius:="${N01_NAV_DC_RADIUS:-0.25}"
+    double_cylinder_offset:="${N01_NAV_DC_OFFSET:-0.18}"
+    environment_margin:="${N01_NAV_ENV_MARGIN:-$([[ "$NAV_FOOTPRINT_MODEL" == "double_cylinder" ]] && echo 0.0 || echo 0.06)}"
+  )
+  if [[ -n "${N01_NAV_MAP_ID:-}" ]]; then
+    launch_args+=(map_id:="$N01_NAV_MAP_ID")
+  fi
+  if [[ -n "$NAV_REFERENCE_TOPIC" ]]; then
+    launch_args+=(realtime_reference_topic:="$NAV_REFERENCE_TOPIC")
+  fi
   nohup setsid ros2 launch n01_live_navigation live_scan.launch.py \
-    map_id:="${N01_NAV_MAP_ID:-}" \
-    map_mode:="$NAV_MAP_MODE" \
-    realtime_reference_topic:="$NAV_REFERENCE_TOPIC" \
-    pcd_path:="$PCD" \
-    pcd_map_frame_asserted:="$([[ "$NAV_MAP_MODE" == "offline" ]] && echo true || echo false)" \
-    start_localization_adapter:="$start_adapter" \
-    start_scan_bridge:=false \
-    navigation_speed_mps:="${N01_NAV_SPEED:-0.05}" \
-    ground_z_map_m:="$NAV_GROUND_Z" \
-    ground_slope_x:="$NAV_GROUND_A" \
-    ground_slope_y:="$NAV_GROUND_B" \
-    rviz:="$NAV_RVIZ" \
+    "${launch_args[@]}" \
     >"$launch_log" 2>&1 </dev/null &
   launch_pid=$!
   echo "$launch_pid" > "$PID_FILE"

@@ -5,10 +5,14 @@
 #include <algorithm>
 namespace plan_env_detail {
 inline bool polygonHit(const Eigen::Vector2d &q,const std::vector<Eigen::Vector2d>&p,double margin) {
-  bool inside=true;double distance2=1e30;
-  for(size_t i=0;i<p.size();++i){
-    const auto a=p[i];const auto e=(p[(i+1)%p.size()]-a).eval();const auto v=(q-a).eval();
-    if(e.x()*v.y()-e.y()*v.x() < -1e-10)inside=false;
+  // Winding-independent point-in-polygon: URDF hulls may be authored CW or CCW.
+  bool inside=false;double distance2=1e30;
+  for(size_t i=0,j=p.size()-1;i<p.size();j=i++){
+    const auto &a=p[i],&b=p[j];
+    if(((a.y()>q.y())!=(b.y()>q.y())) &&
+       (q.x() < (b.x()-a.x())*(q.y()-a.y())/(b.y()-a.y()+1e-12)+a.x()))
+      inside=!inside;
+    const auto e=(p[(i+1)%p.size()]-p[i]).eval();const auto v=(q-p[i]).eval();
     const double t=std::clamp(v.dot(e)/e.squaredNorm(),0.,1.);
     distance2=std::min(distance2,(v-t*e).squaredNorm());
   }

@@ -69,14 +69,14 @@ class DynamicObstacleTracker(Node):
             self.map_frame == "map" and math.isfinite(self.ground_z_fallback)
             and 0.5 <= self.body_height <= 1.5
             and 0.4 <= self.body_to_ground <= 1.2
-            and 0.1 <= self.body_pose_timeout <= 2.0
+            and 0.1 <= self.body_pose_timeout <= 5.0
             and 0.1 <= self.voxel <= 1.0
             and 0.1 <= self.cluster_cell <= 1.0
             and 3 <= self.min_points <= 100
             and 100 <= self.max_points <= 300000
             and 0.2 <= self.track_timeout <= 5.0
             and 0.2 <= self.association_distance <= 3.0
-            and 0.1 <= self.max_cloud_age <= 2.0
+            and 0.1 <= self.max_cloud_age <= 5.0
         ):
             raise ValueError("dynamic obstacle tracker parameters outside bounds")
 

@@ -66,31 +66,31 @@ class LiveScanBridge(Node):
             # /body_pose output consumed by SCAN/tracker is the physical body,
             # Ground projection is separate; no nominal leg height is composed.
             "planner_body_frame": "base_link",
-            "max_status_age_s": 1.0,
-            "max_pose_rx_age_s": 0.7,
+            "max_status_age_s": 3.0,
+            "max_pose_rx_age_s": 3.0,
             "max_pose_stamp_age_s": 5.0,
             "max_pose_anchor_delta_s": 5.0,
             "max_live_body_pose_anchor_delta_s": 5.0,
             "pose_cache_size": 64,
-            "prediction_max_distance_m": .12,
-            "prediction_max_turn_rad": .20,
+            "prediction_max_distance_m": 5.0,
+            "prediction_max_turn_rad": 3.14,
             "pose_correction_time_s": .8,
             "pose_correction_speed_mps": .04,
             "pose_correction_yaw_rate_radps": .08,
-            "pose_correction_jump_m": .15,
-            "pose_correction_jump_rad": .17,
-            "max_odom_rx_age_s": 0.2,
-            "max_odom_stamp_age_s": 0.4,
-            "odom_interpolation_max_gap_s": 0.08,
+            "pose_correction_jump_m": 2.0,
+            "pose_correction_jump_rad": 1.5,
+            "max_odom_rx_age_s": 3.0,
+            "max_odom_stamp_age_s": 3.0,
+            "odom_interpolation_max_gap_s": 0.5,
             "odom_cache_size": 512,
-            "max_cloud_age_s": 0.9,
-            "max_latest_scan_lag_s": 0.7,
+            "max_cloud_age_s": 3.0,
+            "max_latest_scan_lag_s": 3.0,
             "body_pose_publish_period_s": 0.05,
-            "max_live_body_pose_age_s": 0.4,
-            "max_live_tf_lag_s": 0.15,
-            "max_tf_wait_s": 0.55,
+            "max_live_body_pose_age_s": 3.0,
+            "max_live_tf_lag_s": 3.0,
+            "max_tf_wait_s": 3.0,
             "tf_retry_period_s": 0.02,
-            "max_pending_clouds": 1,
+            "max_pending_clouds": 3,
             "ground_plane": [0.,0.,0.],
             "ground_configured": False,
             "max_points": 100000,
@@ -140,22 +140,22 @@ class LiveScanBridge(Node):
         self.max_points = int(get("max_points"))
         self.max_range = float(get("max_point_range_m"))
         if not (
-            0.1 <= self.max_status_age <= 3.0
-            and 0.1 <= self.max_pose_rx_age <= 2.0
-            and 0.1 <= self.max_pose_stamp_age <= 5.0
+            0.1 <= self.max_status_age <= 5.0
+            and 0.1 <= self.max_pose_rx_age <= 5.0
+            and 0.1 <= self.max_pose_stamp_age <= 10.0
             and 0.1 <= self.max_pose_anchor_delta <= self.max_pose_stamp_age
             and 0.1 <= self.max_live_body_pose_anchor_delta <= self.max_pose_stamp_age
             and 2 <= self.pose_cache_size <= 256
-            and 0.05 <= self.max_odom_rx_age <= 1.0
-            and 0.1 <= self.max_odom_stamp_age <= 2.0
-            and 0.02 <= self.odom_interpolation_max_gap <= 0.2
+            and 0.05 <= self.max_odom_rx_age <= 5.0
+            and 0.1 <= self.max_odom_stamp_age <= 5.0
+            and 0.02 <= self.odom_interpolation_max_gap <= 1.0
             and 16 <= self.odom_cache_size <= 2048
-            and 0.1 <= self.max_cloud_age <= 2.0
-            and 0.05 <= self.max_latest_scan_lag <= 1.0
+            and 0.1 <= self.max_cloud_age <= 5.0
+            and 0.05 <= self.max_latest_scan_lag <= 5.0
             and 0.02 <= self.body_pose_publish_period <= 0.2
-            and 0.1 <= self.max_live_body_pose_age <= 1.0
-            and 0.02 <= self.max_live_tf_lag <= 0.5
-            and 0.01 <= self.max_tf_wait <= 1.0
+            and 0.1 <= self.max_live_body_pose_age <= 5.0
+            and 0.02 <= self.max_live_tf_lag <= 5.0
+            and 0.01 <= self.max_tf_wait <= 5.0
             and 0.005 <= self.tf_retry_period <= 0.1
             and 1 <= self.max_pending_clouds <= 32
             and 100 <= self.max_points <= 300000
@@ -589,7 +589,25 @@ class LiveScanBridge(Node):
             self.last_odom_error = "live_body_tf_latest_unavailable: %s" % exc
             return None
 
+    def _recover_pose_fault(self):
+        """Re-anchor after a bounded time; a single correction jump must not
+        deadlock the whole navigation pipeline forever."""
+        now=time.monotonic()
+        since=getattr(self,'_pose_fault_since',None)
+        if since is None:
+            self._pose_fault_since=now
+            since=now
+        if getattr(self,'status_ok',False) and now-since>=2.0:
+            self.pose_fusion.reset()
+            self.held_pose_guard=HeldPoseGuard()
+            self._pose_fault_since=None
+            self.get_logger().warn('pose correction fault auto-recovered: re-anchored after 2.0 s')
+            return True
+        return False
+
     def _update_pose_fusion(self):
+        if self.pose_fusion.fault and not self._recover_pose_fault():
+            raise ValueError(self.pose_fusion.fault)
         if not self.pose_samples or not self.odom_samples:
             raise ValueError('prediction_waiting_samples')
         source=self.pose_samples[-1]

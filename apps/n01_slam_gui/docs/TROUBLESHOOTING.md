@@ -8,7 +8,7 @@
 | 设置 map_path 失败：`Node not found` | `/localization_lite_node` 未运行，或定位 desk 正在重启 | 先点“启动定位”，等节点上线并进入 Relocalization，再“设置并加载”；GUI 会等待并重试 |
 | 定位地图和导航栅格不一致 | 定位 `map_path` 与导航 `N01_NAV_PCD` 不是同一个 PCD | 导航模块“同步定位地图”，重启导航；看“地图一致性” |
 | 导航 RViz 没起来 / `qt.qpa.xcb: could not connect to display` | 当前环境没有可连接的 X/Wayland，或 `DISPLAY`/`XAUTHORITY` 不对 | 用 Foxglove；或在桌面终端设置 `DISPLAY=:0`、`XAUTHORITY` 后启动 GUI/导航 RViz；GUI 现在用 `xdpyinfo` 探测，连不上不会启动死进程；导航启动默认 `N01_NAV_RVIZ=false` |
-| Lite 消息类型不可用 | source 了错误安装树 | `source /home/demo/lyy/slam3d_lite_20261106_test/setup_runtime.sh`；检查 `ros2 pkg prefix hivecore_slam3d_lite_localization` |
+| Lite 消息类型不可用 | source 了错误安装树 | `source /home/demo/lyy/slam3d_20261118/setup_runtime.sh`；检查 `ros2 pkg prefix hivecore_slam3d_lite_localization` |
 | 节点存在但话题无数据 | 上游雷达/IMU未就绪或节点会话 Idle | 检查 `/livox/lidar/geo_filtered`、定位/建图会话状态和节点日志 |
 | 服务不可用 | 对应 Lite 节点未启动或 ROS Domain 不一致 | `ros2 service list`、`ros2 node list`、核对 `ROS_DOMAIN_ID` |
 | 初始位姿无效果 | 不在 Relocalization，或初值/坐标系不正确 | 确认 `session=relocalization`，检查 map 坐标系下 x/y/yaw |

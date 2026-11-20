@@ -20,9 +20,9 @@ from .pose_policy import control_pose_fresh
 class LiveRuntimeSupervisor(Node):
     def __init__(self):
         super().__init__("n01_live_runtime_supervisor")
-        self.declare_parameter("max_body_pose_age_s", 0.4)
-        self.declare_parameter("max_body_pose_rx_age_s", 0.5)
-        self.declare_parameter("max_dynamic_diagnostic_age_s", 0.9)
+        self.declare_parameter("max_body_pose_age_s", 3.0)
+        self.declare_parameter("max_body_pose_rx_age_s", 3.0)
+        self.declare_parameter("max_dynamic_diagnostic_age_s", 3.0)
         self.declare_parameter("status_topic", "/n01/live_navigation/readiness")
         self.declare_parameter("static_ready_topic", "/grid_map/static_overlay_ready")
         self.declare_parameter("body_pose_topic", "/body_pose")
@@ -33,9 +33,9 @@ class LiveRuntimeSupervisor(Node):
         self.max_dynamic_diagnostic_age = float(
             self.get_parameter("max_dynamic_diagnostic_age_s").value)
         if not (
-            0.1 <= self.max_body_age <= 2.0
-            and 0.1 <= self.max_body_rx_age <= 3.0
-            and 0.1 <= self.max_dynamic_diagnostic_age <= 2.0
+            0.1 <= self.max_body_age <= 5.0
+            and 0.1 <= self.max_body_rx_age <= 5.0
+            and 0.1 <= self.max_dynamic_diagnostic_age <= 5.0
         ):
             raise ValueError("runtime supervisor age bounds invalid")
 

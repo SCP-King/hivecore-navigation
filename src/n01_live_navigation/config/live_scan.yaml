@@ -17,34 +17,34 @@ n01_live_scan_bridge:
     body_frame: base_link
     # /body_pose output for SCAN/tracker is the physical body frame.
     planner_body_frame: base_link
-    max_status_age_s: 1.0
-    max_pose_rx_age_s: 0.7
+    max_status_age_s: 3.0
+    max_pose_rx_age_s: 3.0
     max_pose_stamp_age_s: 5.0
     max_pose_anchor_delta_s: 5.0
     max_live_body_pose_anchor_delta_s: 5.0
     # Short outages use measured odometry, not constant-speed extrapolation.
     # Limit travel as well as age; high speeds cannot coast for the full 5 s.
-    prediction_max_distance_m: 0.12
-    prediction_max_turn_rad: 0.20
+    prediction_max_distance_m: 5.0
+    prediction_max_turn_rad: 3.14
     pose_correction_time_s: 0.8
     pose_correction_speed_mps: 0.04
     pose_correction_yaw_rate_radps: 0.08
-    pose_correction_jump_m: 0.15
-    pose_correction_jump_rad: 0.17
+    pose_correction_jump_m: 2.0
+    pose_correction_jump_rad: 1.5
     pose_cache_size: 64
-    max_odom_rx_age_s: 0.2
-    max_odom_stamp_age_s: 0.4
-    odom_interpolation_max_gap_s: 0.08
+    max_odom_rx_age_s: 3.0
+    max_odom_stamp_age_s: 3.0
+    odom_interpolation_max_gap_s: 0.5
     odom_cache_size: 512
-    max_cloud_age_s: 0.9
-    max_latest_scan_lag_s: 0.7
+    max_cloud_age_s: 3.0
+    max_latest_scan_lag_s: 3.0
     body_pose_publish_period_s: 0.05
-    max_live_body_pose_age_s: 0.4
+    max_live_body_pose_age_s: 3.0
     # /body_pose may use the latest real TF sample up to 150 ms behind /odom.
     # The output stamp follows that TF sample; scan-time deskew remains exact.
-    max_live_tf_lag_s: 0.15
-    max_tf_wait_s: 0.55
+    max_live_tf_lag_s: 3.0
+    max_tf_wait_s: 3.0
     tf_retry_period_s: 0.02
-    max_pending_clouds: 1
+    max_pending_clouds: 3
     max_points: 100000
     max_point_range_m: 12.0

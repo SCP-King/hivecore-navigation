@@ -1,9 +1,10 @@
 # Shared production configuration. Physical geometry comes from runtime SDK/URDF.
 /**:
   ros__parameters:
-    max_speed_mps: 0.05
-    max_accel_mps2: 0.04
-    max_yaw_rate_radps: 0.12
+    max_speed_mps: 0.4
+    max_accel_mps2: 0.25
+    max_yaw_rate_radps: 0.45
+    final_yaw_tolerance_rad: 0.10472
     # Feedback freshness gates: our own limits, declared parameters and live.
     feedback.pose_max_age_s: 3.0
     feedback.pose_stamp_max_age_s: 3.0
@@ -11,7 +12,6 @@
     feedback.joints_max_age_s: 3.0
     feedback.packet_max_age_s: 3.0
     feedback.scene_max_age_s: 3.0
-    feedback.observed_space_max_age_s: 3.0
     arrival.confirm_s: 3.0
     execution_preview_m: 1.0
     enabled: false
@@ -43,7 +43,8 @@
     # Internal freshness gates for trajectory review, not contractual values.
     # Header stamp is the source scan time; raise only after measuring real lag.
     perception.scene_max_age_s: 3.0
-    perception.observed_free_max_age_s: 3.0
+    perception.body_pose_max_age_s: 3.0
+    perception.joint_max_age_s: 3.0
     perception.ground_max_age_s: 3.0
     # Soft advice only; unconfirmed history/forecasts are not measured hard occupancy.
     perception.risk_speed_scale: 0.5

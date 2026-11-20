@@ -14,6 +14,53 @@ namespace
     if (!node->has_parameter(name)) node->declare_parameter<T>(name, default_value);
     return node->get_parameter(name).get_value<T>();
   }
+
+  std::string faultDomain(const std::string &reason)
+  {
+    const auto has=[&](const char* key){return reason.find(key)!=std::string::npos;};
+    if(reason.empty())return "unknown";
+    if(reason.find("not_ready")==std::string::npos &&
+       reason.find("missing")==std::string::npos &&
+       reason.find("stale")==std::string::npos &&
+       (reason.find("_ready")!=std::string::npos ||
+        reason.find("_available")!=std::string::npos ||
+        reason=="ready" || reason=="scan_computing"))return "none";
+    if(has("localization")||has("robot_pose")||has("pose_scan")||has("body_pose")||
+       has("odom_")||has("reloc")||has("anchor")||has("scan_motion_compensation")||
+       has("control_pose")||has("tf_"))return "localization";
+    if(has("estop")||has("emergency")||has("manual_override")||has("wheel_")||
+       has("chassis_twist")||has("native_ik")||has("native_translation")||
+       has("steering")||has("cmd_"))return "chassis";
+    if(has("ground_")||has("scene_not_ready")||has("occupancy_stale")||has("live_")||
+       has("point_cloud")||has("cloud_")||has("sensor_"))return "perception";
+    if(has("urdf")||has("footprint_missing")||has("invalid_global_inputs")||
+       has("packet_geometry")||has("geometry_or_scene_size"))return "config";
+    if(has("goal_invalid")||has("user_stop")||has("manual_stop"))return "operator";
+    if(has("packet_")||has("scene_or_admission")||has("corrected_command")||
+       has("feedback_")||has("waiting_for_replan")||has("trajectory_")||
+       has("execution_")||has("arrival")||has("no_safe_command")||
+       has("no_verified_initial"))return "execution";
+    if(has("global_")||has("scan_")||has("local_")||has("optimizer")||
+       has("frontier")||has("reference_")||has("planning")||has("budget")||
+       has("route"))return "planning";
+    if(has("goal_")||has("start_")||has("map_")||has("static_")||has("occupied")||
+       has("no_route")||has("reference_unavailable"))return "map";
+    return "unknown";
+  }
+  std::string faultAction(const std::string &domain)
+  {
+    if(domain=="map")return "检查目标/起点占用与地图版本；更新PCD或重选目标";
+    if(domain=="localization")return "检查定位tracking/TF/时间戳；重定位后再试";
+    if(domain=="perception")return "检查/cloud、地面与场景时效";
+    if(domain=="planning")return "检查窄通道/搜索预算并重规划";
+    if(domain=="execution")return "检查轨迹包/场景/反馈；等重规划或人工挪车";
+    if(domain=="chassis")return "释放急停/手动接管；检查轮组与底盘";
+    if(domain=="config")return "检查URDF/包络/参数配置";
+    if(domain=="none")return "无需动作";
+    if(domain=="operator")return "确认停止/取消/改目标";
+    return "查日志与话题，不自动重试";
+  }
+
 } // namespace
 
 namespace scan_planner
@@ -190,6 +237,7 @@ namespace scan_planner
     const uint64_t incoming_goal = static_cast<uint64_t>(msg->header.stamp.sec) * 1000000000ULL + msg->header.stamp.nanosec;
     if (incoming_goal == 0 || incoming_goal <= navigation_goal_id_) return;
     navigation_goal_id_ = incoming_goal;
+    clearGlobalPath();
     resetRecovery();
 
     cout << "Triggered!" << endl;
@@ -198,6 +246,14 @@ namespace scan_planner
 
     bool success = false;
     end_pt_ << msg->poses[0].pose.position.x, msg->poses[0].pose.position.y, rviz_goal_height_;
+    const auto &q=msg->poses[0].pose.orientation;
+    end_yaw_=std::atan2(2.0*(q.w*q.z+q.x*q.y),1.0-2.0*(q.y*q.y+q.z*q.z));
+    if(planner_manager_->grid_map_ &&
+       planner_manager_->grid_map_->getInflateOccupancy(end_pt_,end_yaw_,false,false)>0){
+      planner_manager_->last_global_error_="goal_footprint_occupied";
+      publishPlanningStatus("GLOBAL_FAILED","goal_footprint_occupied");
+      return;
+    }
     success = planner_manager_->planGlobalTraj(odom_pos_, odom_vel_, Eigen::Vector3d::Zero(), end_pt_, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero());
 
     if (success)
@@ -354,7 +410,7 @@ namespace scan_planner
     const int sample_num = std::max(1, static_cast<int>(std::ceil(duration / sample_dt)));
     const Eigen::Vector3d final_pt = global_data.global_traj_.evaluate(duration);
     const Eigen::Vector3d final_prev = global_data.global_traj_.evaluate(duration * (sample_num - 1) / sample_num);
-    const int final_occ = map->getInflateOccupancy(final_pt, estimateYawFromSegment(final_prev, final_pt));
+    const int final_occ = map->getInflateOccupancy(final_pt, end_yaw_, false, false);
     if (final_occ <= 0)
       return true;
 
@@ -605,9 +661,13 @@ namespace scan_planner
 
   void SCANReplanFSM::execFSMCallback()
   {
-    if(have_target_ && planner_manager_->grid_map_->takeRouteMapChange() && globalRouteBlocked()){
-      force_global_refresh_=true;
-      if(exec_state_==EXEC_TRAJ)changeFSMExecState(REPLAN_TRAJ,"FUSED_ROUTE_BLOCKED");
+    if(!have_target_ && !global_path_samples_.empty() &&
+       planner_manager_->grid_map_->takeRouteMapChange()){
+      clearGlobalPath();
+      publishPlanningStatus("GLOBAL_STALE","map_changed_without_target");
+    }
+    if(have_target_ && checkAndRepairDirtyGlobal()){
+      if(force_global_refresh_ && exec_state_==EXEC_TRAJ)changeFSMExecState(REPLAN_TRAJ,"DIRTY_SEGMENT_FULL_REPLAN");
     }
 
     static int fsm_num = 0;
@@ -791,7 +851,7 @@ namespace scan_planner
           current_wp_ = 0;
         }
 
-        have_target_ = false;
+        have_target_ = false;clearGlobalPath();
 
         changeFSMExecState(WAIT_TARGET, "FSM");
         return;
@@ -1133,7 +1193,24 @@ namespace scan_planner
     if(state!=phase || why!=reason)planning_phase_since_=now;
     state=phase;why=reason;
     auto map=planner_manager_->grid_map_;
+    const bool global_diag = reason.find("global_") != std::string::npos;
+    int g_start_cell=-2,g_goal_cell=-2,g_start_comp=0,g_goal_comp=0;
+    int g_free=0,g_occ=0,g_unknown=0;
+    if(global_diag && map->hasGlobalGrid()){
+      g_start_cell=map->globalCellState(start_pt_.x(),start_pt_.y());
+      g_goal_cell=map->globalCellState(end_pt_.x(),end_pt_.y());
+      g_start_comp=map->globalFreeComponentSize(start_pt_.x(),start_pt_.y());
+      g_goal_comp=map->globalFreeComponentSize(end_pt_.x(),end_pt_.y());
+      map->globalCounts(g_free,g_occ,g_unknown);
+    }
     nlohmann::json data={{"goal_id",navigation_goal_id_},{"phase",phase},{"reason",reason},
+      {"fault_domain",faultDomain(reason)},
+      {"fault_action",faultAction(faultDomain(reason))},
+      {"fault_evidence",{{"stage",phase},{"reason",reason},
+                          {"scene_age_s",map->sceneStamp()>0?(node_->now().nanoseconds()-map->sceneStamp())*1e-9:-1.},
+                          {"global_start_cell",g_start_cell},{"global_goal_cell",g_goal_cell},
+                          {"global_start_component",g_start_comp},{"global_goal_component",g_goal_comp},
+                          {"global_free",g_free},{"global_occupied",g_occ},{"global_unknown",g_unknown}}},
       {"global_phase",global_phase_},{"global_reason",global_reason_},{"local_phase",local_phase_},{"local_reason",local_reason_},
       {"stamp_ns",node_->now().nanoseconds()},{"scene_stamp_ns",map->sceneStamp()},
       {"scene_age_s",map->sceneStamp()>0?(node_->now().nanoseconds()-map->sceneStamp())*1e-9:-1.},
@@ -1149,6 +1226,81 @@ namespace scan_planner
       {"recovery_global_limit",recoveryLimit("recovery.global_attempts",5)},
       {"recovery_wait_s",recovery_ladder_.stage==navigation::RecoveryLadder::WAIT?node_->now().seconds()-recovery_wait_since_:0.}};
     std_msgs::msg::String msg;msg.data=data.dump();planning_status_pub_->publish(msg);
+  }
+
+  void SCANReplanFSM::clearGlobalPath()
+  {
+    global_path_samples_.clear();global_path_versions_.clear();
+    nav_msgs::msg::Path empty;
+    empty.header.frame_id="map";empty.header.stamp=node_->now();
+    global_path_pub_->publish(empty);
+  }
+
+  void SCANReplanFSM::refreshGlobalPathSamples()
+  {
+    global_path_samples_.clear();global_path_versions_.clear();
+    auto& gd=planner_manager_->global_data_;
+    const double duration=gd.global_duration_;
+    if(!(duration>0.)||!planner_manager_->grid_map_)return;
+    const double step=std::max(.2,planner_manager_->pp_.global_waypoint_spacing_);
+    auto map=planner_manager_->grid_map_;
+    for(double t=0.;t<=duration+1e-6;t+=step){
+      const auto p=gd.global_traj_.evaluate(std::min(duration,t));
+      global_path_samples_.push_back(p);
+      global_path_versions_.push_back(map->hasGlobalGrid()?map->globalTileVersion(p.x(),p.y()):0u);
+    }
+  }
+
+  bool SCANReplanFSM::checkAndRepairDirtyGlobal()
+  {
+    if(!have_target_||global_path_samples_.size()<4||!planner_manager_->grid_map_)return false;
+    const double now=node_->now().seconds();
+    if(now-last_dirty_check_s_<0.5)return false;
+    last_dirty_check_s_=now;
+    auto map=planner_manager_->grid_map_;
+    map->refreshGlobalGrid();
+    if(!map->hasGlobalGrid())return false;
+    int nearest=0;double best=1e9;
+    for(size_t i=0;i<global_path_samples_.size();++i){
+      const double d=(global_path_samples_[i].head<2>()-odom_pos_.head<2>()).norm();
+      if(d<best){best=d;nearest=int(i);}
+    }
+    int first=-1,last=-1;
+    for(size_t i=size_t(nearest);i<global_path_samples_.size();++i){
+      if(map->globalTileVersion(global_path_samples_[i].x(),global_path_samples_[i].y())!=global_path_versions_[i]){
+        if(first<0)first=int(i);last=int(i);
+      }
+    }
+    if(first<0)return false;
+    if(last-first+1>int(global_path_samples_.size()*0.5)){
+      force_global_refresh_=true;
+      publishPlanningStatus("GLOBAL_REPAIR","dirty_segment_too_large");
+      return true;
+    }
+    for(int expand=0;expand<=2;++expand){
+      const int i0=std::max(1,first-1-expand),i1=std::min(int(global_path_samples_.size())-1,last+1+expand);
+      if(i1<=i0+1)return false;
+      const Eigen::Vector3d A=global_path_samples_[i0],B=global_path_samples_[i1];
+      if(!planner_manager_->planGlobalTraj(A,Eigen::Vector3d::Zero(),Eigen::Vector3d::Zero(),
+                                           B,Eigen::Vector3d::Zero(),Eigen::Vector3d::Zero()))continue;
+      auto& gd=planner_manager_->global_data_;
+      std::vector<Eigen::Vector3d> seg;
+      const double step=std::max(.2,planner_manager_->pp_.global_waypoint_spacing_);
+      for(double t=0.;t<=gd.global_duration_+1e-6;t+=step)seg.push_back(gd.global_traj_.evaluate(std::min(gd.global_duration_,t)));
+      if(seg.size()<2)continue;
+      std::vector<Eigen::Vector3d> combined(global_path_samples_.begin(),global_path_samples_.begin()+i0+1);
+      combined.insert(combined.end(),seg.begin()+1,seg.end());
+      combined.insert(combined.end(),global_path_samples_.begin()+i1,global_path_samples_.end());
+      if(!planner_manager_->planGlobalTrajWaypoints(odom_pos_,odom_vel_,Eigen::Vector3d::Zero(),
+                                                    combined,Eigen::Vector3d::Zero(),Eigen::Vector3d::Zero()))continue;
+      publishGlobalPath();
+      publishPlanningStatus("GLOBAL_REPAIRED","dirty_segment_repaired");
+      RCLCPP_INFO(node_->get_logger(),"Global path repaired segment [%d,%d] (%zu samples)",i0,i1,combined.size());
+      return true;
+    }
+    force_global_refresh_=true;
+    publishPlanningStatus("GLOBAL_REPAIR","dirty_segment_repair_failed");
+    return true;
   }
 
   void SCANReplanFSM::publishGlobalPath()
@@ -1177,6 +1329,7 @@ namespace scan_planner
     }
     global_path_pub_->publish(path);
     publishPlanningStatus("GLOBAL_READY","reference_available");
+    refreshGlobalPathSamples();
   }
 
   bool SCANReplanFSM::getLocalTarget()

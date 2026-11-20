@@ -30,6 +30,16 @@ PITCH2_JOINTS = (
     "fl_leg_pitch2", "fr_leg_pitch2", "rl_leg_pitch2", "rr_leg_pitch2")
 
 
+def _joint_limit(obj):
+    return float(_live_param(obj, 'perception.joint_max_age_s',
+                             getattr(obj, 'joint_max_age_s', 3.0)))
+
+
+def _body_limit(obj):
+    return float(_live_param(obj, 'perception.body_pose_max_age_s',
+                             getattr(obj, 'body_pose_max_age_s', 3.0)))
+
+
 def _live_param(obj,name,fallback):
     """Read a declared parameter at use time so GUI changes apply without restart."""
     try:
@@ -59,7 +69,7 @@ class Hive2TrajectoryMonitor(Node):
             "pitch1_home_reference_rad": 0.7853981633974483,
             "pitch2_home_reference_rad": -1.3089969389957472,
             "pitch_reference_tolerance_rad": 0.08,
-            "max_bspline_receive_age_s": 1.0,
+            "max_bspline_receive_age_s": 3.0,
         }
         for name, value in defaults.items():
             self.declare_parameter(name, value)
@@ -126,10 +136,16 @@ class Hive2TrajectoryMonitor(Node):
         self.scene_max_age_s=float(self.declare_parameter('perception.scene_max_age_s',3.0).value)
         self.ground_max_age_s=float(self.declare_parameter('perception.ground_max_age_s',3.0).value)
         self.observed_free_max_age_s=float(self.declare_parameter('perception.observed_free_max_age_s',3.0).value)
-        if not .1<=self.observed_free_max_age_s<=3.:
-            raise ValueError('perception.observed_free_max_age_s must be in [0.1, 3.0]')
-        if not .1<=self.scene_max_age_s<=3.:
-            raise ValueError('perception.scene_max_age_s must be in [0.1, 3.0]')
+        self.body_pose_max_age_s=float(self.declare_parameter('perception.body_pose_max_age_s',3.0).value)
+        self.joint_max_age_s=float(self.declare_parameter('perception.joint_max_age_s',3.0).value)
+        if not .1<=self.joint_max_age_s<=5.:
+            raise ValueError('perception.joint_max_age_s must be in [0.1, 5.0]')
+        if not .1<=self.body_pose_max_age_s<=5.:
+            raise ValueError('perception.body_pose_max_age_s must be in [0.1, 5.0]')
+        if not .1<=self.observed_free_max_age_s<=5.:
+            raise ValueError('perception.observed_free_max_age_s must be in [0.1, 5.0]')
+        if not .1<=self.scene_max_age_s<=5.:
+            raise ValueError('perception.scene_max_age_s must be in [0.1, 5.0]')
         if not .5<=self.ground_max_age_s<=10.:
             raise ValueError('perception.ground_max_age_s must be in [0.5, 10.0]')
         if not 0<self.risk_speed_scale<=1:raise ValueError('invalid_risk_speed_scale')
@@ -193,7 +209,7 @@ class Hive2TrajectoryMonitor(Node):
                     states=[(p.x,p.y,p.z,yaw)]
                     self.check_native_scene(states)
                     age=(self.get_clock().now().nanoseconds-self.body_pose_stamp_ns)/1e9
-                    ready=control_pose_fresh(age,now_mono-self.body_pose_rx) and self._pitch_reference_match()is True
+                    ready=control_pose_fresh(age,now_mono-self.body_pose_rx,_body_limit(self),_body_limit(self)) and self._pitch_reference_match()is True
                     self.publish_trajectory(None,None,states,{},ready)
                 except (ValueError,TypeError,KeyError):pass
                 return
@@ -321,7 +337,8 @@ class Hive2TrajectoryMonitor(Node):
         else:
             age=(ns-self.body_pose_stamp_ns)/1e9;rx=now-self.body_pose_rx
             if self.body_pose.header.frame_id!=self.frame:issue('body_pose_frame_mismatch',actual=self.body_pose.header.frame_id,expected=self.frame)
-            if not control_pose_fresh(age,rx):issue('control_pose_stale',stamp_age_s=age,receive_age_s=rx)
+            lim_body=_body_limit(self)
+            if not control_pose_fresh(age,rx,lim_body,lim_body):issue('control_pose_stale',stamp_age_s=age,receive_age_s=rx,limit_s=lim_body)
         if self.obstacles is None:issue('occupancy_missing')
         else:
             age=(ns-self.obstacles_stamp_ns)/1e9;rx=now-self.obstacles_rx
@@ -411,13 +428,13 @@ class Hive2TrajectoryMonitor(Node):
         self.joint_rx = time.monotonic()
 
     def _pitch_reference_match(self):
-        if self.joint_rx is None or time.monotonic() - self.joint_rx > 0.5:
+        if self.joint_rx is None or time.monotonic() - self.joint_rx > _joint_limit(self):
             return None
         if self.joint_stamp_ns is None or self.joint_stamp_ns <= 0:
             return None
         joint_stamp_age = (
             self.get_clock().now().nanoseconds - self.joint_stamp_ns) / 1e9
-        if not -0.2 <= joint_stamp_age <= 0.5:
+        if not -0.2 <= joint_stamp_age <= _joint_limit(self):
             return None
         required = list(PITCH1_JOINTS) + list(PITCH2_JOINTS)
         if any(name not in self.joint_positions for name in required):
@@ -594,11 +611,11 @@ class Hive2TrajectoryMonitor(Node):
             and self.body_pose.header.frame_id.lstrip("/") == self.frame)
         body_feedback_fresh = (
             body_pose_frame_match
-            and control_pose_fresh(body_stamp_age, body_rx_age))
+            and control_pose_fresh(body_stamp_age, body_rx_age, _body_limit(self), _body_limit(self)))
         joint_feedback_fresh = (
-            joint_rx_age is not None and 0.0 <= joint_rx_age <= 0.5
+            joint_rx_age is not None and 0.0 <= joint_rx_age <= _joint_limit(self)
             and joint_stamp_age is not None
-            and -0.2 <= joint_stamp_age <= 0.5)
+            and -0.2 <= joint_stamp_age <= _joint_limit(self))
         candidate_review_ready = bool(
             trajectory_active and screen["necessary_conditions_pass"]
             and body_feedback_fresh and joint_feedback_fresh and pitch_match is True)

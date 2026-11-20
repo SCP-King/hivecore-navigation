@@ -120,6 +120,29 @@ void GridMap::initMap(rclcpp::Node *node)
   load_parameter(node_, "grid_map.observation_ttl_s", observation_ttl_s_, 3.);
   if(!std::isfinite(observation_ttl_s_) || observation_ttl_s_<1. || observation_ttl_s_>30.)throw std::runtime_error("invalid observation TTL");
   load_parameter(node_, "grid_map.static_observation_refresh", static_observation_refresh_, false);
+  load_parameter(node_, "grid_map.static_ego_filter_enabled", static_ego_filter_enabled_, true);
+  load_parameter(node_, "grid_map.static_ego_filter_radius", static_ego_filter_radius_, 0.30);
+  load_parameter(node_, "grid_map.static_ego_filter_margin", static_ego_filter_margin_, 0.06);
+  load_parameter(node_, "grid_map.static_ego_filter_z_down", static_ego_filter_z_down_, 0.80);
+  load_parameter(node_, "grid_map.static_ego_filter_z_up", static_ego_filter_z_up_, 0.90);
+  load_parameter(node_, "grid_map.live_ego_filter_enabled", live_ego_filter_enabled_, true);
+  load_parameter(node_, "grid_map.live_ego_filter_margin", live_ego_filter_margin_, 0.06);
+  load_parameter(node_, "grid_map.raycast_dedup_resolution", raycast_dedup_resolution_, 0.10);
+  if(!std::isfinite(raycast_dedup_resolution_)||raycast_dedup_resolution_<0.||raycast_dedup_resolution_>0.2)
+    throw std::runtime_error("invalid raycast dedup resolution");
+  load_parameter(node_, "grid_map.ego_history_enabled", ego_history_enabled_, true);
+  load_parameter(node_, "grid_map.ego_history_step_m", ego_history_step_m_, 0.25);
+  if(!std::isfinite(ego_history_step_m_)||ego_history_step_m_<0.05||ego_history_step_m_>1.0)
+    throw std::runtime_error("invalid ego history step");
+  if(!std::isfinite(live_ego_filter_margin_)||live_ego_filter_margin_<0.||live_ego_filter_margin_>.1)
+    throw std::runtime_error("invalid live ego filter margin");
+  if(!std::isfinite(static_ego_filter_radius_)||static_ego_filter_radius_<.1||static_ego_filter_radius_>.6)
+    throw std::runtime_error("grid_map.static_ego_filter_radius must be in [0.1, 0.6]");
+  if(!std::isfinite(static_ego_filter_margin_)||static_ego_filter_margin_<0.||static_ego_filter_margin_>.1)
+    throw std::runtime_error("invalid static ego filter margin");
+  if(!std::isfinite(static_ego_filter_z_down_)||!std::isfinite(static_ego_filter_z_up_)||
+     static_ego_filter_z_down_<=0.||static_ego_filter_z_up_<=0.)
+    throw std::runtime_error("invalid static ego filter z range");
   load_parameter(node_, "grid_map.static_prior_as_cost", static_prior_as_cost_, false);
   load_parameter(node_, "grid_map.unknown_as_obstacle", unknown_as_obstacle_, true);
   load_parameter(node_, "grid_map.extend_reference_to_goal", extend_reference_to_goal_, false);
@@ -272,6 +295,8 @@ void GridMap::initMap(rclcpp::Node *node)
       "/grid_map/reference_grid", rclcpp::QoS(1).reliable().transient_local());
   live_grid_pub_ = node_->create_publisher<nav_msgs::msg::OccupancyGrid>(
       "/grid_map/live_grid", rclcpp::QoS(1).reliable().transient_local());
+  global_grid_pub_ = node_->create_publisher<nav_msgs::msg::OccupancyGrid>(
+      "/grid_map/global_grid", rclcpp::QoS(1).reliable().transient_local());
 
   ground_reference_sub_=node_->create_subscription<std_msgs::msg::String>("/n01/ground_reference/status",10,
     [this](std_msgs::msg::String::ConstSharedPtr msg){
@@ -281,7 +306,13 @@ void GridMap::initMap(rclcpp::Node *node)
         if(data.at("state")!="ground_projection_ready" || !std::isfinite(a+b+c+residual) || residual<0 || residual>.04 || std::hypot(a,b)>std::tan(2.*M_PI/180.))return;
         const double delta=std::abs(c-mp_.ground_height_)+std::abs(a-mp_.ground_slope_x_)+std::abs(b-mp_.ground_slope_y_);
         mp_.ground_slope_x_=a;mp_.ground_slope_y_=b;mp_.ground_height_=c;
-        if(delta>1e-5){static_refresh_pending_=true;static_restore_urgent_=true;}
+        if(delta>1e-5){
+          static_refresh_pending_=true;static_restore_urgent_=true;
+          // Ground plane changed: the persistent 2-D layer must not keep the
+          // previous floor/ceiling classification.
+          global_grid_.clear();global_tile_version_.clear();
+          global_w_=global_h_=0;global_version_++;
+        }
       }catch(const nlohmann::json::exception&){return;}
     });
   predicted_sub_=node_->create_subscription<sensor_msgs::msg::PointCloud2>("/n01/live_navigation/predicted_obstacles",rclcpp::SensorDataQoS(),
@@ -855,15 +886,21 @@ void GridMap::raycastProcess()
     if(free_evidence_frame_valid_ && measured_hit){
       bool altered=world_changes_.suppressed(world_key)||world_changes_.uncertain(world_key);
       world_changes_.observe(world_key,true,free_evidence_stamp_);
-      if(altered){static_refresh_pending_=true;static_restore_urgent_=true;route_map_changed_=true;}
+      if(altered && static_observation_refresh_){
+        static_refresh_pending_=true;static_restore_urgent_=true;route_map_changed_=true;
+      }
     }
     if(free_evidence_frame_valid_ && (static_prior_mask_[idx_ctns] || world_changes_.hasHistory(world_key))){
       double now=std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
-      if(static_free_evidence_.observe(idx_ctns,measured_hit,now,free_evidence_stamp_)){
+      if(static_observation_refresh_ &&
+         static_free_evidence_.observe(idx_ctns,measured_hit,now,free_evidence_stamp_)){
         static_refresh_pending_=true;static_restore_urgent_=true;
       }
       if(!measured_hit && static_free_evidence_.suppressesPrior(idx_ctns)){
-        if(world_changes_.observe(world_key,false,free_evidence_stamp_)){static_refresh_pending_=true;static_restore_urgent_=true;route_map_changed_=true;}
+        if(static_observation_refresh_ &&
+           world_changes_.observe(world_key,false,free_evidence_stamp_)){
+          static_refresh_pending_=true;static_restore_urgent_=true;route_map_changed_=true;
+        }
         applyOccupancyUpdate(idx,mp_.clamp_min_log_);
       }
     }
@@ -942,6 +979,267 @@ void GridMap::visCallback()
 }
 
 
+void GridMap::refreshGlobalGrid(bool force)
+{
+  const double now=node_->now().seconds();
+  if(!force && now-last_global_rebuild_s_<1.0 && !global_grid_.empty()) return;
+  last_global_rebuild_s_=now;
+  rebuildGlobalGrid();
+}
+
+int GridMap::globalCellState(double x, double y) const
+{
+  if(!hasGlobalGrid())return -2;
+  const int ix=static_cast<int>(std::floor((x-global_origin_.x())/global_res_));
+  const int iy=static_cast<int>(std::floor((y-global_origin_.y())/global_res_));
+  if(ix<0||ix>=global_w_||iy<0||iy>=global_h_)return -2;
+  const int8_t v=global_grid_[static_cast<size_t>(iy)*global_w_+ix];
+  if(v<0)return -1;
+  return v>=100?100:0;
+}
+
+int GridMap::globalFreeComponentSize(double x, double y) const
+{
+  if(globalCellState(x,y)!=0)return 0;
+  const int sx=static_cast<int>(std::floor((x-global_origin_.x())/global_res_));
+  const int sy=static_cast<int>(std::floor((y-global_origin_.y())/global_res_));
+  const int n=global_w_*global_h_;
+  std::vector<uint8_t> seen(static_cast<size_t>(n),0);
+  std::vector<int> stack;stack.reserve(4096);
+  const int start=sy*global_w_+sx;stack.push_back(start);seen[start]=1;
+  int count=0;
+  while(!stack.empty()){
+    const int id=stack.back();stack.pop_back();++count;
+    const int cx=id%global_w_,cy=id/global_w_;
+    const int nb[4]={id-1,id+1,id-global_w_,id+global_w_};
+    for(int k=0;k<4;++k){
+      if(k==0&&cx==0)continue;if(k==1&&cx==global_w_-1)continue;
+      if(k==2&&cy==0)continue;if(k==3&&cy==global_h_-1)continue;
+      if(nb[k]<0||nb[k]>=n||seen[nb[k]])continue;
+      if(global_grid_[nb[k]]!=0)continue;
+      seen[nb[k]]=1;stack.push_back(nb[k]);
+    }
+  }
+  return count;
+}
+
+bool GridMap::clearGlobalStart(double x, double y, double radius)
+{
+  if(!hasGlobalGrid())return false;
+  const int cx=static_cast<int>(std::floor((x-global_origin_.x())/global_res_));
+  const int cy=static_cast<int>(std::floor((y-global_origin_.y())/global_res_));
+  const int r=std::max(1,static_cast<int>(std::ceil(radius/global_res_)));
+  bool changed=false;
+  for(int dy=-r;dy<=r;++dy)for(int dx=-r;dx<=r;++dx){
+    if(dx*dx+dy*dy>r*r)continue;
+    const int ix=cx+dx,iy=cy+dy;
+    if(ix<0||iy<0||ix>=global_w_||iy>=global_h_)continue;
+    auto&v=global_grid_[static_cast<size_t>(iy)*global_w_+ix];
+    if(v!=0){v=0;changed=true;}
+  }
+  if(changed){
+    global_version_++;
+    global_cloud_.clear();global_cloud_.reserve(static_cast<size_t>(global_w_)*global_h_/16+16);
+    const double z=md_.sliding_map_frame_pos_.z();
+    for(int iy=0;iy<global_h_;++iy)for(int ix=0;ix<global_w_;++ix){
+      if(global_grid_[static_cast<size_t>(iy)*global_w_+ix]!=100)continue;
+      global_cloud_.push_back(pcl::PointXYZ(global_origin_.x()+ix*global_res_,
+                                            global_origin_.y()+iy*global_res_,z));
+    }
+    global_cloud_.width=global_cloud_.size();global_cloud_.height=1;global_cloud_.is_dense=true;
+  }
+  return changed;
+}
+
+void GridMap::globalCounts(int& free_cells,int& occupied_cells,int& unknown_cells) const
+{
+  free_cells=occupied_cells=unknown_cells=0;
+  for(const int8_t v:global_grid_){
+    if(v<0)++unknown_cells;else if(v>=100)++occupied_cells;else ++free_cells;
+  }
+}
+
+uint32_t GridMap::globalTileVersion(double x,double y) const
+{
+  if(global_tile_version_.empty()||global_res_<=0.)return 0;
+  const int tx=static_cast<int>(std::floor((x-global_origin_.x())/(global_res_*global_tile_m_)));
+  const int ty=static_cast<int>(std::floor((y-global_origin_.y())/(global_res_*global_tile_m_)));
+  const int tw=std::max(1,static_cast<int>(std::ceil(global_w_/double(global_tile_m_))));
+  const int th=std::max(1,static_cast<int>(std::ceil(global_h_/double(global_tile_m_))));
+  if(tx<0||ty<0||tx>=tw||ty>=th)return 0;
+  return global_tile_version_[static_cast<size_t>(ty)*tw+tx];
+}
+
+void GridMap::rebuildGlobalGrid()
+{
+  if(!static_cloud_enabled_||!static_source_valid_||static_source_decoded_.empty())return;
+  const double res=mp_.resolution_;
+  if(!(res>1e-3))return;
+  Eigen::Vector2d lo(static_source_min_.x()-1.,static_source_min_.y()-1.);
+  Eigen::Vector2d hi(static_source_max_.x()+1.,static_source_max_.y()+1.);
+  const double cells=(hi.x()-lo.x())/res*(hi.y()-lo.y())/res;
+  if(!std::isfinite(cells)||cells>4000000.){
+    RCLCPP_WARN_THROTTLE(node_->get_logger(),*node_->get_clock(),5000,
+      "Persistent global grid skipped: %.0f cells exceeds budget",cells);
+    return;
+  }
+  const int w=std::max(1,static_cast<int>(std::ceil((hi.x()-lo.x())/res)));
+  const int h=std::max(1,static_cast<int>(std::ceil((hi.y()-lo.y())/res)));
+  std::vector<int8_t> next(static_cast<size_t>(w)*h,-1);
+  const auto set=[&](double x,double y,int8_t value){
+    const int ix=static_cast<int>(std::floor((x-lo.x())/res));
+    const int iy=static_cast<int>(std::floor((y-lo.y())/res));
+    if(ix<0||iy<0||ix>=w||iy>=h)return;
+    next[static_cast<size_t>(iy)*w+ix]=value;
+  };
+  const auto& static_points=!effective_static_source_.empty()
+      ?effective_static_source_:static_source_decoded_;
+  const auto& global_body=md_.sliding_map_frame_pos_;
+  std::vector<Eigen::Vector2d> global_ego_poly;
+  if(static_ego_filter_enabled_ && urdf_footprint_enabled_ && footprintReady())
+    global_ego_poly=footprintPolygon(md_.body_yaw_);
+  for(const auto& pt:static_points.points){
+    if(!std::isfinite(pt.x)||!std::isfinite(pt.y)||!std::isfinite(pt.z))continue;
+    if(static_ego_filter_enabled_){
+      const double dx=pt.x-global_body.x(),dy=pt.y-global_body.y();
+      const double dxy2=dx*dx+dy*dy;
+      bool self=false;
+      if(dxy2<0.64 && pt.z>=global_body.z()-static_ego_filter_z_down_ && pt.z<=global_body.z()+static_ego_filter_z_up_){
+        if(!global_ego_poly.empty())
+          self=plan_env_detail::polygonHit(Eigen::Vector2d(pt.x-global_body.x(),pt.y-global_body.y()),
+                                           global_ego_poly,static_ego_filter_margin_);
+        if(!self)self=dxy2<static_ego_filter_radius_*static_ego_filter_radius_;
+      }
+      if(!self && ego_history_enabled_ && !ego_trail_z_.empty()){
+        const uint64_t key=(static_cast<uint64_t>(static_cast<uint32_t>(
+            static_cast<int32_t>(std::floor(pt.x/std::max(0.05,mp_.resolution_)))))<<32) |
+            static_cast<uint32_t>(static_cast<int32_t>(std::floor(pt.y/std::max(0.05,mp_.resolution_))));
+        auto hit=ego_trail_z_.find(key);
+        if(hit!=ego_trail_z_.end() && pt.z>=hit->second.first && pt.z<=hit->second.second)self=true;
+      }
+      if(self)continue;
+    }
+    if(pt.z<=getObstacleGroundCutoff(pt.x,pt.y))continue;
+    set(pt.x,pt.y,100);
+  }
+  if(std::abs(res-global_hits_res_)>1e-9){global_live_hits_.clear();global_hits_res_=res;}
+  const double now_s=node_->now().seconds();
+  const double live_ttl=10.0;
+  const auto key_for=[&](double x,double y)->uint64_t{
+    const int32_t cx=static_cast<int32_t>(std::floor(x/res));
+    const int32_t cy=static_cast<int32_t>(std::floor(y/res));
+    return (static_cast<uint64_t>(static_cast<uint32_t>(cx))<<32)|static_cast<uint32_t>(cy);
+  };
+  for(auto it=global_live_hits_.begin();it!=global_live_hits_.end();){
+    if(now_s-it->second>live_ttl)it=global_live_hits_.erase(it);else ++it;
+  }
+  const auto body_z=md_.sliding_map_frame_pos_.z();
+  const auto& live_body=md_.sliding_map_frame_pos_;
+  std::vector<Eigen::Vector2d> live_ego_poly;
+  if(static_ego_filter_enabled_ && urdf_footprint_enabled_ && footprintReady())
+    live_ego_poly=footprintPolygon(md_.body_yaw_);
+  const auto ego_2d=[&](double x,double y){
+    if(!static_ego_filter_enabled_)return false;
+    const double dx=x-live_body.x(),dy=y-live_body.y();
+    const double dxy2=dx*dx+dy*dy;
+    if(dxy2>0.64)return false;
+    if(!live_ego_poly.empty() &&
+       plan_env_detail::polygonHit(Eigen::Vector2d(x-live_body.x(),y-live_body.y()),
+                                   live_ego_poly,static_ego_filter_margin_))return true;
+    return dxy2<static_ego_filter_radius_*static_ego_filter_radius_;
+  };
+  for(const auto& p:getLiveObstaclePoints()){
+    if(!std::isfinite(p.z())||p.z()<=getObstacleGroundCutoff(p.x(),p.y()))continue;
+    if(ego_2d(p.x(),p.y()))continue;
+    global_live_hits_[key_for(p.x(),p.y())]=now_s;
+  }
+  for(const auto& e:observed_columns_){
+    const int32_t kx=static_cast<int32_t>(e.first>>32);
+    const int32_t ky=static_cast<int32_t>(e.first&0xffffffffULL);
+    if(next.empty())continue;
+    set(kx*0.1+0.05,ky*0.1+0.05,0);
+    global_live_hits_.erase(key_for(kx*0.1+0.05,ky*0.1+0.05));
+  }
+  for(const auto& hit:global_live_hits_){
+    const int32_t cx=static_cast<int32_t>(hit.first>>32);
+    const int32_t cy=static_cast<int32_t>(hit.first&0xffffffffULL);
+    const double x=cx*res,y=cy*res;
+    if(ego_2d(x,y))continue;
+    const int ix=static_cast<int>(std::floor((x-lo.x())/res));
+    const int iy=static_cast<int>(std::floor((y-lo.y())/res));
+    if(ix<0||iy<0||ix>=w||iy>=h)continue;
+    next[static_cast<size_t>(iy)*w+ix]=100;
+  }
+  // Single-map authority: inside the local window, the local reference/live
+  // grids override the independently filtered global layer. Outside the
+  // window the global static layer remains the far-field source.
+  if(!reference_grid_data_.empty() && reference_grid_res_>1e-6){
+    const auto overlay_local=[&](const std::vector<int8_t>& src,bool live){
+      if(src.empty())return;
+      const double lres=reference_grid_res_;
+      const int lw=reference_grid_w_,lh=reference_grid_h_;
+      const double lx0=reference_grid_origin_.x(),ly0=reference_grid_origin_.y();
+      for(int iy=0;iy<global_h_;++iy)for(int ix=0;ix<global_w_;++ix){
+        const double wx=global_origin_.x()+(ix+.5)*global_res_;
+        const double wy=global_origin_.y()+(iy+.5)*global_res_;
+        const int lx=static_cast<int>(std::floor((wx-lx0)/lres));
+        const int ly=static_cast<int>(std::floor((wy-ly0)/lres));
+        if(lx<0||ly<0||lx>=lw||ly>=lh)continue;
+        const int8_t v=src[static_cast<size_t>(ly)*lw+lx];
+        if(v<0)continue;
+        if(v>=100){
+          next[static_cast<size_t>(iy)*global_w_+ix]=100;
+        }else if(!live){
+          next[static_cast<size_t>(iy)*global_w_+ix]=0;
+        }else{
+          // live free is authoritative inside the window as well
+          next[static_cast<size_t>(iy)*global_w_+ix]=0;
+        }
+      }
+    };
+    overlay_local(reference_grid_data_,false);
+    overlay_local(live_grid_data_,true);
+  }
+  const int tw=std::max(1,static_cast<int>(std::ceil(w/double(global_tile_m_))));
+  const int th=std::max(1,static_cast<int>(std::ceil(h/double(global_tile_m_))));
+  std::vector<uint32_t> versions(static_cast<size_t>(tw)*th,0);
+  const bool compare=!global_grid_.empty()&&global_w_==w&&global_h_==h;
+  for(int ty=0;ty<th;++ty)for(int tx=0;tx<tw;++tx){
+    bool changed=!compare;
+    if(compare){
+      for(int dy=0;dy<global_tile_m_&&!changed;++dy)for(int dx=0;dx<global_tile_m_;++dx){
+        const int x=tx*global_tile_m_+dx,y=ty*global_tile_m_+dy;
+        if(x>=w||y>=h)continue;
+        if(next[static_cast<size_t>(y)*w+x]!=global_grid_[static_cast<size_t>(y)*w+x]){changed=true;break;}
+      }
+    }
+    const uint32_t previous=(compare&&!global_tile_version_.empty())
+        ? global_tile_version_[static_cast<size_t>(ty)*tw+tx] : 0u;
+    versions[static_cast<size_t>(ty)*tw+tx]=previous+(changed?1u:0u);
+  }
+  global_grid_.swap(next);global_tile_version_.swap(versions);
+  global_origin_=lo;global_w_=w;global_h_=h;global_res_=res;global_version_++;
+  global_cloud_.clear();global_cloud_.reserve(static_cast<size_t>(w)*h/16+16);
+  for(int iy=0;iy<h;++iy)for(int ix=0;ix<w;++ix){
+    if(global_grid_[static_cast<size_t>(iy)*w+ix]!=100)continue;
+    global_cloud_.push_back(pcl::PointXYZ(lo.x()+ix*res,lo.y()+iy*res,body_z));
+  }
+  global_cloud_.width=global_cloud_.size();global_cloud_.height=1;global_cloud_.is_dense=true;
+  if(global_grid_pub_){
+    nav_msgs::msg::OccupancyGrid msg;
+    msg.header.frame_id=mp_.frame_id_;msg.header.stamp=node_->now();
+    msg.info.resolution=res;msg.info.width=w;msg.info.height=h;
+    msg.info.origin.position.x=lo.x();msg.info.origin.position.y=lo.y();
+    msg.info.origin.orientation.w=1.0;
+    msg.data.resize(global_grid_.size());
+    for(size_t i=0;i<global_grid_.size();++i)msg.data[i]=global_grid_[i];
+    global_grid_pub_->publish(msg);
+  }
+  RCLCPP_INFO_THROTTLE(node_->get_logger(),*node_->get_clock(),5000,
+    "Persistent global grid: %dx%d res=%.2f occupied=%zu version=%llu",
+    w,h,res,global_cloud_.size(),static_cast<unsigned long long>(global_version_));
+}
+
 void GridMap::publishProjectedGrids()
 {
   const double res = mp_.resolution_;
@@ -993,10 +1291,27 @@ void GridMap::publishProjectedGrids()
       if (x >= 0 && y >= 0 && x < w && y < h)
         grid.data[static_cast<size_t>(y) * w + x] = 100;
     }
+    if (live) {
+      live_grid_data_ = grid.data;
+      reference_grid_origin_ = lo.head<2>();
+      reference_grid_res_ = res;
+    } else {
+      reference_grid_data_ = grid.data;
+      reference_grid_origin_ = lo.head<2>();
+      reference_grid_res_ = res;
+    }
+    if (!live) {
+      reference_grid_w_ = w; reference_grid_h_ = h;
+    } else {
+      // Both local grids share the same window.
+      reference_grid_w_ = w; reference_grid_h_ = h;
+    }
     return grid;
   };
-  if (reference_grid_pub_) reference_grid_pub_->publish(build(false));
-  if (live_grid_pub_) live_grid_pub_->publish(build(true));
+  auto ref_grid = build(false);
+  if (reference_grid_pub_) reference_grid_pub_->publish(ref_grid);
+  auto live_grid = build(true);
+  if (live_grid_pub_) live_grid_pub_->publish(live_grid);
 }
 
 void GridMap::ageStaticPriors(){
@@ -1190,12 +1505,61 @@ void GridMap::cloudPoseCallback(
   cloudCallback(cloud);
 }
 
+void GridMap::noteEgoTrailPose()
+{
+  if(!ego_history_enabled_ || !static_ego_filter_enabled_ || !urdf_footprint_enabled_ ||
+     !footprintReady()) return;
+  const Eigen::Vector3d body=md_.sliding_map_frame_pos_;
+  const double yaw=md_.body_yaw_;
+  if(last_ego_history_valid_){
+    const double dxy=(body-last_ego_history_pose_).head<2>().norm();
+    const double dyaw=std::atan2(std::sin(yaw-last_ego_history_yaw_),
+                                 std::cos(yaw-last_ego_history_yaw_));
+    if(dxy<ego_history_step_m_ && std::abs(dyaw)<0.20) return;
+  }
+  last_ego_history_pose_=body;last_ego_history_yaw_=yaw;last_ego_history_valid_=true;
+  const auto poly=footprintPolygon(yaw);
+  if(poly.size()<3) return;
+  Eigen::Vector2d lo=poly.front(),hi=poly.front();
+  for(const auto&v:poly){lo=lo.cwiseMin(v);hi=hi.cwiseMax(v);}
+  const double res=std::max(0.05,mp_.resolution_);
+  const int x0=static_cast<int>(std::floor(lo.x()/res));
+  const int x1=static_cast<int>(std::ceil(hi.x()/res));
+  const int y0=static_cast<int>(std::floor(lo.y()/res));
+  const int y1=static_cast<int>(std::ceil(hi.y()/res));
+  const double z0=body.z()-static_ego_filter_z_down_;
+  const double z1=body.z()+static_ego_filter_z_up_;
+  for(int iy=y0;iy<=y1;++iy)for(int ix=x0;ix<=x1;++ix){
+    const Eigen::Vector2d local(ix*res,iy*res);
+    if(!plan_env_detail::polygonHit(local,poly,static_ego_filter_margin_))continue;
+    const double wx=body.x()+local.x(),wy=body.y()+local.y();
+    const uint64_t key=(static_cast<uint64_t>(static_cast<uint32_t>(
+        static_cast<int32_t>(std::floor(wx/res))))<<32) |
+        static_cast<uint32_t>(static_cast<int32_t>(std::floor(wy/res)));
+    auto it=ego_trail_z_.find(key);
+    if(it==ego_trail_z_.end())ego_trail_z_[key]={z0,z1};
+    else{it->second.first=std::min(it->second.first,z0);it->second.second=std::max(it->second.second,z1);}
+  }
+  if(ego_trail_z_.size()>ego_history_max_cells_){
+    RCLCPP_WARN(node_->get_logger(),"[GridMap] ego trail cell cap reached; clearing history (%zu)",ego_trail_z_.size());
+    ego_trail_z_.clear();
+  }
+}
+
 void GridMap::slidingMapFrameCallback(const nav_msgs::msg::Odometry::ConstSharedPtr &pose)
 {
   const geometry_msgs::msg::Point &pos = pose->pose.pose.position;
   md_.sliding_map_frame_pos_ = Eigen::Vector3d(pos.x, pos.y, pos.z);
   const auto &q=pose->pose.pose.orientation;
+  const double previous_yaw=md_.body_yaw_;
   md_.body_yaw_=std::atan2(2.0*(q.w*q.z+q.x*q.y),1.0-2.0*(q.y*q.y+q.z*q.z));
+  const double dyaw=std::atan2(std::sin(md_.body_yaw_-previous_yaw),std::cos(md_.body_yaw_-previous_yaw));
+  if(static_ego_filter_enabled_ && std::abs(dyaw)>0.20){
+    // Rotation changes which static points are ego; throttle via the normal
+    // static refresh instead of rebuilding every pose callback.
+    static_refresh_pending_=true;
+  }
+  noteEgoTrailPose();
 }
 
 void GridMap::staticCloudCallback(
@@ -1327,8 +1691,15 @@ void GridMap::publishStaticOverlayStatus(bool ready, const std::string& reason)
 
 void GridMap::refreshStaticObservations(bool global_request)
 {
-  if(!static_observation_refresh_ || !static_source_valid_) return;
+  if(!static_source_valid_) return;
   const double now=std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+  if(!static_observation_refresh_){
+    // Offline PCD has no live reference refresh, but the ego filter still has
+    // to follow the current pose. Rebuild at a bounded rate, never per scan.
+    if(static_refresh_pending_ && now-last_static_rebuild_s_>=0.5)
+      rebuildStaticOverlay();
+    return;
+  }
   static_free_evidence_.expire(now); // timeout never resurrects historical occupancy
   // Local collision checking uses the live layer in reference mode. Refresh
   // historical costs lazily for global planning, not on every sensor frame.
@@ -1353,6 +1724,28 @@ void GridMap::rebuildStaticOverlay()
   if(static_observation_refresh_) effective_static_source_.reserve(static_source_decoded_.size());
   static_window_points_ = 0;
   const auto& cloud = static_source_decoded_;
+  const auto& local_body=md_.sliding_map_frame_pos_;
+  std::vector<Eigen::Vector2d> local_ego_poly;
+  if(static_ego_filter_enabled_ && urdf_footprint_enabled_ && footprintReady())
+    local_ego_poly=footprintPolygon(md_.body_yaw_);
+  const auto ego_point=[&](const pcl::PointXYZ& pt){
+    if(!static_ego_filter_enabled_)return false;
+    const double dx=pt.x-local_body.x(),dy=pt.y-local_body.y();
+    const double dxy2=dx*dx+dy*dy;
+    if(dxy2>0.64)return false;
+    if(pt.z<local_body.z()-static_ego_filter_z_down_||pt.z>local_body.z()+static_ego_filter_z_up_)return false;
+    if(!local_ego_poly.empty() &&
+       plan_env_detail::polygonHit(Eigen::Vector2d(pt.x-local_body.x(),pt.y-local_body.y()),
+                                   local_ego_poly,static_ego_filter_margin_))return true;
+    if(ego_history_enabled_ && !ego_trail_z_.empty()){
+      const uint64_t key=(static_cast<uint64_t>(static_cast<uint32_t>(
+          static_cast<int32_t>(std::floor(pt.x/std::max(0.05,mp_.resolution_)))))<<32) |
+          static_cast<uint32_t>(static_cast<int32_t>(std::floor(pt.y/std::max(0.05,mp_.resolution_))));
+      auto hit=ego_trail_z_.find(key);
+      if(hit!=ego_trail_z_.end() && pt.z>=hit->second.first && pt.z<=hit->second.second)return true;
+    }
+    return dxy2<static_ego_filter_radius_*static_ego_filter_radius_;
+  };
 
   // A sparse occupancy map can legitimately contain no obstacle returns in
   // the active local window. Readiness therefore means that a valid, finite,
@@ -1367,6 +1760,10 @@ void GridMap::rebuildStaticOverlay()
   for (const auto& pt : cloud.points) {
     if (!std::isfinite(pt.x) || !std::isfinite(pt.y) || !std::isfinite(pt.z))
       continue;
+    if (pt.x < mp_.map_min_boundary_.x() || pt.x > mp_.map_max_boundary_.x() ||
+        pt.y < mp_.map_min_boundary_.y() || pt.y > mp_.map_max_boundary_.y())
+      continue;
+    if (ego_point(pt)) continue;
     const Eigen::Vector3d p(pt.x, pt.y, pt.z);
     Eigen::Vector3i world;posToIndex(p,world);
     bool observed_free=static_observation_refresh_ && world_changes_.suppressed({world.x(),world.y(),world.z()});
@@ -1378,7 +1775,7 @@ void GridMap::rebuildStaticOverlay()
       observed_free=observed_free || (static_observation_refresh_ && static_free_evidence_.suppressesPrior(addr));
     }
     const bool unconfirmed=isInMap(p) && world_changes_.uncertain({world.x(),world.y(),world.z()});
-    if(static_observation_refresh_ && !observed_free && !unconfirmed) effective_static_source_.push_back(pt);
+    if(!observed_free && !unconfirmed) effective_static_source_.push_back(pt);
     if(observed_free || unconfirmed) continue;
     if (p.z() <= getObstacleGroundCutoff(p.x(), p.y())) continue;
     if (!isInMap(p)) continue;
@@ -1451,8 +1848,14 @@ void GridMap::cloudCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr 
 
   updateSlidingMap(ray_pos);
 
+  std::vector<Eigen::Vector2d> live_ego_poly;
+  if(live_ego_filter_enabled_ && urdf_footprint_enabled_ && footprintReady())
+    live_ego_poly=footprintPolygon(md_.body_yaw_);
   md_.proj_points_cnt = 0;
   md_.proj_ground_.clear();
+  std::unordered_set<uint64_t> raycast_voxels;
+  if(raycast_dedup_resolution_>1e-6)
+    raycast_voxels.reserve(static_cast<size_t>(latest_cloud.points.size()));
   std::vector<float> ground_labels;
   for(const auto& field:img->fields)if(field.name=="ground" && field.datatype==sensor_msgs::msg::PointField::FLOAT32) {
     sensor_msgs::PointCloud2ConstIterator<float> label(*img,"ground");
@@ -1486,6 +1889,15 @@ void GridMap::cloudCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr 
         fabs(devi(2)) <= mp_.local_update_range_(2);
     if (!in_local_range && ray_length <= mp_.max_ray_length_)
       continue;
+    if(raycast_dedup_resolution_>1e-6){
+      const int32_t ix=static_cast<int32_t>(std::floor(pt_world.x()/raycast_dedup_resolution_));
+      const int32_t iy=static_cast<int32_t>(std::floor(pt_world.y()/raycast_dedup_resolution_));
+      const int32_t iz=static_cast<int32_t>(std::floor(pt_world.z()/raycast_dedup_resolution_));
+      const uint64_t key=(static_cast<uint64_t>(static_cast<uint32_t>(ix))<<42) ^
+                         (static_cast<uint64_t>(static_cast<uint32_t>(iy))<<21) ^
+                         static_cast<uint32_t>(iz);
+      if(!raycast_voxels.insert(key).second)continue;
+    }
 
     if (md_.proj_points_cnt >= static_cast<int>(md_.proj_points_.size()))
       md_.proj_points_.push_back(pt_world);
@@ -1494,6 +1906,30 @@ void GridMap::cloudCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr 
 
     const bool ground=ground_labels.empty() ? pt_world.z()<=getObstacleGroundCutoff(pt_world.x(),pt_world.y())
         : std::isfinite(ground_labels[i]) && ground_labels[i]>.5f;
+    // Remove the robot's own live returns before they enter the local live
+    // layer. Static-layer ego filtering cannot cover the current /cloud frame.
+    if(live_ego_filter_enabled_){
+      const auto& body=md_.sliding_map_frame_pos_;
+      bool self=false;
+      const double dx=pt_world.x()-body.x(),dy=pt_world.y()-body.y();
+      const double dxy2=dx*dx+dy*dy;
+      if(dxy2<0.64 && pt_world.z()>=body.z()-static_ego_filter_z_down_ &&
+         pt_world.z()<=body.z()+static_ego_filter_z_up_){
+        if(!live_ego_poly.empty()){
+          self=plan_env_detail::polygonHit(Eigen::Vector2d(pt_world.x()-body.x(),pt_world.y()-body.y()),
+                                           live_ego_poly,live_ego_filter_margin_);
+        }
+        if(!self)self=dxy2<static_ego_filter_radius_*static_ego_filter_radius_;
+      }
+      if(!self && ego_history_enabled_ && !ego_trail_z_.empty()){
+        const uint64_t key=(static_cast<uint64_t>(static_cast<uint32_t>(
+            static_cast<int32_t>(std::floor(pt.x/std::max(0.05,mp_.resolution_)))))<<32) |
+            static_cast<uint32_t>(static_cast<int32_t>(std::floor(pt.y/std::max(0.05,mp_.resolution_))));
+        auto hit=ego_trail_z_.find(key);
+        if(hit!=ego_trail_z_.end() && pt.z>=hit->second.first && pt.z<=hit->second.second)self=true;
+      }
+      if(self)continue;
+    }
     md_.proj_ground_.push_back(ground);
     md_.proj_points_cnt++;
   }

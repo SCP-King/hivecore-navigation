@@ -96,6 +96,19 @@ def _nodes(context):
     reference_topic = LaunchConfiguration("realtime_reference_topic").perform(context).strip()
     live_reference = map_mode == 'realtime' and bool(reference_topic)
     asserted = LaunchConfiguration("pcd_map_frame_asserted").perform(context).lower()
+    use_urdf = LaunchConfiguration("use_urdf_footprint").perform(context).lower() == "true"
+    dc_radius = float(LaunchConfiguration("double_cylinder_radius").perform(context))
+    dc_offset = float(LaunchConfiguration("double_cylinder_offset").perform(context))
+    env_margin = float(LaunchConfiguration("environment_margin").perform(context))
+    if not (0.1 <= dc_radius <= 0.5 and 0.0 <= dc_offset <= 0.4 and 0.0 <= env_margin <= 0.2):
+        raise RuntimeError("invalid footprint model parameters")
+    static_map_resolution = float(LaunchConfiguration("static_map_resolution").perform(context))
+    if not (0.05 <= static_map_resolution <= 0.20):
+        raise RuntimeError("static_map_resolution must be in [0.05, 0.20]")
+    static_map_min_z = float(LaunchConfiguration("static_map_min_z").perform(context))
+    static_map_max_z = float(LaunchConfiguration("static_map_max_z").perform(context))
+    if not (-2.0 <= static_map_min_z < static_map_max_z <= 3.0):
+        raise RuntimeError("invalid static_map z window")
     if map_mode not in ("offline", "realtime"):
         raise RuntimeError("map_mode must be offline or realtime")
     if map_mode == "offline" and asserted != "true":
@@ -160,7 +173,9 @@ def _nodes(context):
                 {
                     "pcd_path": pcd,
                     "frame_id": "map",
-                    "resolution": 0.05,
+                    "resolution": static_map_resolution,
+                    "min_z": static_map_min_z,
+                    "max_z": static_map_max_z,
                 },
             ],
             output="screen",
@@ -178,23 +193,23 @@ def _nodes(context):
                 "expected_cloud_frame": "imu_link",
                 "map_frame": "map", "body_frame": "base_link",
                 "planner_body_frame": "base_link",
-                "max_status_age_s": 1.0, "max_pose_rx_age_s": 0.7,
+                "max_status_age_s": 3.0, "max_pose_rx_age_s": 3.0,
                 "max_pose_stamp_age_s": 5.0,
                 "max_pose_anchor_delta_s": 5.0,
                 "max_live_body_pose_anchor_delta_s": 5.0,
                 "pose_cache_size": 64,
-                "max_odom_rx_age_s": 0.2,
-                "max_odom_stamp_age_s": 0.4,
-                "odom_interpolation_max_gap_s": 0.08,
+                "max_odom_rx_age_s": 3.0,
+                "max_odom_stamp_age_s": 3.0,
+                "odom_interpolation_max_gap_s": 0.5,
                 "odom_cache_size": 512,
-                "max_cloud_age_s": 0.9,
-                "max_latest_scan_lag_s": 0.7,
+                "max_cloud_age_s": 3.0,
+                "max_latest_scan_lag_s": 3.0,
                 "body_pose_publish_period_s": 0.05,
-                "max_live_body_pose_age_s": 0.25,
-                "max_tf_wait_s": 0.55, "tf_retry_period_s": 0.02,
+                "max_live_body_pose_age_s": 3.0,
+                "max_tf_wait_s": 3.0, "tf_retry_period_s": 0.02,
                 "ground_plane": [ground_a,ground_b,ground_z], "ground_configured": True,
-                "max_pending_clouds": 1, "max_points": 100000,
-                "max_point_range_m": 12.0, "use_sim_time": False,
+                "max_pending_clouds": 3, "max_points": 100000,
+                "max_point_range_m": 40.0, "use_sim_time": False,
             }],
             output="screen",
         ),
@@ -202,9 +217,9 @@ def _nodes(context):
             package="n01_live_navigation", executable="n01_live_runtime_supervisor",
             name="n01_live_runtime_supervisor",
             parameters=[{
-                "max_body_pose_age_s": 0.4,
-                "max_body_pose_rx_age_s": 0.5,
-                "max_dynamic_diagnostic_age_s": 0.9,
+                "max_body_pose_age_s": 3.0,
+                "max_body_pose_rx_age_s": 3.0,
+                "max_dynamic_diagnostic_age_s": 3.0,
             }],
             output="screen",
         ),
@@ -231,7 +246,7 @@ def _nodes(context):
                 "cluster_cell_m": 0.35,
                 "min_cluster_points": 6,
                 "max_points": 100000,
-                "max_cloud_age_s": 0.9,
+                "max_cloud_age_s": 3.0,
             }],
             output="screen",
         ),
@@ -243,7 +258,6 @@ def _nodes(context):
                 # 2026-11-17: blind spots are a mapping responsibility. Navigation
                 # only blocks on explicit obstacles, so execution no longer
                 # requires validated footprint coverage.
-                "require_observed_space": False,
                 "map_frame": "map",
                 "map_id": LaunchConfiguration("map_id", default="").perform(context),
                 # Screen the candidate at the speed the slow executor actually
@@ -252,13 +266,13 @@ def _nodes(context):
                 # which trips the 1.57 rad/s screen and invalidates the path
                 # before the robot can move.
                 "max_speed_mps": speed,
-                "max_accel_mps2": 0.04,
+                "max_accel_mps2": 0.25,
                 "wheel_base_x_m": 0.56,
                 "track_y_m": 0.27,
                 "wheel_radius_m": 0.095,
                 "delta_y_m": 0.085,
                 "steering_limit_rad": 3.141592653589793,
-                "max_bspline_receive_age_s": 1.0,
+                "max_bspline_receive_age_s": 3.0,
             }],
             output="screen",
         ),
@@ -284,22 +298,23 @@ def _nodes(context):
                 "fsm.planning_horizon": 10.0,
                 "fsm.emergency_time": 1.0,
                 "fsm.fail_safe": True,
-                "grid_map.resolution": 0.05,
-                "grid_map.static_observation_refresh": True,
+                "grid_map.resolution": 0.10,
+                # Offline PCD is fixed; only realtime reference mode needs
+                # per-scan static free-evidence refreshes.
+                "grid_map.static_observation_refresh": live_reference,
                 # Same rule for planning: no inferred unknown obstacles.
-                "grid_map.require_observed_local_space": False,
                 # Let the global reference reach goals outside the loaded map;
                 # unknown space is traversable, not a rejection reason.
                 "grid_map.extend_reference_to_goal": True,
                 "grid_map.static_prior_as_cost": False,
                 # Planning may treat unknown as cost; execution stays gated.
                 "grid_map.unknown_as_obstacle": False,
-                "grid_map.sliding_map_size_x": 10.0,
-                "grid_map.sliding_map_size_y": 10.0,
+                "grid_map.sliding_map_size_x": 30.0,
+                "grid_map.sliding_map_size_y": 30.0,
                 "grid_map.sliding_map_size_z": 5.0,
-                "grid_map.local_update_range_x": 5.0,
-                "grid_map.local_update_range_y": 5.0,
-                "grid_map.local_update_range_z": 2.5,
+                "grid_map.local_update_range_x": 25.0,
+                "grid_map.local_update_range_y": 25.0,
+                "grid_map.local_update_range_z": 3.0,
                 "grid_map.map_sliding_en": True,
                 "grid_map.map_sliding_thresh": 0.2,
                 # Research geometry only: candidate floor level from previous
@@ -308,15 +323,15 @@ def _nodes(context):
                 "grid_map.ground_slope_x": ground_a,
                 "grid_map.ground_slope_y": ground_b,
                 "grid_map.body_height": body_height,
-                "grid_map.use_urdf_footprint": True,
-                "grid_map.double_cylinder_radius": 0.30,
-                "grid_map.environment_margin": 0.06,
+                "grid_map.use_urdf_footprint": use_urdf,
+                "grid_map.double_cylinder_radius": dc_radius,
+                "grid_map.double_cylinder_offset": dc_offset,
+                "grid_map.environment_margin": env_margin,
                 "grid_map.fixed_body_heading": True,
-                "grid_map.double_cylinder_offset": 0.18,
                 # Asymmetric audited envelope; global/local/RViz share disks.
                 "grid_map.footprint_centers_x": [-0.43, -0.10, 0.23],
                 # Full vertical extent; 6cm floor band accounts for map floor scatter.
-                "grid_map.ground_clearance": 0.03,
+                "grid_map.ground_clearance": 0.06,
                 "grid_map.obstacles_inflation_z_up": 0.90,
                 # Body reference is now below the lidar by ~0.146m. Include
                 # its reference plus a conservative 0.10m sensor allowance.
@@ -327,6 +342,14 @@ def _nodes(context):
                 "grid_map.cloud_is_world": True,
                 "grid_map.need_extrinsic": False,
                 "grid_map.static_cloud_enabled": map_mode == "offline" or live_reference,
+                "grid_map.static_ego_filter_enabled": True,
+                "grid_map.static_ego_filter_radius": 0.30,
+                "grid_map.static_ego_filter_margin": 0.06,
+                "grid_map.static_ego_filter_z_down": 0.80,
+                "grid_map.static_ego_filter_z_up": 0.90,
+                "grid_map.live_ego_filter_enabled": True,
+                "grid_map.live_ego_filter_margin": 0.06,
+                "grid_map.raycast_dedup_resolution": 0.10,
                 "grid_map.reference_updates_enabled": live_reference,
                 "grid_map.static_cloud_topic": "/grid_map/static_occupancy",
                 "grid_map.static_cloud_max_points": 1000000,
@@ -335,11 +358,11 @@ def _nodes(context):
                 "grid_map.p_min": 0.12,
                 "grid_map.p_max": 0.98,
                 "grid_map.p_occ": 0.80,
-                "grid_map.max_ray_length": 5.0,
+                "grid_map.max_ray_length": 30.0,
                 # Display clipping only: retain walls/railings above the body.
                 "grid_map.vis_height": 1.4,
                 "manager.max_vel": speed,
-                "manager.max_acc": 0.04,
+                "manager.max_acc": 0.25,
                 "manager.max_jerk": 1.0,
                 "manager.control_points_distance": 0.2,
                 "manager.feasibility_tolerance": 0.5,
@@ -351,7 +374,7 @@ def _nodes(context):
                 "optimization.lambda_fitness": 1.0,
                 "optimization.dist0": 0.33,
                 "optimization.max_vel": speed,
-                "optimization.max_acc": 0.04,
+                "optimization.max_acc": 0.25,
                 "optimization.order": 3,
             }],
             remappings=[("move_base_simple/goal", "/n01/live_navigation/goal_gated")],
@@ -362,12 +385,19 @@ def _nodes(context):
 
 def generate_launch_description():
     return LaunchDescription([
-        DeclareLaunchArgument('navigation_speed_mps', default_value='0.05'),
+        DeclareLaunchArgument('navigation_speed_mps', default_value='0.4'),
         DeclareLaunchArgument("map_mode", default_value="offline"),
         DeclareLaunchArgument("realtime_reference_topic", default_value="",
                              description="Optional accumulated SLAM map; live scan rays stay separate"),
         DeclareLaunchArgument("pcd_path", default_value=""),
         DeclareLaunchArgument("pcd_map_frame_asserted", default_value="false"),
+        DeclareLaunchArgument("use_urdf_footprint", default_value="true"),
+        DeclareLaunchArgument("double_cylinder_radius", default_value="0.25"),
+        DeclareLaunchArgument("double_cylinder_offset", default_value="0.18"),
+        DeclareLaunchArgument("environment_margin", default_value="0.06"),
+        DeclareLaunchArgument("static_map_resolution", default_value="0.10"),
+        DeclareLaunchArgument("static_map_min_z", default_value="-1.20"),
+        DeclareLaunchArgument("static_map_max_z", default_value="1.20"),
         DeclareLaunchArgument(
             "start_localization_adapter", default_value="false",
             description="Start adapter only when no independent adapter is already running"),

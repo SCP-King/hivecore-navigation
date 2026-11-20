@@ -22,7 +22,8 @@ REASONS={
  'local_initialization_has_no_path':'局部轨迹初始化没有有效路径',
  'local_target_too_close_without_arrival':'局部目标过近，但尚未确认到达最终目标',
  'global_no_route':'融合地图中没有找到全局通路',
- 'start_occupied':'起点机身包络与障碍冲突', 'goal_occupied':'终点机身包络与障碍冲突',
+ 'start_occupied':'起点机身包络与障碍冲突', 'goal_occupied':'终点在膨胀障碍内（可能离障碍 < 足迹+6 cm）',
+ 'goal_footprint_occupied':'终点足迹与障碍冲突（目标中心可能为空，但车体角/边压障碍）',
  'global_reference_collision':'最终全局参考未能保持避障',
  'map_reference_unavailable':'全局背景地图尚未取得',
  'urdf_footprint_missing_or_stale':'机器人包络缺失或过期',
@@ -53,7 +54,7 @@ REASONS={
  # 全局规划
  'invalid_global_inputs':'全局规划输入无效（数值或分辨率异常）',
  'start_or_goal_outside_map_bounds':'起点或终点超出地图与搜索范围',
- 'goal_occupied':'终点落在已知障碍内',
+ 'goal_occupied':'终点在膨胀障碍内（可能离障碍 < 足迹+6 cm）',
  'global_refresh_failed':'全局参考刷新失败',
  'goal_collision_or_unavailable':'目标不可用或与障碍冲突',
  # 局部规划
@@ -111,6 +112,94 @@ _ENVELOPE_CAUSES = {
  'footprint_missing':'包络模型缺失或过期',
  'not_observed':'未观测区域（旧覆盖逻辑）',
 }
+
+FAULT_DOMAINS = {
+    "map": "地图", "localization": "定位", "perception": "感知",
+    "planning": "规划", "execution": "执行", "chassis": "底盘",
+    "config": "配置", "operator": "人工", "unknown": "数据不足",
+}
+FAULT_ACTIONS = {
+    "map": "检查目标/起点占用与地图版本，更新 PCD 或重选目标",
+    "localization": "检查定位 tracking/TF/时间戳，重定位后再试",
+    "perception": "检查 /cloud、地面与场景时效",
+    "planning": "检查窄通道/搜索预算并重规划",
+    "execution": "检查轨迹包/场景/反馈，等重规划或人工挪车",
+    "chassis": "释放急停/手动接管，检查轮组与底盘",
+    "config": "检查 URDF/包络/参数配置",
+    "operator": "确认停止/取消/改目标",
+    "unknown": "查日志与话题，不自动重试",
+}
+
+
+def fault_domains(reason, evidence=None):
+    """Return primary/candidate fault domains with evidence.
+
+    Attribution is deliberately conservative: it only uses reason keywords and
+    caller-supplied evidence. Missing data stays in ``unknown``.
+    """
+    text = str(reason or "").strip()
+    low = text.lower()
+    cand = []
+
+    def add(domain, why):
+        if domain not in [c[0] for c in cand]:
+            cand.append((domain, why))
+
+    if text and "not_ready" not in low and "missing" not in low and "stale" not in low and (
+            low.endswith("_ready") or low.endswith("_available") or low == "ready" or low == "scan_computing"):
+        return {"primary": "none", "label": "正常", "action": "无需动作",
+                "candidates": [{"domain": "none", "label": "正常", "why": "状态为正常/就绪"}],
+                "evidence": evidence or {}}
+    if not text or low in ("", "none", "unknown", "nan"):
+        add("unknown", "没有原因码或状态数据")
+    if any(k in low for k in ("localization", "robot_pose", "pose_scan", "body_pose",
+                              "odom_", "reloc", "anchor", "scan_motion_compensation",
+                              "control_pose", "tf_")):
+        add("localization", "位姿/里程计/TF/扫描对齐")
+    if any(k in low for k in ("estop", "emergency", "急停", "manual_override", "手动接管",
+                              "wheel_", "chassis_twist", "native_ik", "native_translation",
+                              "steering", "cmd_")):
+        add("chassis", "急停/底盘/轮组/原生模型")
+    if any(k in low for k in ("ground_", "scene_not_ready", "occupancy_stale",
+                              "live_", "point_cloud", "cloud_", "sensor_", "感知")):
+        add("perception", "激光/点云/地面/场景数据")
+    if any(k in low for k in ("urdf", "footprint_missing", "invalid_global_inputs",
+                              "packet_geometry", "geometry_or_scene_size", "配置")):
+        add("config", "URDF/包络/参数/接口配置")
+    if any(k in low for k in ("goal_invalid", "user_stop", "manual_stop", "人工停止", "目标非法")):
+        add("operator", "人工停止/取消或目标非法")
+    if any(k in low for k in ("packet_", "scene_or_admission", "corrected_command",
+                              "feedback_", "waiting_for_replan", "trajectory_",
+                              "execution_", "arrival", "no_safe_command",
+                              "no_verified_initial", "执行", "纠偏", "反馈")):
+        add("execution", "轨迹包/场景准入/跟踪/纠偏")
+    if any(k in low for k in ("global_", "scan_", "local_", "optimizer", "frontier",
+                              "reference_", "planning", "budget", "route", "规划")):
+        add("planning", "全局/局部搜索或轨迹生成")
+    if any(k in low for k in ("goal_", "start_", "map_", "static_", "occupied",
+                              "no_route", "reference_unavailable", "地图", "障碍", "包络")):
+        add("map", "地图/占用格/目标格/起点包络")
+    if not cand:
+        add("unknown", "原因码未匹配到任何域")
+    primary = cand[0][0]
+    if primary == "planning" and "global_no_route" in low:
+        cand[0] = ("map", "全局图无可通行路线")
+        primary = "map"
+    if primary == "map" and "start_occupied" in low:
+        add("localization", "若起点实际空，检查位姿/足迹是否错位")
+    return {
+        "primary": primary,
+        "label": FAULT_DOMAINS.get(primary, primary),
+        "action": FAULT_ACTIONS.get(primary, FAULT_ACTIONS["unknown"]),
+        "candidates": [{"domain": d, "label": FAULT_DOMAINS.get(d, d), "why": w} for d, w in cand],
+        "evidence": evidence or {},
+    }
+
+
+def describe_domain(reason, evidence=None):
+    d = fault_domains(reason, evidence)
+    return f"[{d['label']}] {describe(reason)}；建议：{d['action']}"
+
 
 def describe(reason):
     text=str(reason or '').strip()
