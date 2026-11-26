@@ -86,7 +86,7 @@ from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import Imu, PointCloud2, JointState
-from std_msgs.msg import Bool, String
+from std_msgs.msg import Bool, String, Float64
 from std_srvs.srv import Trigger
 
 # ---------------------------------------------------------------------------
@@ -148,7 +148,8 @@ MAPPING_BAG_TOPICS = tuple(
     if item.strip()) or _DEFAULT_BAG_TOPICS
 FITNESS_THRESHOLD = 0.030
 GRID_RES = 0.08
-GRID_IMAGE_PX = 420
+GRID_IMAGE_PX = 560
+GROUND_CLEARANCE_M = 0.06
 _GRID_MIN_INTERVAL_S = 0.30
 GRID_MAX_N = 600
 _GRID_DIAG = {}
@@ -599,6 +600,8 @@ class AppState:
         self.nav_scan_stamp_ns = 0
         self.nav_fused_pts=None;self.nav_risk_pts=None;self.nav_risk_seq=0
         self.ref_grid=None;self.live_grid=None;self.grid_seq=0
+        self.search_grid=None
+        self.mapping_floor_cells=set()
         self.nav_map_seq = 0
         self.nav_ready = None
         self.nav_speed_mps = .4
@@ -611,6 +614,7 @@ class AppState:
         self.readiness: dict = {}   # 桥接 0.5s 诊断 JSON（各上游新鲜度门控）
         self.feasibility: dict = {}
         self.scene_status: dict = {}
+        self.external_goal_yaw = None
         self.goal_target: tuple[float, float] | None = None
         self.goal_failed = False
         self.plan_goal_distance: float | None = None
@@ -706,6 +710,7 @@ class AppState:
         self.global_seq += 1
         self.goal_failed = False
         self.goal_target = None
+        self.external_goal_yaw = None
         self.plan_goal_distance = None
         self.global_goal_distance = None
         self.plan_goal_ns = 0
@@ -860,6 +865,16 @@ class RosWorker:
         publisher=getattr(self,'route_enable_pub',None)
         if publisher is None:raise RuntimeError('ROS连接未就绪，不能确认等待期间停驶')
         publisher.publish(Bool(data=bool(enabled)))
+
+    def set_speed_limit(self, speed: float) -> None:
+        publisher=getattr(self,'speed_limit_pub',None)
+        if publisher is None:raise RuntimeError('ROS连接未就绪，不能调整速度')
+        publisher.publish(Float64(data=float(speed)))
+
+    def set_navigation_pause(self, paused: bool) -> None:
+        publisher=getattr(self,'pause_pub',None)
+        if publisher is None:raise RuntimeError('ROS连接未就绪，不能暂停/恢复')
+        publisher.publish(Bool(data=bool(paused)))
 
     def request_goal(self, x: float, y: float, yaw: float, frame: str = "map") -> None:
         with STATE.lock:
@@ -1055,6 +1070,7 @@ class RosWorker:
         self._sub(node, "/grid_map/reference_grid", OccupancyGrid, q_static, self._on_reference_grid)
         self._sub(node, "/grid_map/live_grid", OccupancyGrid, q_static, self._on_live_grid)
         self._sub(node, "/grid_map/global_grid", OccupancyGrid, q_static, self._on_global_grid)
+        self._sub(node, "/planning/search_grid", OccupancyGrid, q_static, self._on_search_grid)
         self._sub(node, "/grid_map/static_occupancy", PointCloud2, q_static, self._on_nav_static)
         self._sub(node, '/grid_map/fused_reference', PointCloud2, q_static,self._on_nav_fused)
         self._sub(node, '/grid_map/unconfirmed_risk', PointCloud2, q_cloud,self._on_nav_risk)
@@ -1072,7 +1088,10 @@ class RosWorker:
                   q_status, self._on_feasibility)
         self.pose_pub = node.create_publisher(PoseWithCovarianceStamped, INITIAL_POSE_TOPIC, 3)
         self.goal_pub = node.create_publisher(PoseStamped, GOAL_TOPIC, 3)
+        self._sub(node, "/n01/live_navigation/goal_gated", PoseStamped, q_status, self._on_accepted_goal)
         self.route_enable_pub = node.create_publisher(Bool, '/n01/navigation/enable', 10)
+        self.speed_limit_pub = node.create_publisher(Float64, '/n01/navigation/speed_limit', 10)
+        self.pause_pub = node.create_publisher(Bool, '/n01/navigation/pause', 10)
 
         push_log("info", f"ROS 节点 {node.get_name()} 已启动，开始订阅")
 
@@ -1291,6 +1310,18 @@ class RosWorker:
         xyz=pc2_to_xyz(msg)
         with STATE.lock:
             STATE.live_pts=xyz
+            # The bridge labels ground using the pose at scan acquisition.
+            if (STATE.mapping.get('session') == 'mapping' and msg.height == 1
+                    and not msg.is_bigendian and msg.point_step == 16
+                    and [(f.name, f.offset, f.datatype, f.count) for f in msg.fields]
+                    == [('x', 0, 7, 1), ('y', 4, 7, 1), ('z', 8, 7, 1), ('ground', 12, 7, 1)]
+                    and len(msg.data) == msg.width * 16):
+                samples = np.frombuffer(bytes(msg.data), dtype='<f4').reshape(-1, 4)
+                floor = samples[(samples[:, 3] > .5) & np.isfinite(samples).all(axis=1), :2]
+                if len(STATE.mapping_floor_cells) < 200_000:
+                    cells = np.unique(np.floor(floor / .1).astype(np.int64), axis=0)
+                    STATE.mapping_floor_cells.update(map(tuple, cells))
+
             if xyz is not None:STATE.ground_live_frames.append((time.monotonic(),xyz))
             STATE.live_seq+=1
         STATE.recv('bridge_cloud')
@@ -1401,6 +1432,16 @@ class RosWorker:
             push_log('info', f"实时栅格已收到：{data.shape[1]}×{data.shape[0]}，占用 {int((data==100).sum())}")
         STATE.recv('grid_map')
 
+    def _on_search_grid(self, msg):
+        if (msg.header.frame_id != 'map' or msg.info.resolution <= 0
+                or msg.info.width * msg.info.height != len(msg.data)):
+            return
+        data = np.asarray(msg.data, dtype=np.int8).reshape(msg.info.height, msg.info.width)
+        with STATE.lock:
+            STATE.search_grid = (data, msg.info.origin.position.x, msg.info.origin.position.y,
+                                 msg.info.resolution, time.monotonic())
+            STATE.grid_seq += 1
+
     def _on_global_grid(self,msg):
         try:
             data=np.asarray(msg.data,dtype=np.int8).reshape(msg.info.height,msg.info.width)
@@ -1424,6 +1465,23 @@ class RosWorker:
         data=self._json_or_empty(msg.data)
         with STATE.lock:STATE.planning_status=data
         STATE.recv('planning_status')
+
+    def _on_accepted_goal(self, msg):
+        stamp = msg.header.stamp.sec * 10**9 + msg.header.stamp.nanosec
+        p, q = msg.pose.position, msg.pose.orientation
+        if msg.header.frame_id != 'map' or stamp <= 0 or not all(
+                math.isfinite(v) for v in (p.x,p.y,q.x,q.y,q.z,q.w)):
+            return
+        with STATE.lock:
+            if stamp <= STATE.plan_goal_ns:
+                return
+            STATE.clear_task_display()
+            STATE.goal_seq += 1
+            STATE.plan_goal_ns = stamp
+            STATE.goal_target = (float(p.x), float(p.y))
+            STATE.external_goal_yaw = math.atan2(2*(q.w*q.z+q.x*q.y),1-2*(q.y*q.y+q.z*q.z))
+            STATE.plan_pending = STATE.global_pending = True
+            STATE.navigation_task.begin_goal(STATE.goal_seq)
 
     def _on_global_path(self, msg: RosPath) -> None:
         points = [(float(p.pose.position.x), float(p.pose.position.y))
@@ -2166,7 +2224,7 @@ class ProcManager:
             "rviz", ["rviz2", "-d", config],
             "FAST-LIO2 实时建图 RViz" if realtime else "FAST-LIO2 重定位 RViz")
 
-    def start_navigation_execution(self, speed: float = 0.4, cbf_enabled: bool = False, task_id: str = '', goal_xy=None, start_disabled=False, route=False, final_yaw=False) -> bool:
+    def start_navigation_execution(self, speed: float = 0.4, cbf_enabled: bool = False, task_id: str = '', goal_xy=None, start_disabled=False, route=False, final_yaw=True) -> bool:
         """Start the opt-in very-slow /cmd_vel path executor.
 
         只跟随经局部规划验证的统一路径，并使用原生四轮几何检查。
@@ -2174,13 +2232,13 @@ class ProcManager:
         """
         task_id=task_id or 'motion_'+uuid.uuid4().hex
         speed = float(speed)
-        if not math.isfinite(speed) or not .01<=speed<=.8:
-            push_log('err','速度上限必须为0.01～0.8 m/s的有限数值');return False
+        if not math.isfinite(speed) or not .01<=speed<=1.0:
+            push_log('err','速度上限必须为0.01～1.0 m/s的有限数值');return False
         cmd = ["bash", os.path.join(NAV_REPO, "scripts", "runtime", "start_navigation_execution.sh"),
                "--ros-args", "-p", f"enabled:={str(not start_disabled).lower()}", "-p", f"task_id:={task_id}",
                "-p", f"cbf_enabled:={str(bool(cbf_enabled)).lower()}",
                "-p", f"max_speed_mps:={speed:.3f}",
-               "-p", "max_yaw_rate_radps:=0.45",
+               "-p", "max_yaw_rate_radps:=0.22",
                "-p", "max_accel_mps2:=0.25",
                "-p", f"require_final_yaw:={str(bool(route or final_yaw)).lower()}",
                "-p", f"follow_goal_updates:={str(route).lower()}"]
@@ -2527,128 +2585,35 @@ def _set_view_range(value: float) -> None:
         UI["range"].value = float(value)
     try:
         draw_grid(force=True)
-    except Exception:  # noqa: BLE001 - chart-only pages may not build the grid
+    except Exception:  # noqa: BLE001
         pass
-    draw_chart(force=True)
-
-
-def _view_points() -> tuple[list, str]:
-    """按视图选择取点，返回 ([ [x,y], ... ], 描述)。"""
-    src = UI["src"].value if UI.get("src") else "定位地图"
-    want_loc = src in ("定位地图", "两者")
-    want_cloud = src in ("建图点云", "两者")
-    with STATE.lock:
-        loc_t, cloud_t = STATE.loc_pts, STATE.cloud_pts
-        loc_seq, cloud_seq = STATE.loc_seq, STATE.cloud_seq
-        pose = STATE.pose
-        trail = list(STATE.trail)
-
-    key = (want_loc, want_cloud, loc_seq if want_loc else 0,
-           cloud_seq if want_cloud else 0)
-    if key == _chart_cache["key"]:
-        return _chart_cache["pts"], src
-
-    arr = None
-    if want_loc and want_cloud:
-        parts = [a for a in (loc_t, cloud_t) if a is not None and len(a)]
-        arr = np.vstack(parts) if parts else None
-    elif want_loc:
-        arr = loc_t
-    elif want_cloud:
-        arr = cloud_t
-    if arr is not None and len(arr):
-        n = min(len(arr), MAX_PTS_VIEW)
-        if n < len(arr):
-            idx = np.linspace(0, len(arr) - 1, n).astype(int)
-            arr = arr[idx]
-        pts = arr[:, :2].round(2).tolist()
-    else:
-        pts = []
-    _chart_cache.update(key=key, pts=pts)
-    return pts, src
-
-
-def _chart_option(pts: list, trail: list, pose) -> dict:
-    if pts:
-        xs = [p[0] for p in pts]
-        ys = [p[1] for p in pts]
-        cx, cy = (min(xs) + max(xs)) / 2.0, (min(ys) + max(ys)) / 2.0
-        half = max((max(xs) - min(xs)) / 2.0, (max(ys) - min(ys)) / 2.0, 8.0)
-    elif pose:
-        cx, cy, half = pose[0], pose[1], 8.0
-    else:
-        cx, cy, half = 0.0, 0.0, 8.0
-
-    try:
-        half = float(UI["range"].value) / 2.0
-    except (TypeError, ValueError):
-        half = 50.0
-    half = max(2.5, min(100.0, half))
-    if pose:
-        cx, cy = pose[0], pose[1]
-
-    arrow = []
-    if pose:
-        x, y, yaw = pose
-        arrow = [[x - 0.45 * math.cos(yaw), y - 0.45 * math.sin(yaw)],
-                 [x + 0.45 * math.cos(yaw), y + 0.45 * math.sin(yaw)]]
-
-    series = [
-        {"name": "点云", "type": "scatter", "data": pts, "symbolSize": 2.2,
-         "itemStyle": {"color": "#5598e7", "opacity": 0.55},
-         "large": True, "largeThreshold": 2000, "progressive": 3000},
-        {"name": "轨迹", "type": "line", "data": [[p[0], p[1]] for p in trail],
-         "symbol": "none", "lineStyle": {"width": 1.4, "color": TRAIL_C, "opacity": 0.6}},
-        {"name": "机身", "type": "line", "data": arrow, "symbol": "none",
-         "lineStyle": {"width": 3, "color": ACCENT}},
-        {"name": "位置", "type": "scatter",
-         "data": [[pose[0], pose[1]]] if pose else [],
-         "symbolSize": 7, "itemStyle": {"color": ACCENT}, "z": 10},
-    ]
-    return {
-        "backgroundColor": SURFACE,
-        "animation": False,
-        "legend": {"top": 2, "textStyle": {"color": TEXT}, "itemWidth": 12, "itemHeight": 8},
-        "grid": {"left": 58, "right": 18, "top": 34, "bottom": 42},
-        "xAxis": {"type": "value", "name": "x [m]", "min": cx - half, "max": cx + half,
-                  "axisLabel": {"color": MUTED}, "nameTextStyle": {"color": MUTED},
-                  "axisLine": {"lineStyle": {"color": MUTED}},
-                  "splitLine": {"lineStyle": {"color": GRID}}},
-        "yAxis": {"type": "value", "name": "y [m]", "min": cy - half, "max": cy + half,
-                  "axisLabel": {"color": MUTED}, "nameTextStyle": {"color": MUTED},
-                  "axisLine": {"lineStyle": {"color": MUTED}},
-                  "splitLine": {"lineStyle": {"color": GRID}}},
-        "series": series,
-    }
 
 
 # ---------------------------------------------------------------------------
-# UI
+# UI 基础组件
 # ---------------------------------------------------------------------------
 from nicegui import app, ui  # noqa: E402
 
 # Widget access resolves the current page; never share Element instances.
 
 
-def _lbl(text: str, cls: str = "text-sm text-slate-300"):
+def _lbl(text: str, cls: str = "text-xs text-slate-300"):
     return ui.label(text).classes(cls)
 
 
 def _kv(key: str, initial: str = "—"):
-    """在当前 grid 里放一格“键 + 值”，返回值标签。"""
-    _lbl(key, "text-xs text-slate-500")
-    return ui.label(initial).classes("font-semibold text-sm text-slate-100 break-words")
+    """单格原子指标卡（键在上、值在下），避免多列 grid 键值错位与纵向堆叠膨胀。"""
+    with ui.column().classes("kv-cell gap-0.5 min-w-0"):
+        _lbl(key, "text-[11px] font-medium text-slate-400 leading-tight truncate w-full")
+        val = ui.label(initial).classes("font-semibold text-xs text-slate-100 leading-snug break-words w-full")
+    return val
 
 
 _SET_CACHE: dict[int, tuple[str, str]] = {}
 
 
 def _set(el, text: str, color: str | None = None) -> None:
-    """只有文本/颜色实际变化时才写 DOM。
-
-    多条 0.5 s 刷新路径每 tick 都会调用 _set；内容没变时跳过 set_text +
-    style(replace=...)，避免 NiceGUI 每个周期都替换相同文本/样式（闪烁、CPU）。
-    """
+    """只有文本/颜色实际变化时才写 DOM。"""
     c = color or TEXT
     key = id(el)
     cached = _SET_CACHE.get(key)
@@ -2672,186 +2637,18 @@ def _session_color(s: str) -> str:
 
 
 def _card(title: str):
-    card = ui.card().classes("w-full q-pa-md gap-2")
+    card = ui.card().classes("w-full q-pa-sm gap-2 compact-card")
     with card:
-        _lbl(title, "text-base font-semibold text-slate-100")
+        _lbl(title, "text-sm font-semibold text-slate-100")
     return card
-
-
-def build_status_tab() -> None:
-    with ui.card().classes("w-full q-pa-md gap-1"):
-        _lbl("ROS 连接", "text-base font-semibold text-slate-100")
-        UI["ros_reason"] = ui.label("ROS 工作线程正在启动…").classes(
-            "w-full text-xs font-mono break-all")
-    with ui.card().classes("w-full q-pa-md gap-1"):
-        _lbl("节点普查（重名 / 多发布者）", "text-base font-semibold text-slate-100")
-        UI["dup_banner"] = ui.label("等待 ROS 图…").classes(
-            "w-full text-xs font-mono break-all")
-    with ui.row().classes("w-full gap-4 items-start no-wrap"):
-        # ---- 左列状态 ----
-        with ui.column().classes("w-80 shrink-0 gap-3"):
-            with _card("定位 /localization_lite_node"):
-                with ui.grid(columns=2).classes("gap-x-4 gap-y-1"):
-                    UI["loc_session"] = _kv("会话")
-                    UI["loc_map_loaded"] = _kv("地图已加载")
-                    UI["loc_reloc"] = _kv("重定位收敛")
-                    UI["loc_fitness"] = _kv("fitness")
-                    UI["loc_pose"] = _kv("位姿 x / y / yaw")
-                    UI["loc_pose_age"] = _kv("位姿新鲜度")
-                    UI["loc_map_pts"] = _kv("定位地图点数")
-                ui.separator()
-                _lbl("map_path", "text-xs text-slate-400")
-                UI["loc_map_path"] = ui.label("—").classes("text-xs break-all text-slate-300")
-
-            with _card("建图 /mapping_lite_node"):
-                with ui.grid(columns=2).classes("gap-x-4 gap-y-1"):
-                    UI["map_session"] = _kv("会话")
-                    UI["map_cloud_pts"] = _kv("建图点云点数")
-                ui.separator()
-                _lbl("save_dir", "text-xs text-slate-400")
-                UI["map_save_dir"] = ui.label("—").classes("text-xs break-all text-slate-300")
-
-            with _card("上游输入"):
-                with ui.grid(columns=2).classes("gap-x-4 gap-y-1"):
-                    UI["in_cloud_age"] = _kv("/livox/lidar/geo_filtered")
-                _lbl("输入云是 SLAM 的源头；无数据时定位/建图都不会有输出", "text-xs text-slate-400")
-
-        # ---- 右侧地图 ----
-        with ui.column().classes("flex-grow min-w-0 gap-2"):
-            with ui.card().classes("w-full q-pa-md gap-2"):
-                with ui.row().classes("items-center gap-3"):
-                    _lbl("地图 / 位姿", "text-base font-semibold text-slate-100")
-                    UI["src"] = ui.radio(["定位地图", "建图点云", "两者"], value="定位地图",
-                                        on_change=lambda _: draw_chart(force=True))\
-                        .props("inline dense")
-                    with ui.row().classes("items-center gap-1"):
-                        UI["range"] = ui.number("显示范围 [m]", value=100, min=5, max=200,
-                                                step=5, format="%.0f",
-                                                on_change=lambda _: draw_chart(force=True))\
-                            .classes("w-32").props("dense")
-                        for _preset in (10, 20, 40, 100):
-                            ui.button(f"{_preset}", on_click=lambda p=_preset: _set_view_range(p))\
-                                .props("flat dense")
-                    UI["trail_on"] = ui.checkbox("轨迹", value=True)
-                    UI["chart_info"] = ui.label("等待点云…").classes("text-xs text-slate-400")
-                UI["chart"] = ui.echart(_chart_option([], [], None)).classes("w-full h-[580px]")
-
-
-def build_ctrl_tab() -> None:
-    with ui.row().classes("w-full gap-4 items-start"):
-        # 定位控制
-        with ui.column().classes("flex-1 min-w-72 gap-3"):
-            with _card("定位控制"):
-                for name, desc in LOC_SRV_DESC.items():
-                    with ui.row().classes("items-center gap-3 w-full no-wrap"):
-                        ui.button(name, on_click=functools.partial(srv_click, name))\
-                            .props("outline color=primary").classes("w-64 text-left")
-                        _lbl(desc, "text-xs text-slate-400")
-            with _card("建图控制"):
-                for name, desc in MAP_SRV_DESC.items():
-                    with ui.row().classes("items-center gap-3 w-full no-wrap"):
-                        ui.button(name, on_click=functools.partial(srv_click, name))\
-                            .props("outline color=secondary").classes("w-64 text-left")
-                        _lbl(desc, "text-xs text-slate-400")
-
-        # 初始位姿 + 节点管理
-        with ui.column().classes("flex-1 min-w-72 gap-3"):
-            with _card("初始位姿 /initialpose"):
-                _lbl("仅重定位会话接受；追踪 / 空闲会被忽略。", "text-xs text-slate-400")
-                with ui.row().classes("gap-2 items-end"):
-                    UI["ip_x"] = ui.number("x [m]", value=0.0, format="%.2f").classes("w-24").props("dense")
-                    UI["ip_y"] = ui.number("y [m]", value=0.0, format="%.2f").classes("w-24").props("dense")
-                    UI["ip_yaw"] = ui.number("yaw [deg]", value=0.0, format="%.1f").classes("w-24").props("dense")
-                with ui.row().classes("gap-2 items-center"):
-                    UI["ip_frame"] = ui.select(["map", "base_footprint"], value="map",
-                                              label="frame").classes("w-48").props("dense")
-                    ui.button("发布", on_click=send_initialpose).props("color=primary")
-                UI["ip_result"] = ui.label("").classes("text-xs text-slate-400")
-
-            with _card("节点管理（可选项，默认关闭）"):
-                UI["mg_enable"] = ui.checkbox(
-                    "启用节点管理：由本 GUI 启动 / 停止 lite desk 节点", value=False)
-                with ui.row().classes("gap-2 items-center"):
-                    UI["mg_mode"] = ui.select(["定位 desk", "建图 desk"], value="定位 desk")\
-                        .classes("w-36").props("dense")
-                    ui.button("启动", on_click=start_desk).props("color=positive")
-                    ui.button("停止", on_click=stop_desk).props("color=negative")
-                UI["mg_skip_rsp"] = ui.checkbox(
-                    "不启动 SLAM 的 RSP（由地盘 hive2_driver 提供 "
-                    "base_link→lidar_link，地面帧由算法计算）", value=True)
-                UI["mg_skip_rsp"].disable()
-                _lbl("机身与雷达安装 TF 由桌面底盘独占发布。"
-                     "地面参考帧由点云拟合后动态发布，不使用固定腿高。",
-                     "text-xs text-slate-400")
-                _lbl("建图与定位使用同一项目适配链路。", "text-xs text-slate-400")
-                _lbl("desk 会同时起 IMU 互补滤波 / cloud_preprocessor / 地面投影，"
-                     "若这些已在跑请勿重复启动。", "text-xs text-amber-400")
-                ui.separator()
-                _lbl("定位与建图互斥：两者都订阅同一输入云、都发布 /robot_pose 与 "
-                     "map→base_link TF；同一时刻只能运行一个。", "text-xs text-amber-400")
-                with ui.grid(columns=2).classes("gap-x-4 gap-y-1"):
-                    UI["proc_nodes"] = _kv("节点在位")
-                    UI["proc_procs"] = _kv("本 GUI 进程")
-
-
-def build_lifecycle_tab() -> None:
-    with ui.column().classes("w-full gap-3"):
-        with _card("统一生命周期总览"):
-            _lbl("SLAM 定位与建图互斥；导航仅在定位 tracking、地图已加载且位姿持续更新时允许启动。",
-                 "text-sm text-amber-300")
-            with ui.grid(columns=3).classes("w-full gap-3"):
-                UI["life_loc"] = _kv("Lite 定位")
-                UI["life_map"] = _kv("Lite 建图")
-                UI["life_nav"] = _kv("N-01 导航")
-            with ui.row().classes("w-full items-center gap-2"):
-                ui.button("刷新状态", on_click=lambda: navigation_action("status"))\
-                    .props("outline color=primary")
-                ui.button("停止全部 GUI 托管模块", on_click=stop_managed_all)\
-                    .props("color=negative")
-        with ui.row().classes("w-full items-start gap-4"):
-            with ui.column().classes("flex-1 gap-3"):
-                with _card("SLAM 生命周期"):
-                    _lbl("启动前执行节点普查。发现定位/建图或 desk 前置链残留时拒绝叠加；不会误杀 Livox、IMU、底盘或外部 SLAM。",
-                         "text-xs text-slate-400")
-                    with ui.row().classes("items-center gap-2"):
-                        ui.button("启动定位", on_click=lambda: lifecycle_start_slam("loc"))\
-                            .props("color=positive")
-                        ui.button("启动建图 + 录包", on_click=lambda: lifecycle_start_slam("mapping"))\
-                            .props("color=positive")
-                        ui.button("结束建图 / 停止 desk", on_click=stop_desk)\
-                            .props("color=negative")
-                    UI["life_slam_note"] = ui.label("SLAM desk 由本 GUI 的独立进程组管理。")\
-                        .classes("text-xs text-slate-400")
-            with ui.column().classes("flex-1 gap-3"):
-                with _card("N-01 导航生命周期"):
-                    _lbl(f"导航仓库：{NAV_REPO}", "text-xs font-mono text-slate-400 break-all")
-                    _lbl("启动前先停止上一套受管导航进程组，再执行状态复查。只清理 N-01 导航自有进程，不会全局 kill ROS 节点。",
-                         "text-xs text-slate-400")
-                    with ui.row().classes("items-center gap-2"):
-                        ui.button("启动导航", on_click=lambda: navigation_action("start"))\
-                            .props("color=positive")
-                        ui.button("停止导航", on_click=stop_navigation_module)\
-                            .props("color=negative")
-                        ui.button("导航状态", on_click=lambda: navigation_action("status"))\
-                            .props("outline color=primary")
-                    UI["nav_result"] = ui.label("尚未执行导航生命周期命令。")\
-                        .classes("w-full text-xs font-mono whitespace-pre-wrap break-all")
-        with _card("安全边界"):
-            ui.markdown(
-                "- **允许自动清理：** 当前 GUI 登记的 SLAM desk / RViz / Foxglove 进程组；"
-                "N-01 导航仓库生命周期入口明确管理的导航进程组。\n"
-                "- **禁止自动清理：** Livox、IMU、底盘驱动、腿控、控制器、外部独立 SLAM、"
-                "外部定位适配器。\n"
-                "- 如果发现无法证明归属的 ROS 残留，系统会阻止重复启动并报告 PID/节点，"
-                "而不是对所有 ROS 进程执行 killall。"
-            ).classes("text-sm")
 
 
 async def lifecycle_start_slam(mode: str) -> None:
     if PROCS.running('desk'):
         notify_user('已有建图定位会话运行，请先停止再切换组合', type='warning')
         return
-    existing_navigation = LIFECYCLE._active_navigation_identity()
+    _lc = globals().get('LIFECYCLE')
+    existing_navigation = _lc._active_navigation_identity() if _lc is not None else None
     if existing_navigation is not None:
         existing_note = (f'已有导航实例 PID={existing_navigation[0]}；本次仅启动SLAM，不会启动导航。'
                          '若它属于上次SLAM会话，请从原入口停止后重新启动导航，不能混用新旧坐标会话。')
@@ -2872,6 +2669,8 @@ async def lifecycle_start_slam(mode: str) -> None:
     with STATE.lock:
         STATE.mapping_nav = {}
         STATE.mapping['session'] = '—'
+        getattr(STATE, 'mapping_floor_cells', set()).clear()
+        STATE.search_grid = None
         STATE.loc.update(session='—', map_loaded=None, reloc_ok=None, reloc_fitness=None)
         for key in ('n01_status','loc_status','mapping_status','pose','body_pose','cloud_map'):
             STATE.recv_t[key] = 0.0
@@ -3393,9 +3192,9 @@ async def run_recorded_route(resume=False):
         notify_user('请先停止当前单点行驶',type='warning');return
     try:
         speed=float(UI['slow_speed'].value)
-        if not math.isfinite(speed) or not .01<=speed<=.8:raise ValueError()
+        if not math.isfinite(speed) or not .01<=speed<=1.0:raise ValueError()
     except (TypeError,ValueError):
-        notify_user('速度上限必须为0.01～0.8 m/s',type='warning');return
+        notify_user('速度上限必须为0.01～1.0 m/s',type='warning');return
     if speed>STATE.nav_speed_mps+1e-6:
         notify_user('请按所选速度重新启动导航后运行路线',type='warning');return
     route=json.loads(json.dumps(context['route'] if resume else TEACH_SESSION.loaded))
@@ -3447,154 +3246,54 @@ async def _run_route_mission(route,context,speed):
         if not paused:publish_motion_events([dict(text=message,level='ok' if success else 'err',notify=True,terminal=True)])
 
 
-PCD_TOOL_STATE = {"recorder": None}
-
-
-def _pcd_recorder_paths():
-    return (str(UI["pcd_traj_csv"].value or "").strip(),
-            str(UI["pcd_rec_topic"].value or "/robot_pose").strip())
-
-
-def start_pcd_trajectory_recording() -> None:
-    path, topic = _pcd_recorder_paths()
-    if not path:
-        notify_user("先填写轨迹 CSV 输出路径", type="warning"); return
-    if PCD_TOOL_STATE["recorder"] is not None and PCD_TOOL_STATE["recorder"].poll() is None:
-        notify_user("轨迹录制已在运行", type="warning"); return
-    script = str(Path(__file__).resolve().parent / "tools" / "record_robot_pose_csv.py")
-    cmd = [sys.executable, script, "--output", path, "--topic", topic]
-    PCD_TOOL_STATE["recorder"] = subprocess.Popen(
-        cmd, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT,
-        start_new_session=True)
-    push_log("info", f"PCD 轨迹录制已启动：{path}（{topic}）")
-
-
-def stop_pcd_trajectory_recording() -> None:
-    proc = PCD_TOOL_STATE.get("recorder")
-    if proc is None or proc.poll() is not None:
-        PCD_TOOL_STATE["recorder"] = None
-        notify_user("当前没有轨迹录制进程", type="info"); return
-    proc.terminate()
-    try:
-        proc.wait(timeout=3)
-    except subprocess.TimeoutExpired:
-        proc.kill(); proc.wait(timeout=2)
-    PCD_TOOL_STATE["recorder"] = None
-    push_log("info", "PCD 轨迹录制已停止")
-
-
-async def run_bag_pose_extract() -> None:
-    bag = str(UI["pcd_bag"].value or "").strip()
-    out = str(UI["pcd_bag_csv"].value or "").strip()
-    if not (bag and out):
-        notify_user("请填写 bag 和输出 CSV", type="warning"); return
-    script = str(Path(__file__).resolve().parent / "tools" / "bag_to_pose_csv.py")
-    cmd = [sys.executable, script, "--bag", bag, "--output", out,
-           "--topic", "/robot_pose"]
-    push_log("info", "从 bag 提取 /robot_pose 轨迹…")
-    proc = await asyncio.create_subprocess_exec(
-        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-        env={**os.environ, "ROS_LOG_DIR": os.environ.get("ROS_LOG_DIR", "/tmp/n01_gui_ros")})
-    stdout, _ = await proc.communicate()
-    text = (stdout or b"").decode("utf-8", "replace").strip()
-    if proc.returncode == 0:
-        push_log("ok", "bag 轨迹提取完成：" + (text.splitlines()[-1] if text else out))
-    else:
-        push_log("err", "bag 轨迹提取失败：" + (text[-500:] or f"exit={proc.returncode}"))
-
-
-async def run_pcd_ego_cleanup() -> None:
-    raw = str(UI["pcd_clean_in"].value or "").strip()
-    traj = str(UI["pcd_clean_traj"].value or "").strip()
-    out = str(UI["pcd_clean_out"].value or "").strip()
-    if not (raw and traj and out):
-        notify_user("请填写原始 PCD、轨迹 CSV、输出 PCD", type="warning"); return
-    script = str(Path(__file__).resolve().parent / "tools" / "filter_pcd_ego_trail.py")
-    cmd = [sys.executable, script, "--pcd", raw, "--trajectory", traj,
-           "--output", out,
-           "--length", str(float(UI["pcd_clean_len"].value or .58)),
-           "--width", str(float(UI["pcd_clean_wid"].value or .34)),
-           "--margin", "0.06", "--resolution", "0.10",
-           "--z-down", "0.80", "--z-up", "0.90"]
-    if UI.get("pcd_clean_fp") and str(UI["pcd_clean_fp"].value or "").strip():
-        cmd += ["--footprint-json", str(UI["pcd_clean_fp"].value).strip()]
-    push_log("info", "PCD 历史自车清理开始…")
-    proc = await asyncio.create_subprocess_exec(
-        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
-    stdout, _ = await proc.communicate()
-    text = (stdout or b"").decode("utf-8", "replace").strip()
-    if proc.returncode == 0:
-        push_log("ok", "PCD 清理完成：" + (text.splitlines()[-1] if text else out))
-        notify_user("PCD 清理完成", type="positive")
-    else:
-        push_log("err", "PCD 清理失败：" + (text[-500:] or f"exit={proc.returncode}"))
-        notify_user("PCD 清理失败，查看日志", type="negative")
-
-
-def build_pcd_tools_panel():
-    with ui.expansion("PCD 工具（轨迹录制 / 历史自车清理）", icon="cleaning_services")            .classes("w-full compact-expansion"):
-        _lbl("建图时先录制 /robot_pose；保存 PCD 后用轨迹清理历史自车拖影。", "text-xs text-slate-400")
-        with ui.row().classes("gap-2 items-center flex-wrap"):
-            UI["pcd_traj_csv"] = ui.input("轨迹 CSV", value="/home/demo/lyy/slam_data/maps/mapping_traj.csv").classes("w-80")
-            UI["pcd_rec_topic"] = ui.input("位姿话题", value="/robot_pose").classes("w-48")
-        with ui.row().classes("gap-2"):
-            ui.button("开始录制轨迹", on_click=start_pcd_trajectory_recording).props("outline dense")
-            ui.button("停止录制", on_click=stop_pcd_trajectory_recording).props("outline dense")
-        ui.separator()
-        with ui.row().classes("gap-2 items-center flex-wrap"):
-            UI["pcd_bag"] = ui.input("建图 bag", value="/home/demo/lyy/slam_data/bags/").classes("w-80")
-            UI["pcd_bag_csv"] = ui.input("输出轨迹 CSV", value="/home/demo/lyy/slam_data/maps/mapping_traj.csv").classes("w-80")
-            ui.button("从 bag 提取轨迹", on_click=run_bag_pose_extract).props("outline dense")
-        ui.separator()
-        UI["pcd_clean_in"] = ui.input("原始 PCD", value="").classes("w-full")
-        UI["pcd_clean_traj"] = ui.input("轨迹 CSV", value="/home/demo/lyy/slam_data/maps/mapping_traj.csv").classes("w-full")
-        UI["pcd_clean_out"] = ui.input("输出 PCD", value="").classes("w-full")
-        UI["pcd_clean_fp"] = ui.input("足迹 JSON（可选）", value="").classes("w-full")
-        with ui.row().classes("gap-2 items-center"):
-            UI["pcd_clean_len"] = ui.number("长 m", value=.58, format="%.2f").classes("w-24")
-            UI["pcd_clean_wid"] = ui.number("宽 m", value=.34, format="%.2f").classes("w-24")
-            ui.button("清理历史自车拖影", on_click=run_pcd_ego_cleanup).props("color=primary")
-    return
-
-
 def build_teaching_panel():
-    with ui.expansion('手动记录路线',icon='route',value=True).classes('w-full compact-expansion').bind_visibility_from(UI['navigation_mode'],'value',backward=lambda v:v=='手动记录路线'):
-        _lbl('在真实起点停车并记录 A → 遥控到下一处停车并记录 B → 结束保存。每站保存实测位姿、定位、里程计与关节状态；运行时先回到所记录的 A，再依次到终点。','text-xs text-slate-400')
-        _lbl('① 定位导航就绪 → ② 遥控停车并记录 A、B → ③ 结束并保存 → ④ 先回 A，再到 B。记录期间可用遥控器移动，自动行驶保持禁用。','text-xs text-cyan-200')
-        with ui.row().classes('gap-2 items-center'):
-            UI['teach_name']=ui.input('路线名称',value='待命-A-B').classes('w-48')
-            UI['teach_return']=ui.checkbox('执行结束后返回首点',value=False)
-        with ui.row().classes('gap-2 items-center'):
-            UI['teach_point_name']=ui.input('站点名称',value=('A起点' if not TEACH_SESSION.points else
-                ('B终点' if len(TEACH_SESSION.points)==1 else f'站点{len(TEACH_SESSION.points)+1}'))).classes('w-40')
-            UI['teach_wait']=ui.number('到站停留秒数',value=1,min=0,max=600).classes('w-32')
-        with ui.row().classes('gap-2 flex-wrap'):
-            for label,action in [('新建路线','begin'),('记录当前位置','record'),('撤销末点','undo'),
-                                 ('结束并保存','save'),('放弃路线记录','discard')]:
-                ui.button(label,on_click=lambda a=action:teaching_action(a)).props('outline dense')
-        UI['teach_table']=ui.table(columns=[dict(name=k,label=v,field=k)for k,v in
-            [('index','顺序'),('name','名称'),('x','X / m'),('y','Y / m'),('yaw','朝向 / °'),('wait','停留 / s')]],
-            rows=[],row_key='index',pagination=5).classes('w-full')
-        with ui.expansion('已记录站点状态（只读）',icon='data_object').classes('w-full compact-expansion'):
-            UI['teach_station_states']=ui.label('[]').classes('text-xs font-mono whitespace-pre-wrap max-h-64 overflow-auto w-full')
-        with ui.row().classes('gap-2 items-center'):
-            saved_options=TEACH_STORE.list()
-            UI['teach_saved']=ui.select(saved_options,label='已保存路线',
-                value=(TEACH_SESSION.loaded_path if TEACH_SESSION.loaded_path in saved_options else None),
-                on_change=lambda:manage_saved_route('info')).classes('grow')
-            ui.button('加载路线',on_click=lambda:teaching_action('load')).props('outline dense')
-            ui.button('刷新列表',on_click=lambda:manage_saved_route('refresh')).props('outline dense')
-            ui.button('删除路线',on_click=lambda:manage_saved_route('delete')).props('outline dense color=negative')
-        UI['teach_saved_info']=ui.label('选择路线查看站点数、绑定地图及保存时间').classes('text-xs text-slate-400 break-all')
-        UI['teach_execution']=ui.label('').classes('text-xs text-cyan-200 break-all')
-        with ui.row().classes('gap-2'):
-            ui.button('开始运行路线（先到起点）',on_click=lambda:run_recorded_route(False)).props('color=primary')
-            ui.button('暂停路线',on_click=pause_recorded_route).props('outline dense')
-            ui.button('继续路线',on_click=lambda:run_recorded_route(True)).props('outline dense')
-            ui.button('取消路线',on_click=stop_navigation_motion).props('outline dense')
-        _lbl('同一控制器完成各站移动、朝向和停车确认；短时波动按统一状态处理，手动接管后需点击继续。','text-xs text-slate-400')
-        _lbl('离线路线绑定PCD，实时路线仅限本次SLAM会话；两者均绑定坐标模型。bag不能代替当前感知。','text-xs text-slate-400')
-        UI['teach_result']=ui.label('尚未开始路线记录').classes('text-xs break-all')
+    with ui.element('div').classes('w-full sub-panel p-2.5 flex flex-col gap-2').bind_visibility_from(
+            UI['navigation_mode'], 'value', backward=lambda v: v == '手动记录路线'):
+        with ui.row().classes('w-full items-center justify-between gap-2 flex-wrap'):
+            _lbl('手动记录与多站点巡航', 'text-xs font-semibold text-cyan-300')
+            _lbl('① 遥控停稳记录站点 → ② 保存并加载 → ③ 运行路线（先回首站）', 'text-[11px] text-slate-400')
+        with ui.element('div').classes('grid grid-cols-1 xl:grid-cols-2 gap-2.5 items-start w-full'):
+            with ui.column().classes('w-full gap-2'):
+                with ui.row().classes('gap-2 items-center flex-wrap w-full'):
+                    UI['teach_name'] = ui.input('路线名称', value='待命-A-B').props('dense outlined').classes('w-36')
+                    UI['teach_point_name'] = ui.input(
+                        '站点名称',
+                        value=('A起点' if not TEACH_SESSION.points else
+                               ('B终点' if len(TEACH_SESSION.points) == 1 else f'站点{len(TEACH_SESSION.points)+1}'))
+                    ).props('dense outlined').classes('w-28')
+                    UI['teach_wait'] = ui.number('停留[s]', value=1, min=0, max=600).props('dense outlined').classes('w-24')
+                    UI['teach_return'] = ui.checkbox('末站回首点', value=False).classes('text-xs')
+                with ui.row().classes('gap-1.5 flex-wrap'):
+                    for label, action in [('新建', 'begin'), ('记录当前位姿', 'record'), ('撤销', 'undo'),
+                                          ('保存路线', 'save'), ('放弃', 'discard')]:
+                        ui.button(label, on_click=lambda a=action: teaching_action(a)).props('outline dense size=sm')
+                with ui.row().classes('gap-1.5 items-center w-full'):
+                    saved_options = TEACH_STORE.list()
+                    UI['teach_saved'] = ui.select(
+                        saved_options, label='已保存路线',
+                        value=(TEACH_SESSION.loaded_path if TEACH_SESSION.loaded_path in saved_options else None),
+                        on_change=lambda: manage_saved_route('info')
+                    ).props('dense outlined').classes('grow min-w-0')
+                    ui.button('加载', on_click=lambda: teaching_action('load')).props('outline dense size=sm')
+                    ui.button('刷新', on_click=lambda: manage_saved_route('refresh')).props('flat dense size=sm')
+                    ui.button('删除', on_click=lambda: manage_saved_route('delete')).props('outline dense size=sm color=negative')
+                with ui.row().classes('gap-1.5 flex-wrap'):
+                    ui.button('开始运行路线', on_click=lambda: run_recorded_route(False)).props('color=primary dense')
+                    ui.button('暂停', on_click=pause_recorded_route).props('outline dense size=sm')
+                    ui.button('继续', on_click=lambda: run_recorded_route(True)).props('outline dense size=sm')
+                    ui.button('取消', on_click=stop_navigation_motion).props('outline dense size=sm color=negative')
+                UI['teach_saved_info'] = ui.label('选择路线查看站点数与绑定地图').classes('text-[11px] text-slate-400 break-all')
+                UI['teach_execution'] = ui.label('').classes('text-[11px] text-cyan-200 break-all')
+                UI['teach_result'] = ui.label('尚未开始路线记录').classes('text-[11px] text-slate-300 break-all')
+            with ui.column().classes('w-full gap-1.5'):
+                UI['teach_table'] = ui.table(
+                    columns=[dict(name=k, label=v, field=k) for k, v in
+                             [('index', '#'), ('name', '名称'), ('x', 'X/m'), ('y', 'Y/m'), ('yaw', '朝向/°'), ('wait', '停留/s')]],
+                    rows=[], row_key='index', pagination=5
+                ).props('dense flat bordered').classes('w-full text-xs')
+                with ui.expansion('站点采样快照（只读）', icon='data_object').classes('w-full compact-expansion'):
+                    UI['teach_station_states'] = ui.label('[]').classes(
+                        'text-[11px] font-mono whitespace-pre-wrap max-h-40 overflow-auto w-full')
         _teach_view()
 
 
@@ -3617,8 +3316,10 @@ async def start_navigation_motion() -> None:
         speed = float(UI["slow_speed"].value if UI.get("slow_speed") else 0.4)
     except (TypeError, ValueError):
         speed = 0.4
-    if not math.isfinite(speed) or not .01<=speed<=.8:
-        _slow_notice('速度上限必须为0.01～0.8 m/s','err');return
+    if not math.isfinite(speed) or not .01<=speed<=1.0:
+        _slow_notice('速度上限必须为0.01～1.0 m/s','err');return
+    with STATE.lock:
+        STATE.nav_speed_mps = speed
     if PROCS.running('execution'):
         with STATE.lock:
             terminal = (STATE.motion_feedback.terminal or
@@ -3630,9 +3331,9 @@ async def start_navigation_motion() -> None:
         STATE.motion_feedback = MotionFeedback()
         STATE.motion_feedback.last_rx = time.monotonic()
         STATE.motion_result = '执行已请求，等待执行器反馈'
-    if speed>STATE.nav_speed_mps+1e-6:
-        _slow_notice('请按新速度重新启动导航，使规划器与执行器速度一致。','err');return
     cbf_enabled = False
+    try: WORKER.set_navigation_pause(False)
+    except RuntimeError: pass
     TASK_STATE.cancel=False;TASK_STATE.pause=False;TASK_STATE.feedback={}
     TASK_STATE.task=asyncio.current_task()
     task_id='point_'+uuid.uuid4().hex
@@ -3641,7 +3342,10 @@ async def start_navigation_motion() -> None:
         target=STATE.goal_target
         if target is None:raise RuntimeError('缺少本次目标坐标，请重新选点')
         token=STATE.goal_seq
-        final_yaw = bool(UI.get('goal_yaw_on') and UI['goal_yaw_on'].value)
+        # Every map goal has a target pose: send_goal() freezes the requested
+        # yaw (or the current heading when the operator did not override it).
+        # Always ask the controller to rotate in place after entering .08 m.
+        final_yaw = True
         ok=await _start_owned_motion(PROCS.start_navigation_execution,speed,cbf_enabled,task_id,target,True,False,final_yaw)
         if ok:
             await _start_route_motion_when_ready(task_id,STATE.goal_seq,executor_authority=True)
@@ -3663,7 +3367,40 @@ async def start_navigation_motion() -> None:
                  "ok" if ok else "err")
 
 
+async def apply_navigation_speed() -> None:
+    try:
+        speed=float(UI['slow_speed'].value if UI.get('slow_speed') else STATE.nav_speed_mps)
+    except (TypeError,ValueError):
+        _slow_notice('速度上限无效','err');return
+    if not math.isfinite(speed) or not .01<=speed<=1.0:
+        _slow_notice('速度上限必须为0.01～1.0 m/s','err');return
+    try:
+        WORKER.set_speed_limit(speed)
+    except RuntimeError as exc:
+        _slow_notice(str(exc),'err');return
+    with STATE.lock:
+        STATE.nav_speed_mps=speed
+    _slow_notice(f'执行速度上限已更新为 {speed:.3f} m/s；规划器启动上限保持不变','ok')
+
+async def pause_navigation_motion() -> None:
+    try: WORKER.set_navigation_pause(True)
+    except RuntimeError as exc:
+        _slow_notice(str(exc),'err');return
+    with STATE.lock:
+        STATE.motion_result='已暂停执行；任务保留，点击恢复继续'
+    _slow_notice('已暂停执行；未取消本次任务','warn')
+
+async def resume_navigation_motion() -> None:
+    try: WORKER.set_navigation_pause(False)
+    except RuntimeError as exc:
+        _slow_notice(str(exc),'err');return
+    with STATE.lock:
+        STATE.motion_result='已请求恢复执行'
+    _slow_notice('已请求恢复执行','ok')
+
 async def stop_navigation_motion() -> None:
+    try: WORKER.set_navigation_pause(False)
+    except RuntimeError: pass
     TASK_STATE.cancel=True;TASK_STATE.pause=False
     paused=not TASK_STATE.active and TASK_STATE.context is not None
     owner=TASK_STATE.task
@@ -3752,14 +3489,18 @@ async def navigation_action(action: str) -> None:
         if body_age is None or body_age > float(os.environ.get("N01_NAV_MAX_BODY_AGE", "3.0")):
             push_log("info", "导航栈启动后等待桥接发布 /body_pose；行驶前仍会检查时效")
         pcd = str(UI["nav_pcd"].value or "").strip() if UI.get("nav_pcd") else ""
-        if not realtime and not pcd:
-            # 与定位当前地图保持一致是首选；其次才用默认 PCD。显示层和门控不再脱节。
+        if not realtime:
             with STATE.lock:
-                pcd = str(STATE.loc.get("map_path", "") or "").strip()
+                loc_pcd = str(STATE.loc.get("map_path", "") or "").strip()
+            if loc_pcd and os.path.isfile(loc_pcd) and loc_pcd != pcd:
+                pcd = loc_pcd
+                if UI.get("nav_pcd"):
+                    UI["nav_pcd"].value = pcd
+                push_log("info", f"已自动同步定位地图到导航 PCD：{pcd}")
         if not realtime and not pcd and os.path.isfile(DEFAULT_MAP_PATH):
             pcd = DEFAULT_MAP_PATH
         if not realtime and not pcd:
-            msg = "拒绝启动导航：导航 PCD 为空（先加载定位地图，或点“同步 PCD”）。"
+            msg = "拒绝启动导航：导航 PCD 为空，请先加载定位地图。"
             UI["nav_result"].set_text(msg); push_log("err", msg); return
         if not realtime and UI.get("nav_pcd"):
             UI["nav_pcd"].value = pcd
@@ -3769,8 +3510,7 @@ async def navigation_action(action: str) -> None:
         try:
             ground = float(UI["nav_ground_z"].value if UI.get("nav_ground_z") else DEFAULT_NAV_GROUND)
         except (TypeError, ValueError):
-            msg = "拒绝启动导航：ground_z_map_m 无效。"
-            UI["nav_result"].set_text(msg); push_log("err", msg); return
+            ground = DEFAULT_NAV_GROUND
         try:
             plane, xy = await navigation_ground_model(realtime)
         except (ValueError, OSError) as exc:
@@ -3778,15 +3518,18 @@ async def navigation_action(action: str) -> None:
             UI['nav_result'].set_text(msg); push_log('err', msg); return
         measured_ground = plane.height(*xy)
         if abs(ground-measured_ground) > .05:
-            msg = (f"拒绝启动导航：设置地面 {ground:+.3f} m 与地图拟合地面 "
-                   f"{measured_ground:+.3f} m 不符，请点击“同步地面”。")
-            UI['nav_result'].set_text(msg); push_log('err', msg); return
+            for name in ('nav_ground_z', 'ground_z'):
+                if UI.get(name):
+                    UI[name].value = round(measured_ground, 3)
+            push_log('info', f"检测到地面不同步（{ground:+.3f} m -> {measured_ground:+.3f} m），已自动同步地面")
+            ground = measured_ground
         with STATE.lock:
             body_xyz = getattr(STATE, 'body_pose_xyz', None)
         if body_xyz is not None and body_xyz[2] <= measured_ground:
             msg = (f"拒绝启动导航：机体参考点不高于检测地面（高度差 "
                    f"{body_xyz[2]-measured_ground:.3f} m），请检查定位与坐标帧。")
             UI['nav_result'].set_text(msg); push_log('err', msg); return
+        _pmodel = str(UI['planning_model'].value or 'urdf') if UI.get('planning_model') else 'urdf'
         env_extra = {
             "N01_NAV_GROUND_Z": f"{plane.c:.6f}",
             "N01_NAV_GROUND_A": f"{plane.a:.8f}",
@@ -3796,9 +3539,9 @@ async def navigation_action(action: str) -> None:
             # navigation module's standalone RViz button when DISPLAY exists.
             "N01_NAV_RVIZ": "false",
             "N01_NAV_SPEED": str(float(UI['slow_speed'].value or .4)),
-            "N01_NAV_FOOTPRINT_MODEL": str(UI['planning_model'].value or 'urdf'),
+            "N01_NAV_FOOTPRINT_MODEL": _pmodel,
         }
-        if str(UI['planning_model'].value or 'urdf') == 'double_cylinder':
+        if _pmodel == 'double_cylinder':
             env_extra.update({"N01_NAV_DC_RADIUS": "0.25", "N01_NAV_DC_OFFSET": "0.18",
                               "N01_NAV_ENV_MARGIN": "0.0"})
         else:
@@ -3822,6 +3565,10 @@ async def navigation_action(action: str) -> None:
         notify_user('当前导航不是本GUI启动的，未停止；请从原启动入口停止导航。',type='warning')
         push_log('warn','导航停止未执行：'+output)
         return
+    if ok and action in ('start','stop'):
+        with STATE.lock:
+            STATE.search_grid=None
+            STATE.grid_seq=getattr(STATE,'grid_seq',0)+1
     if ok and action=='start':
         STATE.nav_speed_mps=float(env_extra['N01_NAV_SPEED'])
         push_log('info', '导航进程已启动；等待 navigation_ready 变 READY 后再点“开始行驶”（桥接通常 5–20 s）')
@@ -3894,63 +3641,6 @@ def refresh_lifecycle() -> None:
          COL_OK if nav_ready is True else (COL_ERR if nav_ready is False else MUTED))
 
 
-def build_ds_tab() -> None:
-    with ui.row().classes("w-full gap-4 items-start"):
-        with ui.column().classes("flex-1 min-w-0 gap-3"):
-            with _card("订阅 / 发布话题"):
-                cols = [
-                    {"name": "topic", "label": "话题", "field": "topic", "align": "left"},
-                    {"name": "type", "label": "类型", "field": "type", "align": "left"},
-                    {"name": "dir", "label": "方向", "field": "dir"},
-                    {"name": "age", "label": "最近数据", "field": "age"},
-                    {"name": "note", "label": "用途", "field": "note", "align": "left"},
-                ]
-                rows = [{"topic": t, "type": ty, "dir": d, "note": n, "age": "—"}
-                        for t, ty, d, n in TOPICS_DEF]
-                UI["ds_table"] = ui.table(columns=cols, rows=rows, row_key="topic")\
-                    .classes("w-full text-xs").props("dense wrap-cells")
-            with _card("服务 std_srvs/srv/Trigger"):
-                for svc, ty in SERVICES_DEF:
-                    ui.label(f"{svc}   ({ty})").classes("text-xs font-mono text-slate-300")
-        with ui.column().classes("w-96 shrink-0 gap-3"):
-            with _card("环境与数据源铁律"):
-                ament = os.environ.get("AMENT_PREFIX_PATH", "")
-                new_tree = _has_rosk_prefix()
-                ui.markdown(
-                    f"**运行环境**\n\n"
-                    f"必须先 `source {ROSK}/setup_runtime.sh`，"
-                    f"否则无法加载 SLAM3D Lite 消息类型。"
-                    f"每个新终端 source 一次即可；本 GUI 由 run 脚本启动时已自动 source，"
-                    f"它拉起的 desk / RViz / bridge 子进程继承同一环境。\n\n"
-                    f"当前：lite 消息 `{'可用' if _ENV_OK else '不可用'}`，"
-                    f"新树在 `AMENT_PREFIX_PATH` 中 `{'是' if new_tree else '否'}`；"
-                    f"`ROS_DOMAIN_ID={os.environ.get('ROS_DOMAIN_ID', '0')}`，"
-                    f"`RMW={os.environ.get('RMW_IMPLEMENTATION', '默认')}`，"
-                    f"`ROS_LOG_DIR={os.environ.get('ROS_LOG_DIR', '~/.ros/log')}`。\n\n"
-                    f"若页面顶部显示“ROS 未连接”，页底日志会给出具体原因"
-                    f"（消息类型不可用 / rclpy.init 失败）；最常见的是没 source "
-                    f"或日志目录不可写（本 GUI 会自动改用自身目录下的 `log/ros`）。\n\n"
-                    f"**互斥**\n\n"
-                    f"- `localization_lite_node` 与 `mapping_lite_node` **不能同时运行**："
-                    f"两者订阅同一 `/livox/lidar/geo_filtered`、都写 `/robot_pose` 与 "
-                    f"`map→base_link` TF。\n"
-                    f"- 建图产出的 PCD 是定位的输入，二者是串行工作流。\n\n"
-                    f"**数据来源**\n\n"
-                    f"- 话题 / TF / frame 全部来自甲方发布端，本 GUI 不生成。\n"
-                    f"- 订阅统一用 BEST_EFFORT/VOLATILE，兼容发布端 QoS。\n\n"
-                    f"**注意**\n\n"
-                    f"- `deactivate_mapping` 会自动保存 PCD 并清空内存。\n"
-                    f"- `enter_tracking` 前先确认 `reloc_ok=true` 且 fitness ≤ {FITNESS_THRESHOLD}。"
-                )
-            with _card("N-01 适配说明"):
-                ui.markdown(
-                    "导航链路使用仓库内 "
-                    "`n01_live_navigation/config/slam3d_lite_adapter.yaml`"
-                    "（`/loc_status` → `/n01/localization/status`）。"
-                    "本 GUI 面向人工可视化操作，不替代该适配，也不写入其话题。"
-                )
-
-
 def _x_display_works(display: str):
     """Actually probe an X display; DISPLAY being set is not enough."""
     try:
@@ -3995,127 +3685,7 @@ def _display_info() -> tuple[str, bool, bool]:
             "请在桌面终端设置 DISPLAY/XAUTHORITY，或使用 Foxglove"), False, False
 
 
-def build_viz_tab() -> None:
-    with ui.row().classes("w-full gap-4 items-start"):
-        with ui.column().classes("flex-1 min-w-72 gap-3"):
-            with _card("RViz2（原生窗口）"):
-                _lbl("使用项目内建图、定位、导航三个 RViz 配置；"
-                     "脚本内部会 source setup_runtime.sh。", "text-xs text-slate-400")
-                with ui.row().classes("gap-2 items-center"):
-                    UI["viz_mode"] = ui.select(["定位视图", "建图视图"], value="定位视图")\
-                        .classes("w-36").props("dense")
-                    ui.button("启动 RViz2", on_click=start_rviz).props("color=positive")
-                    ui.button("停止", on_click=stop_rviz).props("color=negative")
-                _text, _ok, _fallback = _display_info()
-                _lbl(_text, "text-xs " + ("text-amber-400" if _fallback else "text-slate-400"))
-                _lbl("rviz2 是 X11 原生窗口，不能嵌进网页；远程请用 X11 转发 / 桌面共享。",
-                     "text-xs text-slate-400")
-                UI["viz_rviz_status"] = ui.label("未运行").classes("text-xs text-slate-300")
-
-            with _card("Foxglove Bridge（浏览器 3D）"):
-                _lbl("启动后浏览器打开 Foxglove Studio（网页版或桌面版），"
-                     "连接下方 WebSocket 地址即可看 3D 点云 / TF / 全部话题。",
-                     "text-xs text-slate-400")
-                with ui.row().classes("gap-2 items-center"):
-                    ui.button("启动 Bridge", on_click=start_bridge).props("color=positive")
-                    ui.button("停止", on_click=stop_bridge).props("color=negative")
-                host = os.environ.get("ROS_HOSTNAME") or os.environ.get("ROS_IP") or socket.gethostname()
-                UI["viz_ws"] = ui.label(f"ws://{host}:8765").classes("font-mono text-sm text-sky-300")
-                _lbl(f"远程时先转发：ssh -L 8765:127.0.0.1:8765 demo@{host} → 连 ws://127.0.0.1:8765",
-                     "text-xs text-slate-400")
-                _lbl(f"ROS_DOMAIN_ID={os.environ.get('ROS_DOMAIN_ID', '0(默认)')}"
-                     f" · ROS_LOCALHOST_ONLY={os.environ.get('ROS_LOCALHOST_ONLY', '0')}"
-                     "（bridge 的 8765 端口是普通 TCP，不受 ROS_LOCALHOST_ONLY 影响）",
-                     "text-xs text-slate-500")
-                UI["viz_bridge_status"] = ui.label("未运行").classes("text-xs text-slate-300")
-        with ui.column().classes("w-96 shrink-0 gap-3"):
-            with _card("网页内置 2D 视图"):
-                ui.markdown(
-                    "“状态与地图”页已经内置浏览器二维俯视图（定位地图 / 建图点云 + 机身朝向 + 轨迹），"
-                    "不依赖 X 显示，远程最稳。\n\n"
-                    "需要完整 RViz 交互（3D 旋转、图层开关）时用 RViz2 或 Foxglove。"
-                )
-            with _card("互斥提醒"):
-                ui.markdown(
-                    "RViz 只是看数据，可以和定位或建图并存；\n"
-                    "但 **定位 desk 与建图 desk 不能同时运行**。\n\n"
-                    "RViz 视图选择应与当前运行的 desk 一致：\n"
-                    "- 定位 desk → 定位视图（`/localization_map`）\n"
-                    "- 建图 desk → 建图视图（`/cloud_map`）"
-                )
-
-
-# ---------------------------------------------------------------------------
-# 节点体检页
-# ---------------------------------------------------------------------------
 KILL_OPTIONS = {f"/{k}": k for k in sorted(NODE_EXEC_HINTS)}
-
-
-def build_health_tab() -> None:
-    with ui.row().classes("w-full gap-4 items-start no-wrap"):
-        with ui.column().classes("flex-grow min-w-0 gap-3"):
-            with _card("全图节点（按绝对名统计）"):
-                with ui.row().classes("items-center gap-4"):
-                    UI["health_count"] = _lbl("等待 ROS…", "text-sm font-semibold")
-                    UI["health_dup"] = _lbl("", "text-sm font-semibold")
-                    ui.button("立即刷新", on_click=refresh_census_now).props("flat dense")
-                cols = [
-                    {"name": "name", "label": "节点", "field": "name", "align": "left"},
-                    {"name": "count", "label": "次数", "field": "count"},
-                    {"name": "state", "label": "判定", "field": "state"},
-                    {"name": "owner", "label": "宿主进程", "field": "owner", "align": "left"},
-                ]
-                UI["health_nodes"] = ui.table(columns=cols, rows=[], row_key="name")\
-                    .classes("w-full text-xs").props("dense wrap-cells")
-                _lbl("次数 >1 = 同一节点名被多个进程/线程占用（ros2 会警告 "
-                     "“share an exact name”）。宿主进程列显示 pid/pgid/启动时长："
-                     "同 pgid = 一次 launch 起了两份，不同 pgid = 两次独立启动。"
-                     "白名单外（如导航栈）只展示 pid，本 GUI 不停止它们。",
-                     "text-xs text-slate-400")
-
-            with _card("关键话题发布者"):
-                cols = [
-                    {"name": "topic", "label": "话题", "field": "topic", "align": "left"},
-                    {"name": "n", "label": "发布者数", "field": "n"},
-                    {"name": "state", "label": "判定", "field": "state"},
-                    {"name": "pubs", "label": "发布者", "field": "pubs", "align": "left"},
-                ]
-                UI["health_topics"] = ui.table(columns=cols, rows=[], row_key="topic")\
-                    .classes("w-full text-xs").props("dense wrap-cells")
-                _lbl("/imu/data 应只有互补滤波一个源；/livox/lidar/geo_filtered 应只有 "
-                     "cloud_preprocessor 一个源；/loc_status、/robot_pose 应只有当前 "
-                     "desk 的 lite 节点。>1 说明旧 desk 没停干净。", "text-xs text-slate-400")
-
-        with ui.column().classes("w-96 shrink-0 gap-3"):
-            with _card("停止节点（按宿主进程）"):
-                _lbl("默认只停 GUI 自己启动的进程组；勾选“允许停止外部进程”后可停终端启动的"
-                     " N-01 节点。甲方底盘 / 腿控 / 手柄 / Livox 驱动 / lpms 始终受保护，"
-                     "即使同名也不会被停止。", "text-xs text-amber-400")
-                UI["kill_target"] = ui.select(
-                    list(KILL_OPTIONS), value=None, label="选择节点")\
-                    .classes("w-full").props("dense")
-                UI["kill_name"] = ui.input(
-                    "或输入节点名（覆盖下拉；至少6字符）").classes("w-full").props("dense")
-                UI["kill_external"] = ui.checkbox(
-                    "允许停止外部/未托管进程（危险，需再次确认）", value=False)
-                with ui.row().classes("gap-2 items-center"):
-                    ui.button("查看进程明细", on_click=show_kill_plan).props("flat")
-                    ui.button("停止该节点", on_click=kill_selected)\
-                        .props("color=negative")
-                _lbl("停止方式：先 SIGINT 所在 launch（comp 滤波是 respawn=True，只杀叶子会被"
-                     "拉起），3 秒后对残余 SIGKILL。每个节点都要单独确认。",
-                     "text-xs text-slate-400")
-
-                ui.separator()
-                _lbl("未托管残留（只读）", "text-sm font-semibold text-slate-100")
-                _lbl("PPID=1 只表示父进程已退出，不能证明进程属于本 GUI。"
-                     "这里只列出疑似残留，不会自动发送信号。请核对 PGID、命令行和启动来源，"
-                     "优先回到原启动终端正常 Ctrl+C。GUI 自己启动的专属进程组由生命周期管理器负责。",
-                     "text-xs text-amber-400")
-                with ui.row().classes("gap-2 items-center"):
-                    ui.button("列出未托管残留", on_click=show_orphans).props("flat")
-                UI["orphan_result"] = ui.label("").classes("text-xs text-slate-300")
-                UI["kill_result"] = ui.label("").classes("text-xs text-slate-300")
 
 
 # ---------------------------------------------------------------------------
@@ -4380,6 +3950,22 @@ async def _close_mapping_session() -> bool:
                 push_log('ok', f'新地图地面与安装模型已保存：{path}.n01.json；定位和导航已选择此图')
             except (ValueError, OSError, KeyError) as exc:
                 push_log('warn', f'地图已保存，但地面配置未自动完成：{exc}；定位后需同步地面')
+            # Offline artifact: same stem as the PCD, in occupancy_grid_maps.
+            # The exporter reads this PCD's saved ground profile and performs
+            # reachability flood fill; it never feeds back into localization.
+            try:
+                script = REPO_ROOT / 'scripts' / 'export_occupancy_grid.py'
+                cp = await asyncio.to_thread(
+                    subprocess.run,
+                    [sys.executable, str(script), '--pcd', path],
+                    cwd=str(REPO_ROOT), capture_output=True, text=True,
+                    timeout=120, check=False)
+                if cp.returncode == 0:
+                    push_log('ok', f'同名栅格地图已保存：occupancy_grid_maps/{Path(path).stem}.pgm')
+                else:
+                    push_log('warn', '栅格地图导出失败：' + ((cp.stdout or '') + (cp.stderr or ''))[-1200:])
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                push_log('warn', f'栅格地图导出异常：{exc}')
         else:
             push_log('warn', '地图已保存，但未取得精确PCD路径或参考位置；定位后请选新地图并同步地面')
     elif mode in ("fast_lio_mapping", "fast_lio_realtime"):
@@ -4830,30 +4416,6 @@ def fit_full_map() -> None:
     notify_user("暂无可拟合的地图点云", type="warning")
 
 
-def draw_chart(force: bool = False) -> None:
-    if not UI.get("chart") or not STATE.ros_ready:
-        return
-    pts, src = _view_points()
-    with STATE.lock:
-        pose = STATE.pose
-        trail = list(STATE.trail)
-    if not UI["trail_on"].value:
-        trail = []
-    opt = _chart_option(pts, trail, pose)
-    key = (src, _chart_cache.get("key"), len(trail), bool(pose),
-           round(pose[0], 1) if pose else None, round(pose[1], 1) if pose else None,
-           round(pose[2], 2) if pose else None, UI["range"].value)
-    if not force and key == _chart_cache.get("okey"):
-        return
-    _chart_cache["okey"] = key
-    # nicegui 3.x 的 EChart.options 是只读 property，内部真值在 _props["options"]
-    UI["chart"]._props["options"] = opt  # noqa: SLF001
-    UI["chart"].update()
-    UI["chart_info"].set_text(
-        f"{src}: {len(pts):,} 点 · {time.strftime('%H:%M:%S')}"
-        if pts else f"{src}: 等待点云（检查上游是否发布）")
-
-
 def drain_ui_events() -> None:
     """把工作线程/服务回调的事件搬到 UI 线程执行。"""
     with STATE.lock:
@@ -4923,9 +4485,11 @@ GRID_COLORS = {
 
 
 def _card2(title: str):
-    card = ui.card().classes("w-full q-pa-sm gap-1 compact-card")
+    card = ui.card().classes("w-full p-3 gap-2 compact-card")
     with card:
-        _lbl(title, "text-base font-semibold text-slate-100")
+        with ui.row().classes("items-center gap-2"):
+            ui.element("span").classes("section-pill")
+            _lbl(title, "text-sm font-semibold text-slate-100 tracking-wide")
     return card
 
 
@@ -4956,7 +4520,7 @@ def _mapping_static_points(points):
         return None
     ground = _grid_ground()
     z = points[:, 2]
-    return points[(z > ground + .03) & (z <= ground + 1.20)]
+    return points[(z > ground + GROUND_CLEARANCE_M) & (z <= ground + 1.60)]
 
 
 def _grid_source():
@@ -4977,13 +4541,12 @@ def _grid_source():
         loc_session=str(STATE.loc.get('session','')).lower()
         map_session=str(STATE.mapping.get('session','')).lower()
         task_phase=str(getattr(getattr(STATE,'navigation_task',None),'phase','IDLE'))
+        planner_running = any(row.get('name') == '/scan_planner_node' and row.get('count', 0) > 0
+                              for row in getattr(STATE, 'node_rows', ()))
     age=STATE.age_of('bridge_cloud')
     if age is None or age>1.:live=None
-    nav_age=STATE.age_of('nav_health')
     scan=scan_freshness(getattr(STATE,'nav_scan_stamp_ns',0),time.time())
     now_mono=time.monotonic()
-    grid_ready=((ref_grid is not None and now_mono-ref_grid[4]<2.)
-                or (live_grid is not None and now_mono-live_grid[4]<2.))
     detailed=bool(UI.get('render') and UI['render'].value=='细节点云')
     def fresh(key, limit=2.):
         a=STATE.age_of(key)
@@ -5001,6 +4564,8 @@ def _grid_source():
     nav_grid_ready=grid_has_data(ref_grid) or grid_has_data(live_grid)
     if requested in ('导航','占据栅格'):
         source='导航栅格'
+    elif requested=='诊断':
+        source='诊断'
     elif requested=='建图':
         source='建图'
     elif requested=='定位':
@@ -5009,7 +4574,7 @@ def _grid_source():
         nav_task_active = bool(
             PROCS.running('execution') or task_phase not in
             ('IDLE', 'ARRIVED', 'FAILED', 'CANCELLED'))
-        if nav_task_active:
+        if nav_task_active or planner_running:
             # During a navigation task the operator's visual context must not
             # flip to mapping/localization because one nav frame is briefly
             # stale. Keep the navigation view and show its own waiting state.
@@ -5030,33 +4595,28 @@ def _grid_source():
         parts=[x for x in parts if x is not None and len(x)]
         return np.vstack(parts) if parts else None
     # Low-cost raster colours differ per content type; the live layer stays cyan.
-    ref_color,live_color={'导航栅格':((116,151,182),(79,239,219)),
+    ref_color,live_color={'导航栅格':((190,150,255),(79,239,219)),
+                          '诊断':((190,150,255),(79,239,219)),
                           '建图':((190,150,255),(79,239,219)),
                           '定位地图':((196,181,253),(79,239,219))}.get(
-                              source,((116,151,182),(79,239,219)))
+                              source,((190,150,255),(79,239,219)))
     style=None if detailed else (ref_color,live_color,True)
     _GRID_BASE_PTS['pts']=None
     _GRID_BASE_PTS['window']=None
-    if source=='导航栅格' and not detailed:
-        with STATE.lock:
-            gg=getattr(STATE,'global_grid',None)
-        if gg is not None and now_mono-gg[4]<5.:
-            data,ox,oy,res,_=gg
-            occ=np.argwhere(data==100)
-            if len(occ):
-                step=max(1,int(round(0.2/max(res,1e-6))))
-                occ=occ[::step]
-                base=np.column_stack((ox+(occ[:,1]+.5)*res,oy+(occ[:,0]+.5)*res))
-                # Persistent layer is background only, and only outside the
-                # local window. Inside the window reference/live are authoritative.
-                local=ref_grid if ref_grid is not None else live_grid
-                if local is not None:
-                    h,w=local[0].shape; lx,ly,lres=local[1],local[2],local[3]
-                    x0,y0=lx-.5,ly-.5; x1,y1=lx+w*lres+.5,ly+h*lres+.5
-                    keep=((base[:,0]<x0)|(base[:,0]>x1)|
-                          (base[:,1]<y0)|(base[:,1]>y1))
-                    base=base[keep]
-                _GRID_BASE_PTS['pts']=base
+    _GRID_BASE_PTS['mode']=source
+    # Occupancy PGM is the display base for navigation/localization; mapping
+    # keeps its live floor/obstacle view. Detailed point views keep raw clouds.
+    if source in ('导航栅格', '诊断', '定位地图') and not detailed:
+        _loader = globals().get('_load_occupancy_base')
+        _GRID_BASE_PTS['base_grid'], _GRID_BASE_PTS['base_boundary'] = (
+            _loader() if _loader is not None else (None, None))
+    else:
+        _GRID_BASE_PTS['base_grid']=None
+        _GRID_BASE_PTS['base_boundary']=None
+    with STATE.lock:
+        _GRID_BASE_PTS['global']=getattr(STATE,'global_grid',None) if source in ('导航栅格','诊断') else None
+        search=getattr(STATE,'search_grid',None)
+        _GRID_BASE_PTS['search']=search if source in ('导航栅格','诊断') and search is not None and now_mono-search[4]<3. else None
     grids=None
     if source=='导航栅格':
         if detailed:
@@ -5064,19 +4624,34 @@ def _grid_source():
             detail='导航 · 细节点云（高性能点云投影）'
         elif nav_grid_ready:
             points=None;dynamic=None;grids=(ref_grid,live_grid)
-            _g=ref_grid if ref_grid is not None else live_grid
-            if _g is not None:
-                _h,_w=_g[0].shape
-                _GRID_BASE_PTS['window']=(_g[1],_g[2],_g[1]+_w*_g[3],_g[2]+_h*_g[3])
-            detail='导航 · 低耗栅格（仅参考层＋实时层）'
+            detail='导航 · 紫=静态 / 青=实时 / 橙=膨胀边界 / 白=可达'
+            if _GRID_BASE_PTS['search'] is None:
+                detail += (' · 全局预检快照已过期' if search is not None
+                           else ' · 等待全局预检栅格')
         else:
             # Low-cost mode must never fall back to point clouds: that is the
             # high-performance path and it is what made the GUI heavy.
-            points=None;dynamic=None;grids=None
-            detail='导航 · 等待栅格数据（低耗模式不回退点云）'
+            points=None;dynamic=None
+            background=_GRID_BASE_PTS.get('global')
+            grids=(background,None) if background is not None else None
+            detail='导航 · 全局背景，等待局部栅格'
         if not scan['scan_ready']:
             detail += (' · 等待原始扫描（当前为历史缓存）' if scan['scan_age_s'] is None else
                        f" · 原始扫描已过期 {scan['scan_age_s']:.1f}s（当前为历史缓存）")
+    elif source=='诊断':
+        # Diagnostic view: one canvas for all planning layers. It is still a
+        # 2D planning projection, not raw 3D; raw cloud counts stay in the
+        # status panel so they cannot be confused with occupancy.
+        if detailed:
+            points=stack([loc,cloud,nav_static,nav_dyn]);dynamic=nav_dyn;grids=None
+            detail='诊断 · 点云叠加（定位+建图+静态+实时）'
+        else:
+            points=None;dynamic=None
+            background=_GRID_BASE_PTS.get('global')
+            grids=(ref_grid,live_grid) if nav_grid_ready else ((background,None) if background is not None else None)
+            detail='诊断 · 紫=静态 / 青=实时 / 橙=膨胀边界 / 白=可达'
+            if _GRID_BASE_PTS.get('search') is None:
+                detail += ' · 等待 search 可达层'
     elif source=='建图':
         if detailed:
             pts=stack([cloud,live]);points=pts;grids=None;dynamic=live
@@ -5084,9 +4659,15 @@ def _grid_source():
         else:
             # Same static-only semantics as navigation; no live layer here.
             pts=_mapping_static_points(cloud)
-            layer=_points_to_grid_layer(pts,res=.10) if pts is not None and len(pts) else None
-            points=None;grids=(layer,None) if layer else None;dynamic=None
-            detail='建图 · 低耗栅格（导航等价静态层，仅静态障碍）'
+            with STATE.lock:
+                floor = np.asarray(list(STATE.mapping_floor_cells), dtype=float).reshape(-1, 2)
+            floor = (floor + .5) * .1
+            floor_layer = _points_to_grid_layer(floor)
+            if floor_layer is not None:
+                floor_layer[0][floor_layer[0] == 100] = 0
+            layer = _points_to_grid_layer(pts)
+            points=None;grids=(layer,floor_layer) if layer is not None or floor_layer is not None else None;dynamic=None
+            detail='建图 · 白色为地面回波覆盖，灰紫为障碍'
     elif source=='定位地图':
         pts=stack([loc,live])
         if detailed:
@@ -5120,23 +4701,30 @@ def _grid_source():
                          f"dyn_age={STATE.age_of('nav_dynamic') if STATE.age_of('nav_dynamic') is not None else -1:.2f}s "
                          f"cloud_age={STATE.age_of('bridge_cloud') if STATE.age_of('bridge_cloud') is not None else -1:.2f}s "
                          f"worker={worker_txt}")
+    if _GRID_BASE_PTS.get('base_grid') is not None:
+        detail += ' · PGM底图'
     if (not diag_enabled and _GRID_DIAG.get('source')!=source
             and now_diag-_GRID_DIAG.get('source_log_t',float('-inf'))>=5.):
         _GRID_DIAG['source']=source
         _GRID_DIAG['source_log_t']=now_diag
         push_log('info',f'地图显示切换：{detail}')
-    return points,detail,(*seq,source,live is not None,grid_seq,detailed),dynamic,pose,pose_z,trail,grids,style
+    return points,detail,(*seq,source,live is not None,grid_seq,detailed,_GRID_BASE_PTS.get('search') is not None),dynamic,pose,pose_z,trail,grids,style
 
 
 def _placeholder_png(message):
-    """Readable stand-in instead of a black 1x1 image when there is no data."""
+    """Clean, grid-free dark radar standby canvas when map stream is not yet active."""
     try:
-        img=Image.new('RGB',(GRID_IMAGE_PX,GRID_IMAGE_PX),(12,20,31))
-        draw=ImageDraw.Draw(img)
-        for i,line in enumerate(str(message).split('\n')[:12]):
-            draw.text((16,16+i*20),line,fill=(226,232,240))
-        buf=io.BytesIO();img.save(buf,format='PNG',compress_level=6)
-        return "data:image/png;base64,"+base64.b64encode(buf.getvalue()).decode()
+        img = Image.new('RGB', (GRID_IMAGE_PX, GRID_IMAGE_PX), (8, 12, 20))
+        draw = ImageDraw.Draw(img)
+        mid = GRID_IMAGE_PX // 2
+        for radius in (GRID_IMAGE_PX // 7, GRID_IMAGE_PX // 4):
+            draw.ellipse((mid - radius, mid - radius, mid + radius, mid + radius),
+                         outline=(20, 30, 48), width=1)
+        draw.line([(mid - 14, mid), (mid + 14, mid)], fill=(30, 46, 72), width=1)
+        draw.line([(mid, mid - 14), (mid, mid + 14)], fill=(30, 46, 72), width=1)
+        buf = io.BytesIO()
+        img.save(buf, format='PNG', compress_level=6)
+        return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
     except Exception:  # noqa: BLE001
         return _BLANK_PNG
 
@@ -5161,15 +4749,15 @@ def _map_xy_to_pixel(x, y, view):
 
 def _rasterize(points, view, ground, dynamic_points, style=None):
     if points is None or len(points) == 0:
-        return None, ground + .03, ground + 1.60
+        return None, ground + GROUND_CLEARANCE_M, ground + 1.60
     x, y, z = points[:, 0], points[:, 1], points[:, 2]
     valid = np.isfinite(x) & np.isfinite(y) & np.isfinite(z)
     with STATE.lock:
         fitted = STATE.ground_model
     base = ground if fitted is None else (
         fitted[0].height(x, y) + ground-fitted[0].height(*fitted[1]))
-    zmin, zmax = ground + 0.03, ground + 1.60
-    valid &= (z >= base+0.03) & (z <= base+1.60)
+    zmin, zmax = ground + GROUND_CLEARANCE_M, ground + 1.60
+    valid &= (z >= base+GROUND_CLEARANCE_M) & (z <= base+1.60)
     if not valid.any():
         return None, zmin, zmax
     x, y = x[valid], y[valid]
@@ -5212,14 +4800,6 @@ def _grid_overlay(img, view, pose, trail, goal_xy, plan_xy=None,
                   plan_active=True, goal_failed=False, global_xy=None,
                   global_active=True, trail_on=True):
     draw = ImageDraw.Draw(img)
-    for gx in range(int(math.ceil(view["x0"])),
-                    int(math.floor(view["x0"] + view["size_m"])) + 1):
-        px, _ = _map_xy_to_pixel(gx, view["y0"], view)
-        draw.line([(px, 0), (px, GRID_IMAGE_PX)], fill=GRID_COLORS["grid"], width=1)
-    for gy in range(int(math.ceil(view["y0"])),
-                    int(math.floor(view["y0"] + view["size_m"])) + 1):
-        _, py = _map_xy_to_pixel(view["x0"], gy, view)
-        draw.line([(0, py), (GRID_IMAGE_PX, py)], fill=GRID_COLORS["grid"], width=1)
     if trail_on and trail:
         pts = [_map_xy_to_pixel(t[0], t[1], view) for t in trail]
         if len(pts) >= 2:
@@ -5249,10 +4829,10 @@ def _grid_overlay(img, view, pose, trail, goal_xy, plan_xy=None,
     if goal_xy is not None:
         px, py = _map_xy_to_pixel(goal_xy[0], goal_xy[1], view)
         goal_color = GRID_COLORS["goal_failed" if goal_failed else "goal"]
-        draw.ellipse([px - 6, py - 6, px + 6, py + 6],
+        draw.ellipse([px - 7, py - 7, px + 7, py + 7],
                      outline=goal_color, width=2)
-        draw.line([(px - 9, py), (px + 9, py)], fill=goal_color, width=1)
-        draw.line([(px, py - 9), (px, py + 9)], fill=goal_color, width=1)
+        draw.line([(px - 10, py), (px + 10, py)], fill=goal_color, width=1)
+        draw.line([(px, py - 10), (px, py + 10)], fill=goal_color, width=1)
         try:
             gyaw = (math.radians(float(UI["goal_yaw"].value))
                     if UI.get("goal_yaw_on") and UI["goal_yaw_on"].value else None)
@@ -5286,19 +4866,45 @@ def _finish_frame(rgb, view, ground, pose, _pose_z, observed, inflated,
                   model_polygons, envelope, trail, goal_xy, plan_xy,
                   plan_active, goal_failed, global_xy, global_active,
                   trail_on, risk, blocked, zmin, zmax, goal_yaw=0.0, goal_fp=None,
-                  envelope_conflict=None):
+                  envelope_conflict=None, base_boundary=None):
     """Shared overlay/robot/PNG stage for point-cloud and occupancy-grid views."""
     img = Image.fromarray(rgb[::-1]).resize(
         (GRID_IMAGE_PX, GRID_IMAGE_PX), Image.Resampling.BILINEAR)
+    if base_boundary:
+        draw_b = ImageDraw.Draw(img)
+        pts_b = [_map_xy_to_pixel(float(px), float(py), view) for px, py in base_boundary]
+        if len(pts_b) >= 2:
+            draw_b.line(pts_b + [pts_b[0]], fill=(255, 0, 0), width=2)
     if pose is not None:
         env = inflated[:, :2] if inflated is not None else None
         raw = None
         if observed is not None and _pose_z is not None:
-            mask = ((observed[:, 2] > ground + .03)
-                    & (observed[:, 2] >= _pose_z - .90)
-                    & (observed[:, 2] <= _pose_z + .25))
+            mask = ((observed[:, 2] > ground + GROUND_CLEARANCE_M)
+                    & (observed[:, 2] <= ground + 1.60))
             raw = observed[mask, :2]
         img = paint_robot(img, view, pose, model_polygons, envelope, env, observed=raw)
+    # Inflation is a separate planning layer: show it as translucent orange
+    # instead of hiding it inside the robot envelope.
+    if inflated is not None and len(inflated):
+        # Draw only the inflation frontier. Filling every inflation voxel
+        # hides the static/live layers and makes the whole map look brown.
+        base = img.convert("RGBA")
+        layer = Image.new("RGBA", base.size, (0, 0, 0, 0))
+        draw_inf = ImageDraw.Draw(layer)
+        pts = inflated[:20000, :2]
+        pts = pts[np.isfinite(pts).all(axis=1)]
+        if len(pts):
+            cell = .05
+            keys = set(map(tuple, np.floor(pts / cell).astype(np.int64)))
+            for x, y in keys:
+                if not any((x + dx, y + dy) not in keys
+                           for dx in (-1, 0, 1) for dy in (-1, 0, 1)
+                           if dx or dy):
+                    continue
+                px, py = _map_xy_to_pixel((x + .5) * cell, (y + .5) * cell, view)
+                if 0 <= px < GRID_IMAGE_PX and 0 <= py < GRID_IMAGE_PX:
+                    draw_inf.point((px, py), fill=(255, 150, 40, 220))
+        img = Image.alpha_composite(base, layer).convert("RGB")
     img = _grid_overlay(img, view, pose, trail, goal_xy, plan_xy, plan_active,
                         goal_failed, global_xy, global_active, trail_on)
     if pose is not None and envelope:
@@ -5360,94 +4966,71 @@ def _finish_frame(rgb, view, ground, pose, _pose_z, observed, inflated,
 
 _GRID_UNKNOWN=(8,12,20)      # never observed
 _GRID_REACHABLE=(246,246,242)  # free component reachable from robot: white background
+_GRID_UNASSESSED=(76,86,105)   # known free outside planner search coverage
 _GRID_FREE=(34,58,96)        # known free but not reachable: visible dark blue
 _GRID_BASE=(82,58,128)       # global accumulated map, dark purple background
 _GRID_REF=(178,132,255)      # window static reference, purple
 _GRID_LIVE=(79,239,219)      # current live obstacles
 _GRID_BOTH=(255,196,87)      # static + live agree
 _GRID_CLEARED=(60,110,90)    # static says occupied, live says free
-_GRID_BASE_PTS={'pts': None}
-_GRID_REACHABLE_CACHE={'key': None, 'mask': None}
+_GRID_BASE_PTS={'pts': None, 'base_grid': None, 'base_boundary': None}
+_OCC_BASE_CACHE = {'key': None, 'grid': None, 'boundary': None, 'path': None}
 
 
-def _reachable_mask(layer, robot_xy):
-    """4-connected free component containing the robot, cached per grid update."""
-    if layer is None or robot_xy is None:
-        return None
-    data, ox, oy, res = layer[0], layer[1], layer[2], layer[3]
-    sx = int(math.floor((robot_xy[0] - ox) / res))
-    sy = int(math.floor((robot_xy[1] - oy) / res))
-    key = (id(data), ox, oy, res, sx, sy)
-    if _GRID_REACHABLE_CACHE.get("key") == key:
-        return _GRID_REACHABLE_CACHE.get("mask")
-    h, w = data.shape
-    if not (0 <= sx < w and 0 <= sy < h):
-        _GRID_REACHABLE_CACHE.update(key=key, mask=None)
-        return None
-    free = data == 0
-    if not free[sy, sx]:
-        # The robot cell can be unknown/occupied due to self points. Seed from
-        # the nearest known-free cell inside a 1 m search ring.
-        radius = max(1, int(round(1.0 / max(res, 1e-6))))
-        best = None
-        for r in range(1, radius + 1):
-            for dx in range(-r, r + 1):
-                for dy in (-r, r):
-                    x, y = sx + dx, sy + dy
-                    if 0 <= x < w and 0 <= y < h and free[y, x]:
-                        best = (x, y); break
-                if best: break
-            if not best:
-                for dy in range(-r + 1, r):
-                    for dx in (-r, r):
-                        x, y = sx + dx, sy + dy
-                        if 0 <= x < w and 0 <= y < h and free[y, x]:
-                            best = (x, y); break
-                    if best: break
-            if best: break
-        if best is None:
-            _GRID_REACHABLE_CACHE.update(key=key, mask=None)
-            return None
-        sx, sy = best
-    seen = np.zeros((h, w), dtype=bool)
-    seen[sy, sx] = True
-    stack = [(sx, sy)]
-    while stack:
-        x, y = stack.pop()
-        if x > 0 and free[y, x-1] and not seen[y, x-1]:
-            seen[y, x-1] = True; stack.append((x-1, y))
-        if x+1 < w and free[y, x+1] and not seen[y, x+1]:
-            seen[y, x+1] = True; stack.append((x+1, y))
-        if y > 0 and free[y-1, x] and not seen[y-1, x]:
-            seen[y-1, x] = True; stack.append((x, y-1))
-        if y+1 < h and free[y+1, x] and not seen[y+1, x]:
-            seen[y+1, x] = True; stack.append((x, y+1))
-    _GRID_REACHABLE_CACHE.update(key=key, mask=seen)
-    return seen
+def _selected_pcd_path():
+    """Return the PCD whose same-stem occupancy base should be displayed."""
+    for key in ('nav_pcd', 'map_path'):
+        w = UI.get(key)
+        if w is None:
+            continue
+        try:
+            text = str(w.value or '').strip()
+        except Exception:
+            continue
+        if text.lower().endswith('.pcd'):
+            return text
+    with STATE.lock:
+        text = str(STATE.loc.get('map_path', '') or '')
+    return text if text.lower().endswith('.pcd') else ''
 
 
-def _project_reachable(layer, view, n, res, robot_xy):
-    reach = _reachable_mask(layer, robot_xy)
-    if reach is None:
-        return None
-    xs = view['x0'] + (np.arange(n) + .5) * res
-    ys = view['y0'] + (np.arange(n) + .5) * res
-    ox, oy, ores = layer[1], layer[2], layer[3]
-    ix = np.floor((xs - ox) / ores).astype(np.int64)
-    iy = np.floor((ys - oy) / ores).astype(np.int64)
-    vx = (ix >= 0) & (ix < reach.shape[1])
-    vy = (iy >= 0) & (iy < reach.shape[0])
-    gx = np.clip(ix, 0, reach.shape[1] - 1)
-    gy = np.clip(iy, 0, reach.shape[0] - 1)
-    return vy[:, None] & vx[None, :] & reach[np.ix_(gy, gx)]
+def _load_occupancy_base():
+    """Load map_server PGM/JSON for display. Never used by localization math."""
+    pcd = _selected_pcd_path()
+    if not pcd:
+        return None, None
+    p = Path(pcd)
+    stem = p.stem
+    root = Path('/home/demo/lyy/slam_data/occupancy_grid_maps')
+    pgm = root / f'{stem}.pgm'
+    meta = root / f'{stem}.json'
+    if not pgm.is_file():
+        return None, None
+    try:
+        key = (str(pgm), int(pgm.stat().st_mtime_ns), str(meta), int(meta.stat().st_mtime_ns) if meta.is_file() else 0)
+    except OSError:
+        return None, None
+    if _OCC_BASE_CACHE.get('key') == key:
+        return _OCC_BASE_CACHE['grid'], _OCC_BASE_CACHE['boundary']
+    try:
+        data = np.asarray(Image.open(pgm).convert('L'), dtype=np.uint8)
+        data = np.flipud(data)
+        if meta.is_file():
+            m = json.loads(meta.read_text(encoding='utf-8'))
+            ox, oy, _ = m.get('origin', [0., 0., 0.])[:3]
+            res = float(m.get('resolution_m', .05))
+            boundary = m.get('boundary_vertices_m') or []
+        else:
+            ox = oy = 0.; res = .05; boundary = []
+        grid = (data, float(ox), float(oy), float(res), boundary)
+        _OCC_BASE_CACHE.update(key=key, grid=grid, boundary=boundary, path=str(pgm))
+        return grid, boundary
+    except (OSError, ValueError, KeyError, TypeError):
+        return None, None
 
 
-def _project_occupancy(ref, live, view, max_n, ref_color=None, live_color=None, base=None, robot_xy=None, reach_layer=None):
-    """Project reference/live OccupancyGrids plus an optional global base map.
-
-    Colours encode agreement instead of paint order:
-      static-only gray-blue, live-only cyan, both amber, live-clears-static green.
-    """
+def _project_occupancy(ref, live, view, max_n, ref_color=None, live_color=None, base=None, robot_xy=None, reach_layer=None, search_layer=None, mapping=False, base_grid=None):
+    """Project observed occupancy and the planner’s latest search snapshot."""
     n = max(60, min(max_n, int(round(view['size_m'] / GRID_RES))))
     res = view['size_m'] / n
     x0, y0 = view['x0'], view['y0']
@@ -5455,6 +5038,7 @@ def _project_occupancy(ref, live, view, max_n, ref_color=None, live_color=None, 
     ys = y0 + (np.arange(n) + .5) * res
     rgb = np.empty((n, n, 3), np.uint8)
     rgb[:] = _GRID_UNKNOWN
+    base_layer = sample = None
     ref_color = ref_color or _GRID_REF
     live_color = live_color or _GRID_LIVE
     if base is not None and len(base):
@@ -5462,48 +5046,52 @@ def _project_occupancy(ref, live, view, max_n, ref_color=None, live_color=None, 
         by = np.floor((base[:, 1] - y0) / res).astype(np.int64)
         ok = (bx >= 0) & (bx < n) & (by >= 0) & (by < n)
         rgb[by[ok], bx[ok]] = _GRID_BASE
-    mask_ref_occ = np.zeros((n, n), bool)
-    reachable_mask = None
-    mask_live_occ = np.zeros((n, n), bool)
-    mask_live_free = np.zeros((n, n), bool)
-    for layer, occ_mask in ((ref, mask_ref_occ), (live, mask_live_occ)):
+    def sample_layer(layer):
         if layer is None:
-            continue
-        data, ox, oy, ores = layer[0], layer[1], layer[2], layer[3]
+            return np.full((n, n), -1, dtype=np.int8)
+        data, ox, oy, ores = layer[:4]
         h, w = data.shape
-        ix = np.floor((xs - ox) / ores).astype(np.int64)
-        iy = np.floor((ys - oy) / ores).astype(np.int64)
-        vx = (ix >= 0) & (ix < w)
-        vy = (iy >= 0) & (iy < h)
-        gx = np.clip(ix, 0, w - 1)
-        gy = np.clip(iy, 0, h - 1)
-        sample = data[np.ix_(gy, gx)]
-        valid = vy[:, None] & vx[None, :]
-        occ = valid & (sample == 100)
-        free = valid & (sample == 0)
-        occ_mask |= occ
-        if layer is ref:
-            rgb[free] = _GRID_FREE
-            rgb[occ] = ref_color
-            pass
+        ix = np.floor((xs - ox) / ores).astype(int)
+        iy = np.floor((ys - oy) / ores).astype(int)
+        valid = ((iy >= 0) & (iy < h))[:, None] & ((ix >= 0) & (ix < w))[None, :]
+        sample = data[np.ix_(np.clip(iy,0,h-1), np.clip(ix,0,w-1))]
+        return np.where(valid, sample, -1)
+
+    if base_grid is not None:
+        base_layer = sample_layer(base_grid)
+        # map_server convention: 0 occupied, 254 free, otherwise unknown.
+        rgb[base_layer == 0] = (0, 0, 0)
+        rgb[base_layer >= 250] = (246, 246, 242)
+        rgb[(base_layer > 0) & (base_layer < 250)] = (128, 128, 128)
+
+    background = sample_layer(reach_layer)
+    static = sample_layer(ref)
+    current = sample_layer(live)
+    known = (background == 0) | (static == 0) | (current == 0)
+    obstacles = (background == 100) | (static == 100)
+    search = sample_layer(search_layer)
+
+    def search_coverage(layer):
+        if layer is None:
+            return np.zeros((n, n), dtype=bool)
+        data, ox, oy, ores = layer[:4]
+        h, w = data.shape
+        ix = np.floor((xs - ox) / ores).astype(int)
+        iy = np.floor((ys - oy) / ores).astype(int)
+        return ((iy >= 0) & (iy < h))[:, None] & ((ix >= 0) & (ix < w))[None, :]
+
+    covered = search_coverage(search_layer)
+    if base_grid is None:
+        rgb[known] = _GRID_FREE
+        if search_layer is None:
+            # No planner reachability grid: do not pretend every known-free cell
+            # is unreachable. Mark it as not assessed.
+            rgb[known] = _GRID_UNASSESSED
         else:
-            mask_live_free |= free
-    # live layer semantics are applied last so agreement stays visible
-    ref_occ = mask_ref_occ
-    live_occ = mask_live_occ
-    rgb[live_occ & ref_occ] = _GRID_BOTH
-    rgb[live_occ & ~ref_occ] = live_color
-    rgb[mask_live_free & ref_occ] = _GRID_CLEARED
-    rgb[mask_live_free & ~ref_occ] = _GRID_FREE
-    # Prefer the full global component; fall back to the local reference only
-    # when the persistent global layer has no usable free component yet.
-    source = reach_layer if reach_layer is not None else ref
-    if robot_xy is not None and source is not None:
-        reachable_mask = _project_reachable(source, view, n, res, robot_xy)
-        if reachable_mask is None and source is not ref and ref is not None:
-            reachable_mask = _project_reachable(ref, view, n, res, robot_xy)
-        if reachable_mask is not None:
-            rgb[reachable_mask & ~mask_live_occ] = _GRID_REACHABLE
+            rgb[known & ~covered] = _GRID_UNASSESSED
+            rgb[(current == 0) if mapping else (known & covered & (search == 0))] = _GRID_REACHABLE
+    rgb[obstacles] = ref_color
+    rgb[current == 100] = live_color
     return rgb
 
 
@@ -5683,7 +5271,9 @@ def _render_occupancy_frame(grids, view, ground, pose, _pose_z, observed,
         _global_grid = getattr(STATE, 'global_grid', None)
     rgb = _project_occupancy(ref, live, view, max_n, ref_color, live_color,
                              _GRID_BASE_PTS.get('pts'), pose[:2] if pose is not None else None,
-                             _global_grid)
+                             _GRID_BASE_PTS.get("global"), _GRID_BASE_PTS.get("search"),
+                             _GRID_BASE_PTS.get("mode") == "建图",
+                             base_grid=_GRID_BASE_PTS.get('base_grid'))
     _reason = str(_pstatus.get('reason') or _pstatus.get('global_reason') or _pstatus.get('local_reason') or '')
     # A failure belongs to one goal. As soon as the operator picks or sends a
     # different goal, the old highlight must disappear instead of following the
@@ -5713,11 +5303,12 @@ def _render_occupancy_frame(grids, view, ground, pose, _pose_z, observed,
                                                      goal_yaw, envelope, (ref, live), _global_grid)
     except Exception:  # noqa: BLE001
         _conflict = []
-    zmin, zmax = ground + .03, ground + 1.60
+    zmin, zmax = ground + GROUND_CLEARANCE_M, ground + 1.60
     return _finish_frame(rgb, view, ground, pose, _pose_z, observed, inflated,
                          model_polygons, envelope, trail, goal_xy, plan_xy,
                          plan_active, goal_failed, global_xy, global_active,
-                         trail_on, None, blocked, zmin, zmax, goal_yaw, goal_fp, _conflict)
+                         trail_on, None, blocked, zmin, zmax, goal_yaw, goal_fp, _conflict,
+                         base_boundary=_GRID_BASE_PTS.get('base_boundary'))
 
 
 def draw_grid(force: bool = False) -> None:
@@ -5738,7 +5329,11 @@ async def _draw_grid_pending() -> None:
     force = cache.pop('grid_force', False)
     try:
         last = float(cache.get('grid_last_s', 0.0))
-        wait = max(0.0, _GRID_MIN_INTERVAL_S - (time.monotonic() - last))
+        # During execution the GUI is a monitoring client, not a real-time
+        # consumer. Reduce render pressure without changing planner behavior.
+        _procs = globals().get('PROCS')
+        interval = 1.00 if (_procs is not None and _procs.running('execution')) else _GRID_MIN_INTERVAL_S
+        wait = max(0.0, interval - (time.monotonic() - last))
         if wait > 0:
             await asyncio.sleep(wait)
         cache['grid_last_s'] = time.monotonic()
@@ -5779,9 +5374,10 @@ async def _draw_grid_async(force: bool = False) -> None:
         model=STATE.robot_projection;model_error=STATE.robot_projection_error
         joints=dict(STATE.projection_joints);times=dict(STATE.projection_joint_times)
         tilt=STATE.body_tilt
-        inflated=STATE.nav_inflated_pts;inflated_seq=STATE.nav_inflated_seq
+        inflated=STATE.nav_inflated_pts if (UI.get('inflate_on') and UI['inflate_on'].value) else None
+        inflated_seq=STATE.nav_inflated_seq
         observed=STATE.nav_dyn_pts
-        risk=STATE.nav_risk_pts if (UI.get('risk_on') and UI['risk_on'].value) else None
+        risk=None
         risk_seq=STATE.nav_risk_seq
         failure=dict(STATE.feasibility.get('failure_context',{})) if STATE.feasibility.get('goal_id')==STATE.plan_goal_ns else {}
         envelope=dict(STATE.feasibility.get('planning_footprint',{}))
@@ -5857,9 +5453,13 @@ async def _draw_grid_async(force: bool = False) -> None:
             goal_xy = (float(UI["goal_x"].value), float(UI["goal_y"].value))
     except (TypeError, ValueError):
         goal_xy = None
+    with STATE.lock:
+        external_yaw = getattr(STATE, 'external_goal_yaw', None)
+        if external_yaw is not None:
+            goal_xy = STATE.goal_target
     key = (str(UI["src"].value), str(UI.get("render").value) if UI.get("render") else '',
            round(float(UI["range"].value or 50), 1),
-           bool(UI.get("risk_on") and UI["risk_on"].value), round(ground, 3),
+           round(ground, 3),
            seq, None if pose is None else tuple(round(v, 2) for v in pose),
            len(trail), goal_xy, plan_seq, plan_active, goal_failed,
            global_seq, global_active,risk_seq,blocked,model_key,model_error,inflated_seq,inflated is not None,bool(envelope),
@@ -5885,6 +5485,8 @@ async def _draw_grid_async(force: bool = False) -> None:
             goal_yaw = frozen if frozen is not None else (float(pose[2]) if pose is not None else 0.0)
     except (TypeError, ValueError):
         goal_yaw = float(pose[2]) if pose is not None else 0.0
+    if external_yaw is not None:
+        goal_yaw = external_yaw
     if grids:
         source, zmin, zmax = await asyncio.to_thread(
             _render_occupancy_frame, grids, view, ground, pose, _pose_z,
@@ -5944,8 +5546,16 @@ def on_map_click(e) -> None:
     if not (UI.get("goal_yaw_on") and UI["goal_yaw_on"].value):
         _freeze_goal_yaw()
     if UI.get("goal_result"):
-        UI["goal_result"].set_text(
-            f"已从地图选点 map ({x:.2f}, {y:.2f})；确认后点“发送目标”")
+        layer = _GRID_BASE_PTS.get('search')
+        hint = '等待全局预检，发送后正式规划'
+        if layer is not None:
+            data, ox, oy, step = layer[:4]
+            col, row = math.floor((x - ox) / step), math.floor((y - oy) / step)
+            if 0 <= row < data.shape[0] and 0 <= col < data.shape[1]:
+                hint = {100: '全局预检：足迹膨胀阻挡',
+                        0: '全局预检：可连通，提交后检查目标朝向与足迹',
+                        -1: '全局预检：当前起点不可连通'}.get(int(data[row, col]), hint)
+        UI["goal_result"].set_text(f"已选点 ({x:.2f}, {y:.2f}) · {hint}")
     draw_grid(force=True)
 
 
@@ -6474,27 +6084,155 @@ async def navigation_ground_model(realtime=False):
     return plane, xy
 
 
-async def sync_nav_ground() -> None:
+_AUTO_SYNC_STATE = {"busy": False, "last_attempt": 0.0, "synced_key": None}
+
+
+async def sync_nav_ground(silent: bool = False) -> None:
     try:
         realtime = _slam_uses_live_map()
         plane, xy = await navigation_ground_model(realtime)
     except (ValueError, OSError) as exc:
-        push_log('err', f'同步地面失败：{exc}')
-        notify_user(f'同步地面失败：{exc}', type='negative')
+        if not silent:
+            push_log('err', f'同步地面失败：{exc}')
+            notify_user(f'同步地面失败：{exc}', type='negative')
         return
     ground = float(plane.height(*xy))
     for name in ('nav_ground_z', 'ground_z'):
         if UI.get(name):
             UI[name].value = round(ground, 3)
     draw_grid(force=True)
-    msg = (f'地图拟合地面 {ground:+.3f} m，支持{plane.support}个回波点，'
+    msg = (f'已自动同步地面 {ground:+.3f} m（支持{plane.support}点，残差P95={plane.residual*1000:.0f} mm）'
+           if silent else
+           f'地图拟合地面 {ground:+.3f} m，支持{plane.support}个回波点，'
            f'残差P95={plane.residual*1000:.0f} mm；'
            + ('实时平面将在本次启动生效' if realtime else '已保存，重启后按地图恢复'))
     push_log('info', msg)
-    notify_user(msg, type='positive')
+    if not silent:
+        notify_user(msg, type='positive')
+
+
+async def _run_auto_sync_ground(sync_key) -> None:
+    _AUTO_SYNC_STATE["busy"] = True
+    try:
+        await sync_nav_ground(silent=True)
+        _AUTO_SYNC_STATE["synced_key"] = sync_key
+    finally:
+        _AUTO_SYNC_STATE["busy"] = False
+
+
+def _maybe_auto_sync_nav_context() -> None:
+    """Auto-sync nav PCD & ground once localization enters tracking, or when ground drifts."""
+    if not UI.available:
+        return
+    realtime = _slam_uses_live_map()
+    with STATE.lock:
+        loc = dict(STATE.loc)
+        pose = STATE.pose
+        pose_age = STATE.age_of('pose')
+        ground_model = getattr(STATE, 'ground_model', None)
+    status = str(loc.get("status", "") or "").lower()
+    in_tracking = realtime or status in ("tracking", "tracking_ready")
+    if not in_tracking or pose is None or pose_age is None or pose_age > 1.5:
+        return
+    loc_pcd = str(loc.get("map_path", "") or "").strip()
+    if not realtime and loc_pcd and os.path.isfile(loc_pcd) and UI.get("nav_pcd"):
+        cur_pcd = str(UI["nav_pcd"].value or "").strip()
+        if cur_pcd != loc_pcd:
+            UI["nav_pcd"].value = loc_pcd
+            push_log("info", f"定位进入跟踪，已自动同步导航 PCD：{loc_pcd}")
+            _AUTO_SYNC_STATE["synced_key"] = None
+    sync_key = ("realtime" if realtime else loc_pcd)
+    if not realtime and (not loc_pcd or not os.path.isfile(loc_pcd)):
+        return
+    ground_mismatch = False
+    try:
+        cur_ground = float(UI["nav_ground_z"].value if UI.get("nav_ground_z") else DEFAULT_NAV_GROUND)
+    except (TypeError, ValueError):
+        cur_ground = DEFAULT_NAV_GROUND
+        ground_mismatch = True
+    if ground_model is not None:
+        try:
+            plane, _ = ground_model
+            if abs(cur_ground - float(plane.height(pose[0], pose[1]))) > 0.05:
+                ground_mismatch = True
+        except Exception:
+            pass
+    need_sync = (_AUTO_SYNC_STATE["synced_key"] != sync_key) or ground_mismatch
+    now = time.monotonic()
+    if need_sync and not _AUTO_SYNC_STATE["busy"] and (now - _AUTO_SYNC_STATE["last_attempt"] >= 5.0):
+        _AUTO_SYNC_STATE["last_attempt"] = now
+        try:
+            asyncio.get_running_loop().create_task(_run_auto_sync_ground(sync_key))
+        except RuntimeError:
+            pass
+
+
+async def run_geometry_calibration() -> None:
+    """One-click latest-mesh geometry capture; never applies safety values."""
+    if not UI.available:
+        return
+    script = REPO_ROOT / "scripts" / "n01_latest_geometry_calibration.py"
+    result = UI.get("cal_result")
+    status = UI.get("cal_status")
+    if not script.is_file():
+        if result:
+            result.set_text(f"标定脚本不存在：{script}")
+        return
+    if status:
+        status.set_text("一键标定：采集中，请保持机器人静止、tracking 有效…")
+    push_log("info", "一键标定开始：采集最新 mesh footprint / body z / 地面 / self-filter 证据")
+    try:
+        cp = await asyncio.to_thread(
+            subprocess.run,
+            [sys.executable, str(script)],
+            cwd=str(REPO_ROOT), capture_output=True, text=True, timeout=90, check=False)
+    except subprocess.TimeoutExpired:
+        if status:
+            status.set_text("一键标定超时：请确认 /body_pose、ground_reference、/joint_states 正常")
+        push_log("err", "一键标定超时")
+        return
+    out = (cp.stdout or "") + (cp.stderr or "")
+    if cp.returncode != 0:
+        if status:
+            status.set_text("一键标定失败；见运行日志")
+        if result:
+            result.set_text(out[-5000:])
+        push_log("err", f"一键标定失败 exit={cp.returncode}")
+        return
+    path = REPO_ROOT / "config" / "n01_latest_geometry.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        if status:
+            status.set_text(f"标定完成但读取 JSON 失败：{exc}")
+        push_log("err", f"一键标定 JSON 读取失败：{exc}")
+        return
+    extent = data.get("footprint_extent_m") or [0, 0]
+    err = data.get("wheel_bottom_vs_floor_m")
+    text = (
+        f"footprint: {extent[0]:.3f} × {extent[1]:.3f} m\n"
+        f"body z: {data.get('body_pose_xyz_m', [0,0,0])[2]:.4f} m\n"
+        f"ground z@body: {data.get('ground_z_at_body_xy_m', 0):.4f} m\n"
+        f"wheel bottom vs floor: {err:+.4f} m\n"
+        f"body min/max z rel base: {data.get('body_min_z_rel_base_link_m',0):.4f} / "
+        f"{data.get('body_max_z_rel_base_link_m',0):.4f} m\n"
+        f"suggested self-filter r/zdown/zup: "
+        f"{data.get('suggested_static_ego_filter_radius_m',0):.3f} / "
+        f"{data.get('suggested_static_ego_filter_z_down_m',0):.3f} / "
+        f"{data.get('suggested_static_ego_filter_z_up_m',0):.3f} m\n"
+        f"证据文件: {path}"
+    )
+    if result:
+        result.set_text(text)
+    if status:
+        status.set_text("一键标定完成（只写证据，未改安全参数）")
+    push_log("ok", text.replace("\n", " | "))
+    if err is not None and abs(float(err)) > .03:
+        push_log("warn", f"标定高度误差 {float(err):+.3f} m；先修 ground_reference/定位，不要直接改参数")
 
 
 def refresh_console() -> None:
+    _maybe_auto_sync_nav_context()
     with STATE.lock:
         loc = dict(STATE.loc)
         mapping = dict(STATE.mapping)
@@ -6991,50 +6729,39 @@ def _chain_state(topic, key, node):
 
 
 CHAIN_CSS = """
-.chain-wrap{display:flex;align-items:stretch;gap:0;overflow-x:auto;padding:8px 2px;font-size:12px}
-.ccol{min-width:170px;flex:1;display:flex;flex-direction:column;gap:7px}
-.chead{font-weight:700;color:#cbd5e1;padding:2px 4px}
-.cn{border:1px solid #334155;border-left-width:5px;border-radius:7px;padding:6px 8px;background:#0f172a;display:flex;flex-direction:column;gap:2px;color:#e2e8f0}
-.cn b{font-size:12px}
-.cn code{font-size:10px;color:#94a3b8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.cn small{font-size:10px;color:#94a3b8}
-.cn .dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:5px;background:#64748b;vertical-align:middle}
-.cn.green{border-color:#16a34a;border-left-color:#16a34a}
-.cn.green .dot{background:#22c55e}
-.cn.gray{border-color:#334155;border-left-color:#64748b;opacity:.72}
-.cn.red{border-color:#dc2626;border-left-color:#dc2626;background:#1f1114}
-.cn.red .dot{background:#ef4444}
-.carrow{display:flex;align-items:center;justify-content:center;min-width:28px;font-size:22px;font-weight:700;color:#64748b}
-.carrow.green{color:#22c55e}.carrow.gray{color:#64748b}.carrow.red{color:#ef4444}
+.chain-wrap{display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:8px;padding:4px 0;font-size:11px}
+.ccol{min-width:0;display:flex;flex-direction:column;gap:5px;background:rgba(15,23,42,.45);border:1px solid rgba(148,163,184,.12);border-radius:8px;padding:7px}
+.chead{font-weight:600;font-size:11px;color:#94a3b8;letter-spacing:.02em;padding:0 2px 2px;border-bottom:1px solid rgba(148,163,184,.1)}
+.cn{border:1px solid rgba(51,65,85,.8);border-left-width:3px;border-radius:6px;padding:5px 7px;background:rgba(9,14,26,.85);display:flex;flex-direction:column;gap:1px;color:#e2e8f0}
+.cn b{font-size:11px;line-height:1.25}
+.cn code{font-size:10px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cn small{font-size:10px;color:#94a3b8;line-height:1.25}
+.cn .dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:5px;background:#64748b;vertical-align:middle}
+.cn.green{border-color:rgba(34,197,94,.35);border-left-color:#22c55e;background:rgba(6,28,20,.45)}
+.cn.green .dot{background:#22c55e;box-shadow:0 0 6px rgba(34,197,94,.6)}
+.cn.gray{border-color:rgba(51,65,85,.65);border-left-color:#64748b;opacity:.78}
+.cn.red{border-color:rgba(239,68,68,.45);border-left-color:#ef4444;background:rgba(38,14,18,.65)}
+.cn.red .dot{background:#ef4444;box-shadow:0 0 6px rgba(239,68,68,.6)}
 """
 
 
 def _chain_html() -> str:
     columns = []
-    for title, nodes in CHAIN_COLUMNS:
+    for idx, (title, nodes) in enumerate(CHAIN_COLUMNS, start=1):
         cells = []
         for label, topic, key, node in nodes:
             cls, detail = _chain_state(topic, key, node)
-            topic_txt = f"<code>{topic}</code>" if topic else "<code>—</code>"
+            topic_txt = f"<code>{topic}</code>" if topic else ""
             cells.append(
-                f'<div class="cn {cls}"><span class="dot"></span>'
-                f'<b>{label}</b>{topic_txt}<small>{detail}</small></div>')
+                f'<div class="cn {cls}"><div><span class="dot"></span>'
+                f'<b>{label}</b></div>{topic_txt}<small>{detail}</small></div>')
         columns.append(
-            f'<div class="ccol"><div class="chead">{title}</div>'
+            f'<div class="ccol"><div class="chead">{idx}. {title}</div>'
             + "".join(cells) + "</div>")
-    arrows = []
-    for idx in range(len(columns) - 1):
-        left = CHAIN_COLUMNS[idx][1]
-        states = [_chain_state(t, k, n)[0] for _, t, k, n in left]
-        color = "green" if all(s == "green" for s in states) else (
-            "red" if any(s == "red" for s in states) else "gray")
-        arrows.append(f'<div class="carrow {color}">→</div>')
-    body = columns[0] + "".join(
-        a + c for a, c in zip(arrows, columns[1:]))
     return (
-        f'<div class="chain-wrap">{body}</div>'
-        '<div style="font-size:11px;color:#94a3b8;margin-top:4px">'
-        '绿=当前有数据 · 灰=未启动 · 红=节点在但数据缺失/过期</div>')
+        f'<div class="chain-wrap">{"".join(columns)}</div>'
+        '<div style="font-size:11px;color:#64748b;margin-top:4px">'
+        '● 绿=数据活跃 · ● 灰=未启动/空闲 · ● 红=节点在但数据缺失或过期</div>')
 
 def _chain_hint() -> str:
     if PROCS.running('desk') and not getattr(PROCS, 'slam_selection', {}).get('navigation_allowed', True):
@@ -7318,14 +7045,23 @@ def refresh_panels() -> None:
 def build_data_chain_panel() -> None:
     ui.add_head_html(f"<style>{CHAIN_CSS}</style>")
     with _card2("适配器链路"):
-        UI["chain_hint"] = ui.label(_chain_hint()).classes(
-            "w-full text-sm text-amber-300")
-        UI["chain_last"] = ui.label("最后刷新 —").classes(
-            "text-xs text-slate-500")
-        with ui.expansion("查看完整实时链路", icon="account_tree").classes(
+        with ui.row().classes("w-full items-center justify-between gap-2 flex-wrap"):
+            UI["chain_hint"] = ui.label(_chain_hint()).classes(
+                "text-xs font-medium text-amber-300 grow min-w-0")
+            with ui.row().classes("items-center gap-2 shrink-0"):
+                UI["chain_last"] = ui.label("最后刷新 —").classes("text-[11px] text-slate-500")
+                ui.button("刷新链路", icon="sync", on_click=refresh_chain).props("flat dense size=sm")
+        with ui.expansion("实时话题与节点链路", icon="account_tree", value=True).classes(
                 "w-full compact-expansion"):
             UI["chain_html"] = ui.html(_chain_html(), sanitize=False).classes("w-full")
-            ui.button("刷新链路", on_click=refresh_chain).props("flat dense")
+
+
+def _legend_chip(dot_hex: str, label: str, line: bool = False) -> None:
+    with ui.row().classes("items-center gap-1 px-1.5 py-0.5 rounded bg-slate-900/80 border border-slate-800/80"):
+        style = (f"width:12px;height:3px;border-radius:2px;background:{dot_hex}"
+                 if line else f"width:8px;height:8px;border-radius:2px;background:{dot_hex}")
+        ui.element("span").style(style)
+        ui.label(label).classes("text-[11px] text-slate-300 leading-none")
 
 
 def build_console_page() -> None:
@@ -7334,18 +7070,78 @@ def build_console_page() -> None:
     if _saved_ground is not None:
         with STATE.lock:
             if STATE.ground_model is None:
-                STATE.ground_model = (GroundPlane(**{k:_saved_ground[k] for k in ('a','b','c','support','residual')}),
+                STATE.ground_model = (GroundPlane(**{k: _saved_ground[k] for k in ('a', 'b', 'c', 'support', 'residual')}),
                                       tuple(_saved_ground['reference_xy']))
     ui.dark_mode().enable()
     ui.add_head_html("""
     <style>
-      body { background: #080d16; }
-      .compact-card { border: 1px solid #1e293b; border-radius: 10px; }
-      .q-tab-panel { padding: 8px !important; }
-      .q-field--dense .q-field__control { min-height: 36px !important; }
-      .q-btn { letter-spacing: 0; }
-      .status-grid { background: #0b1220; border-radius: 8px; padding: 8px; }
-      .compact-expansion .q-item { min-height: 34px; padding: 4px 8px; }
+      body {
+        background: radial-gradient(circle at 18% 0%, #0f1b33 0%, #070b14 55%, #05080f 100%);
+        color: #e2e8f0;
+      }
+      .console-header {
+        background: rgba(8, 13, 24, 0.92) !important;
+        backdrop-filter: blur(12px);
+        border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+      }
+      .compact-card {
+        background: rgba(12, 19, 34, 0.88) !important;
+        border: 1px solid rgba(148, 163, 184, 0.14);
+        border-radius: 12px;
+        box-shadow: 0 8px 28px rgba(0, 0, 0, 0.32);
+      }
+      .sub-panel {
+        background: rgba(8, 14, 26, 0.72);
+        border: 1px solid rgba(148, 163, 184, 0.12);
+        border-radius: 9px;
+      }
+      .section-pill {
+        width: 3px;
+        height: 14px;
+        border-radius: 2px;
+        background: linear-gradient(180deg, #22d3ee 0%, #3b82f6 100%);
+        display: inline-block;
+      }
+      .status-grid {
+        background: rgba(8, 13, 24, 0.65);
+        border: 1px solid rgba(148, 163, 184, 0.10);
+        border-radius: 9px;
+        padding: 6px;
+      }
+      .kv-cell {
+        background: rgba(15, 23, 42, 0.62);
+        border: 1px solid rgba(148, 163, 184, 0.10);
+        border-radius: 7px;
+        padding: 5px 8px;
+      }
+      .map-stage {
+        background: #080c14;
+        border: 1px solid rgba(56, 189, 248, 0.22);
+        border-radius: 12px;
+        box-shadow: inset 0 0 24px rgba(0, 0, 0, 0.55), 0 6px 20px rgba(0, 0, 0, 0.35);
+        max-height: calc(100vh - 235px);
+        aspect-ratio: 1 / 1;
+      }
+      .map-stage img {
+        object-fit: contain;
+        background: #080c14;
+      }
+      .console-tabs {
+        background: rgba(11, 18, 32, 0.92);
+        border: 1px solid rgba(148, 163, 184, 0.14);
+        border-radius: 10px;
+        padding: 2px;
+      }
+      .q-tab-panels { background: transparent !important; }
+      .q-tab-panel { padding: 8px 0 0 0 !important; }
+      .q-field--dense .q-field__control { min-height: 34px !important; }
+      .q-btn { letter-spacing: 0; font-weight: 500; border-radius: 7px; }
+      .compact-expansion {
+        border: 1px solid rgba(148, 163, 184, 0.11);
+        border-radius: 8px;
+        background: rgba(9, 15, 28, 0.55);
+      }
+      .compact-expansion .q-item { min-height: 32px; padding: 3px 10px; font-size: 12px; }
     </style>
     """)
     _watchdog_last = {"t": time.monotonic(), "last_warn": 0.0}
@@ -7364,151 +7160,181 @@ def build_console_page() -> None:
     UI["mg_mode"] = ui.select(["定位 desk", "建图 desk"], value="定位 desk").classes("hidden")
     UI["viz_mode"] = ui.select(["定位视图", "建图视图"], value="定位视图").classes("hidden")
 
-    with ui.header().classes("items-center justify-between bg-slate-950 px-4 py-2"):
-        with ui.column().classes("gap-0"):
-            ui.label("R2 机器人总控制台").classes(
-                "text-lg font-bold text-white")
-            ui.label("建图定位后端 → 标准适配器 → SCAN 导航")\
-                .classes("text-xs text-slate-400")
-        with ui.column().classes("items-end gap-0"):
-            with ui.row().classes("items-center gap-2"):
-                ui.button("RViz", icon="visibility", on_click=start_selected_rviz)\
-                    .props("outline dense color=secondary")
-                ui.button(icon="visibility_off", on_click=stop_rviz)\
-                    .props("flat round dense color=secondary")\
-                    .tooltip("停止 RViz")
-                UI["ros_badge"] = ui.label("ROS 未连接").classes("text-sm font-bold")
-                _lbl(f"domain={os.environ.get('ROS_DOMAIN_ID', '0')} · {ROSK}",
-                     "text-xs text-slate-500")
+    with ui.header().classes("console-header items-center justify-between px-4 py-1.5"):
+        with ui.row().classes("items-center gap-3"):
+            ui.element("span").classes("w-2.5 h-2.5 rounded-full bg-cyan-400 shadow-[0_0_8px_#22d3ee]")
+            with ui.row().classes("items-baseline gap-2"):
+                ui.label("N-01 导航避障控制台").classes("text-base font-bold text-slate-100 tracking-wide")
+                ui.label("SLAM · 适配桥接 · SCAN 闭环").classes("text-xs text-slate-400 hidden sm:inline")
+        with ui.row().classes("items-center gap-2.5 flex-wrap justify-end"):
             UI["ros_reason"] = ui.label("ROS worker 启动中…").classes(
-                "text-xs text-slate-400 max-w-[720px] truncate")
+                "text-[11px] text-slate-400 max-w-[360px] truncate hidden md:inline")
+            with ui.row().classes("items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-slate-900/90 border border-slate-700/70"):
+                UI["ros_badge"] = ui.label("ROS 未连接").classes("text-xs font-bold")
+                _lbl(f"域 {os.environ.get('ROS_DOMAIN_ID', '0')}", "text-[11px] text-slate-400")
+            ui.button("RViz", icon="visibility", on_click=start_selected_rviz)\
+                .props("outline dense size=sm color=cyan-4")
+            ui.button(icon="visibility_off", on_click=stop_rviz)\
+                .props("flat round dense size=sm color=slate-4")\
+                .tooltip("停止 RViz")
 
-    with ui.column().classes("w-full max-w-[1800px] mx-auto p-3 gap-3"):
-        # ---------------- top: shared map ----------------
-        with _card2("实时地图"):
-            with ui.row().classes('w-full items-start gap-4 flex-wrap lg:flex-nowrap'):
-                with ui.column().classes('grow min-w-0 items-center'):
-                    UI['map_image']=ui.interactive_image(
-                        _BLANK_PNG,on_mouse=on_map_click,events=['click']).classes(
-                        'w-full max-w-[860px] mx-auto rounded-xl border border-slate-700')
-                with ui.column().classes('w-52 gap-3 shrink-0'):
+    # 左右分栏主工作台：左侧常驻无网格地图，右侧分栏控制与诊断，告别频繁上下翻页
+    with ui.element("div").classes("w-full max-w-[1920px] mx-auto px-3 py-2.5"):
+        with ui.element("div").classes("grid grid-cols-1 lg:grid-cols-12 gap-3 items-start w-full"):
+            # ==================== 左栏：常驻实时地图工作区 ====================
+            with ui.element("div").classes("col-span-1 lg:col-span-5 lg:sticky lg:top-[52px] w-full"):
+                with _card2("实时地图"):
                     def _map_source_changed(_event=None):
                         with STATE.lock:
                             STATE.clear_path_display()
                         draw_grid(force=True)
-                    UI['src']=ui.select(['自动','导航','建图','定位'],value='自动',
-                        label='地图内容',on_change=_map_source_changed).props('outlined dense').classes('w-full')
-                    UI['render']=ui.select(['低耗栅格','细节点云'],value='低耗栅格',
-                        label='渲染方式',on_change=lambda _:draw_grid(force=True)).props('outlined dense').classes('w-full')
-                    UI['grid_info']=ui.label('等待地图数据…').classes('text-xs text-slate-400 leading-relaxed')
-                    UI['range']=ui.number('显示范围 [m]（总宽度）',value=100,min=5,max=200,
-                        step=5,format='%.0f',
-                        on_change=lambda _:draw_grid(force=True)).props('outlined dense').classes('w-full')
-                    with ui.row().classes('w-full gap-1'):
-                        for _preset in (10,20,40,100):
-                            ui.button(f'{_preset}',on_click=lambda p=_preset:_set_view_range(p))\
-                                .props('flat dense').classes('flex-1')
-                        ui.button("全图", on_click=fit_full_map)\
-                            .props('flat dense color=secondary').classes('flex-1')
-                    UI['trail_on']=ui.checkbox('显示行驶轨迹',value=True,on_change=lambda _:draw_grid(force=True))
-                    UI['risk_on']=ui.checkbox('显示未确认风险',value=False,on_change=lambda _:draw_grid(force=True))
-                    ui.label('低耗栅格：黑色=未观测，深蓝=已知空闲但不可达\n'
-                             '暗紫=持久全局背景（只画局部窗口外）\n'
-                             '亮紫=导航局部静态参考，青绿=导航实时障碍\n'
-                             '琥珀=静态+实时重叠，灰绿=实时清除静态\n'
-                             '浅紫=建图静态层；白色=机器人可达连通域（全图）\n'
-                             '细节点云：额外显示发光与膨胀层\n'
-                             '白色实体：URDF碰撞几何；紫色光晕：规划包络\n'
-                             '蓝线：完整全局参考；青线：当前执行前段').classes('text-xs text-slate-300 whitespace-pre-line')
-                    ui.label('环境余量6cm只计一次；紫色为机身近似覆盖，琥珀色为环境外扩（5cm栅格离散）。').classes('text-xs text-slate-500')
-                    with ui.expansion('显示参数',icon='tune').classes('w-full'):
-                        UI['ground_z']=ui.number('地面 z',value=DEFAULT_NAV_GROUND,format='%.2f',
-                            on_change=lambda _:draw_grid(force=True)).props('dense').classes('w-full')
-                    ui.label('点击地图设置导航目标坐标。').classes('text-xs text-slate-400')
 
-        # ---------------- middle: tabs ----------------
-        with ui.tabs().classes("w-full bg-slate-900 rounded-lg").props(
-                "dense active-color=cyan-4 indicator-color=cyan-4") as tabs:
-            ui.tab("总控 / 适配器")
-            ui.tab("建图")
-            ui.tab("定位")
-            ui.tab("导航")
-            ui.tab("参数管理")
-            ui.tab("节点管理")
-        with ui.tab_panels(tabs, value="总控 / 适配器").classes("w-full"):
-            with ui.tab_panel("总控 / 适配器"):
-                with _card2("整体项目生命周期（总览）"):
-                    with ui.row().classes("w-full items-end gap-3 flex-wrap"):
-                        UI["slam_backend"] = ui.select(
-                            BACKEND_OPTIONS, value=(BACKEND_FAST_LIO if PROCS.running('desk')
-                                and str(PROCS.desk_mode).startswith('fast_lio') else BACKEND_VENDOR),
-                            label="方法", on_change=lambda _: refresh_backend_descriptions())\
-                            .classes("w-72").props("outlined dense")
-                        UI["slam_map_mode"] = ui.select(
-                            {FAST_MODE_OFFLINE: '离线', FAST_MODE_REALTIME: '实时'},
-                            value=(FAST_MODE_REALTIME if _slam_uses_live_map()
-                                   else FAST_MODE_OFFLINE), label="地图模式",
-                            on_change=lambda _: refresh_backend_descriptions())\
-                            .classes("w-72").props("outlined dense")
-                        UI['backend_help'] = ui.label('').classes('text-xs text-cyan-200 pb-2')
-                    _lbl('甲方 SLAM3D Lite / 自部署 FAST-LIO2 → 标准适配器 → SCAN 导航。'
-                         '离线地图指已保存的 PCD，定位仍使用当前传感器；bag 回放是另一种数据来源。',
-                         'text-xs text-slate-400')
-                    _lbl('先选方法和地图模式，再按下方步骤操作；导航与行驶分别手动启动。', 'text-xs text-slate-500')
-                    with ui.grid(columns=5).classes("w-full gap-2"):
-                        UI["gl_loc"] = _kv("位姿估计")
-                        UI["gl_map"] = _kv("地图更新")
-                        UI["gl_nav"] = _kv("导航")
-                        UI["gl_bag"] = _kv("录包")
-                        UI["gl_rviz"] = _kv("RViz")
-                    with ui.row().classes('items-center gap-2 flex-wrap') as offline_actions:
-                        UI['offline_slam_actions'] = offline_actions
-                        UI['offline_map_start'] = ui.button('① 启动建图', on_click=lambda: lifecycle_start_slam('mapping')).props('color=positive')
-                        ui.button('结束建图并保存', on_click=stop_desk).props('outline color=positive')
-                        UI['offline_loc_start'] = ui.button('② 启动定位', on_click=lambda: lifecycle_start_slam('loc')).props('color=positive')
-                    with ui.row().classes('items-center gap-2 flex-wrap') as realtime_actions:
-                        UI['realtime_slam_actions'] = realtime_actions
-                        UI['realtime_slam_start'] = ui.button('① 启动实时SLAM', on_click=start_selected_slam_task).props('color=positive')
-                        ui.label('同时建图与估计位姿；不会自动启动导航或行驶').classes('text-xs text-slate-400')
-                    with ui.row().classes("items-center gap-2 flex-wrap"):
-                        ui.button('停止SLAM / 定位', on_click=stop_desk).props('color=negative')
-                        ui.button("启动导航", on_click=lambda: navigation_action("start"))\
-                            .props("color=primary")
-                        ui.button("停止导航", on_click=lambda: navigation_action("stop"))\
-                            .props("outline color=primary")
-                        ui.button("停止本 GUI 模块（保存建图）", on_click=stop_managed_all)\
-                            .props("color=negative")
-                        ui.button("刷新状态", on_click=refresh_console).props("flat dense")
-                        UI["mg_skip_rsp"] = ui.checkbox(
-                            "使用地盘 RSP（关闭 SLAM 自带 RSP）", value=True)
-                    UI["svc_result"] = ui.label("最近操作：—").classes(
-                        "w-full text-xs font-mono whitespace-pre-wrap break-all")
-                build_data_chain_panel()
+                    with ui.row().classes("w-full items-center gap-2 flex-wrap"):
+                        UI['src'] = ui.select(
+                            ['自动', '导航', '诊断', '建图', '定位'], value='自动',
+                            label='图层', on_change=_map_source_changed
+                        ).props('outlined dense').classes('w-24')
+                        UI['render'] = ui.select(
+                            ['低耗栅格', '细节点云'], value='低耗栅格',
+                            label='渲染', on_change=lambda _: draw_grid(force=True)
+                        ).props('outlined dense').classes('w-28')
+                        UI['range'] = ui.number(
+                            '视野[m]', value=100, min=5, max=200, step=5, format='%.0f',
+                            on_change=lambda _: draw_grid(force=True)
+                        ).props('outlined dense').classes('w-20')
+                        UI['ground_z'] = ui.number(
+                            '地面z', value=DEFAULT_NAV_GROUND, format='%.2f',
+                            on_change=lambda _: draw_grid(force=True)
+                        ).props('outlined dense').classes('w-20')
+                        with ui.row().classes("items-center gap-0.5 ml-auto"):
+                            for _preset in (10, 20, 40, 100):
+                                ui.button(f'{_preset}m', on_click=lambda p=_preset: _set_view_range(p))\
+                                    .props('flat dense size=sm').classes('px-1.5 text-slate-300')
+                            ui.button("全图", on_click=fit_full_map)\
+                                .props('outline dense size=sm color=cyan-4').classes('px-2')
 
-            with ui.tab_panel("建图"):
-                with _card2("① 建图模块（建图 + bag 录制）"):
-                    ui.button("建图 RViz", icon="visibility", on_click=lambda: start_slam_rviz("mapping")).props("outline dense")
-                    with ui.row().classes("w-full gap-4 items-start"):
-                        with ui.column().classes("w-full lg:w-[430px] gap-2"):
-                            UI["map_save_dir"] = ui.input(
-                                "甲方 SLAM3D Lite 保存目录",
-                                value="/home/demo/lyy/slam_data/maps")\
-                                .classes("w-full")
-                            UI["fast_lio_map"] = ui.input(
-                                "FAST-LIO2 输出 PCD", value=DEFAULT_FAST_LIO_MAP)\
-                                .classes("w-full")
-                            _lbl("在总控选择方法与地图模式：离线模式点击“启动建图”，实时模式点击“启动实时SLAM”；"
-                                 "结束建图时保存地图并结束 bag。",
-                                 "text-xs text-slate-400")
-                        with ui.column().classes("w-full grow gap-2"):
-                            with ui.grid(columns=4).classes("w-full gap-x-3 gap-y-1 status-grid"):
+                    with ui.row().classes("w-full items-center justify-between gap-2 flex-wrap px-0.5"):
+                        with ui.row().classes("items-center gap-3"):
+                            UI['trail_on'] = ui.checkbox(
+                                '轨迹', value=True, on_change=lambda _: draw_grid(force=True)
+                            ).props('dense').classes('text-xs text-slate-300')
+                            UI['inflate_on'] = ui.checkbox(
+                                '膨胀边界', value=True, on_change=lambda _: draw_grid(force=True)
+                            ).props('dense').classes('text-xs text-slate-300')
+                        ui.label('点击画布直接设定导航目标点').classes('text-[11px] text-cyan-300/80')
+
+                    UI['map_image'] = ui.interactive_image(
+                        _BLANK_PNG, on_mouse=on_map_click, events=['click']
+                    ).classes('map-stage w-full mx-auto overflow-hidden cursor-crosshair')
+
+                    with ui.row().classes("w-full items-center gap-1.5 flex-wrap"):
+                        _legend_chip("#f6f6f2", "可达")
+                        _legend_chip("#b284ff", "静态")
+                        _legend_chip("#4fefdb", "实时")
+                        _legend_chip("#ff9628", "膨胀")
+                        _legend_chip("#377dff", "全局路径", line=True)
+                        _legend_chip("#23dcdc", "局部轨迹", line=True)
+
+                    UI['grid_info'] = ui.label('等待地图数据…').classes(
+                        'text-[11px] text-slate-400 leading-snug break-words w-full')
+                    with ui.expansion('图层颜色与碰撞余量说明', icon='palette').classes('w-full compact-expansion'):
+                        ui.label(
+                            '低耗栅格：深黑=未观测 · 白色=机器人可达连通域 · 深蓝/灰=已知空闲但未连通或未评估\n'
+                            '亮紫=局部静态参考 · 青绿=实时障碍 · 橙边=6cm环境外扩膨胀前沿 · 紫色框=URDF规划包络'
+                        ).classes('text-[11px] text-slate-400 whitespace-pre-line p-1')
+
+            # ==================== 右栏：分栏操作与遥测工作台 ====================
+            with ui.element("div").classes("col-span-1 lg:col-span-7 min-w-0 flex flex-col gap-2.5 w-full"):
+                with ui.tabs().classes("w-full console-tabs").props(
+                        "dense active-color=cyan-4 indicator-color=cyan-4 align=justify") as tabs:
+                    ui.tab("总控 / 适配器", icon="dashboard")
+                    ui.tab("建图", icon="map")
+                    ui.tab("定位", icon="my_location")
+                    ui.tab("导航", icon="navigation")
+                    ui.tab("参数管理", icon="tune")
+                    ui.tab("节点管理", icon="hub")
+
+                with ui.tab_panels(tabs, value="总控 / 适配器").classes("w-full"):
+                    # ---------------- Tab 1: 总控 / 适配器 ----------------
+                    with ui.tab_panel("总控 / 适配器"):
+                        with ui.column().classes("w-full gap-2.5"):
+                            with _card2("整体项目生命周期"):
+                                with ui.row().classes("w-full items-center gap-2.5 flex-wrap"):
+                                    UI["slam_backend"] = ui.select(
+                                        BACKEND_OPTIONS,
+                                        value=(BACKEND_FAST_LIO if PROCS.running('desk')
+                                               and str(PROCS.desk_mode).startswith('fast_lio') else BACKEND_VENDOR),
+                                        label="定位后端", on_change=lambda _: refresh_backend_descriptions()
+                                    ).classes("w-52").props("outlined dense")
+                                    UI["slam_map_mode"] = ui.select(
+                                        {FAST_MODE_OFFLINE: '离线 PCD', FAST_MODE_REALTIME: '实时建图导航'},
+                                        value=(FAST_MODE_REALTIME if _slam_uses_live_map()
+                                               else FAST_MODE_OFFLINE), label="地图模式",
+                                        on_change=lambda _: refresh_backend_descriptions()
+                                    ).classes("w-44").props("outlined dense")
+                                    UI["mg_skip_rsp"] = ui.checkbox(
+                                        "底盘独占 RSP", value=True
+                                    ).props("dense").classes("text-xs text-slate-300")
+                                    ui.button("刷新状态", icon="refresh", on_click=refresh_console)\
+                                        .props("flat dense size=sm").classes("ml-auto")
+                                UI['backend_help'] = ui.label('').classes('text-xs text-cyan-200')
+
+                                with ui.element("div").classes("grid grid-cols-2 sm:grid-cols-5 gap-2 w-full status-grid"):
+                                    UI["gl_loc"] = _kv("位姿估计")
+                                    UI["gl_map"] = _kv("地图更新")
+                                    UI["gl_nav"] = _kv("导航状态")
+                                    UI["gl_bag"] = _kv("录包状态")
+                                    UI["gl_rviz"] = _kv("可视化")
+
+                                with ui.row().classes("w-full items-center gap-2 flex-wrap sub-panel p-2"):
+                                    with ui.row().classes('items-center gap-1.5 flex-wrap') as offline_actions:
+                                        UI['offline_slam_actions'] = offline_actions
+                                        UI['offline_map_start'] = ui.button(
+                                            '① 启动建图', on_click=lambda: lifecycle_start_slam('mapping')
+                                        ).props('color=positive dense')
+                                        ui.button('结束建图并保存', on_click=stop_desk).props('outline dense color=positive')
+                                        UI['offline_loc_start'] = ui.button(
+                                            '② 启动定位', on_click=lambda: lifecycle_start_slam('loc')
+                                        ).props('color=positive dense')
+                                    with ui.row().classes('items-center gap-1.5 flex-wrap') as realtime_actions:
+                                        UI['realtime_slam_actions'] = realtime_actions
+                                        UI['realtime_slam_start'] = ui.button(
+                                            '① 启动实时SLAM', on_click=start_selected_slam_task
+                                        ).props('color=positive dense')
+                                    ui.button('停止SLAM / 定位', on_click=stop_desk).props('outline dense color=negative')
+                                    ui.separator().props("vertical").classes("h-5 mx-0.5 hidden sm:block")
+                                    ui.button("启动导航", on_click=lambda: navigation_action("start"))\
+                                        .props("color=primary dense")
+                                    ui.button("停止导航", on_click=lambda: navigation_action("stop"))\
+                                        .props("outline dense color=primary")
+                                    ui.button("停止全部 GUI 托管模块", on_click=stop_managed_all)\
+                                        .props("color=negative dense").classes("ml-auto")
+
+                                UI["svc_result"] = ui.label("最近操作：—").classes(
+                                    "w-full text-[11px] font-mono text-slate-400 whitespace-pre-wrap break-all max-h-16 overflow-auto")
+                            build_data_chain_panel()
+
+                    # ---------------- Tab 2: 建图 ----------------
+                    with ui.tab_panel("建图"):
+                        with _card2("① 建图模块（建图 + bag 录制）"):
+                            with ui.row().classes("w-full items-center justify-between gap-2"):
+                                _lbl("在「总控」选择后端并启动建图，结束建图时自动保存 PCD 与 bag。", "text-xs text-slate-400")
+                                ui.button("建图 RViz", icon="visibility", on_click=lambda: start_slam_rviz("mapping"))\
+                                    .props("outline dense size=sm")
+                            with ui.element("div").classes("grid grid-cols-2 sm:grid-cols-4 gap-2 w-full status-grid"):
                                 UI["life_map"] = _kv("生命周期")
-                                UI["map_session"] = _kv("会话")
-                                UI["map_bag"] = _kv("录包")
+                                UI["map_session"] = _kv("建图会话")
+                                UI["map_bag"] = _kv("同步录包")
                                 UI["map_cloud_pts"] = _kv("地图点数")
-                            with ui.expansion("详细状态", icon="tune").classes(
-                                    "w-full compact-expansion"):
-                                with ui.grid(columns=4).classes("w-full gap-x-3 gap-y-1"):
+                            with ui.element("div").classes("grid grid-cols-1 md:grid-cols-2 gap-2.5 w-full"):
+                                UI["map_save_dir"] = ui.input(
+                                    "甲方 SLAM3D Lite 保存目录", value="/home/demo/lyy/slam_data/maps"
+                                ).props("outlined dense").classes("w-full")
+                                UI["fast_lio_map"] = ui.input(
+                                    "FAST-LIO2 输出 PCD", value=DEFAULT_FAST_LIO_MAP
+                                ).props("outlined dense").classes("w-full")
+                            with ui.expansion("详细建图状态", icon="tune").classes("w-full compact-expansion"):
+                                with ui.element("div").classes("grid grid-cols-2 sm:grid-cols-3 gap-2 w-full p-2"):
                                     UI["map_desk"] = _kv("建图进程")
                                     UI["map_dir"] = _kv("保存目录")
                                     UI["map_pts"] = _kv("累计点云")
@@ -7516,251 +7342,269 @@ def build_console_page() -> None:
                                     UI["m_fresh"] = _kv("建图输入")
                                     UI["in_cloud_age"] = _kv("点云年龄")
 
-            with ui.tab_panel("定位"):
-                with _card2("位姿与离线地图定位"):
-                    UI['loc_workflow'] = ui.label('').classes('text-xs text-amber-300')
-                    ui.button("定位 RViz", icon="visibility", on_click=lambda: start_slam_rviz("loc")).props("outline dense")
-                    with ui.row().classes("w-full gap-4 items-start"):
-                        with ui.column().classes("w-full lg:w-[470px] gap-2") as offline_loc_controls:
-                            UI['offline_localization_controls'] = offline_loc_controls
-                            UI["map_path"] = ui.input(
-                                "定位参考 PCD",
-                                value=(current_map_path if os.path.isfile(current_map_path) else
-                                       (DEFAULT_MAP_PATH if os.path.isfile(DEFAULT_MAP_PATH) else "")))\
-                                .classes("w-full")
-                            _lbl('PCD 是定位参考地图；bag 保存历史传感器记录，在线导航不要求加载 bag。',
-                                 'text-xs text-slate-400')
-                            with ui.row().classes("gap-2 flex-wrap"):
-                                UI['loc_map_action'] = ui.button("② 选择/加载地图", on_click=apply_map_path)\
-                                    .props("outline dense")
-                                ui.button("③ 开始重定位", on_click=begin_relocalization)\
-                                    .props("outline dense")
-                            with ui.expansion('建图 bag（可选，只读核验）', icon='inventory_2').classes('w-full compact-expansion'):
-                                UI['loc_bag_path'] = ui.input('bag 目录或 metadata.yaml').classes('w-full')
-                                ui.button('核验 bag 记录', on_click=inspect_selected_bag).props('outline dense')
-                                UI['loc_bag_result'] = ui.label('未选择历史记录，不影响 PCD 在线定位。').classes('text-xs text-slate-400 break-all')
-                                _lbl('这里只核验历史记录，不回放、不发布 TF / 位姿。离线重建需使用独立回放入口，不能将历史数据混入当前实机链路。', 'text-xs text-slate-400')
-                            with ui.row().classes("gap-2 items-center flex-wrap"):
-                                UI["ip_x"] = ui.number("x", value=0.0, format="%.2f").classes("w-24")
-                                UI["ip_y"] = ui.number("y", value=0.0, format="%.2f").classes("w-24")
-                                UI["ip_yaw"] = ui.number("yaw", value=0.0, format="%.2f").classes("w-24")
-                                UI["ip_frame"] = ui.input("frame", value="map").classes("w-24")
-                                ui.button("④ 发送初始位姿", on_click=send_initialpose)\
-                                    .props("outline dense")
-                            with ui.row().classes("gap-2 flex-wrap"):
-                                ui.button("⑤ 进入跟踪", on_click=request_enter_tracking)\
-                                    .props("outline dense")
-                            _lbl("初始位姿：重定位阶段需要发布以初始化搜索；进入 tracking 后不需要。",
-                                 "text-xs text-slate-500")
-                        with ui.column().classes("w-full grow gap-2"):
-                            with ui.grid(columns=4).classes("w-full gap-x-3 gap-y-1 status-grid"):
+                    # ---------------- Tab 3: 定位 ----------------
+                    with ui.tab_panel("定位"):
+                        with _card2("位姿与离线地图定位"):
+                            with ui.row().classes("w-full items-center justify-between gap-2"):
+                                UI['loc_workflow'] = ui.label('').classes('text-xs text-amber-300 grow min-w-0')
+                                ui.button("定位 RViz", icon="visibility", on_click=lambda: start_slam_rviz("loc"))\
+                                    .props("outline dense size=sm shrink-0")
+                            with ui.element("div").classes("grid grid-cols-2 sm:grid-cols-3 gap-2 w-full status-grid"):
                                 UI["life_loc"] = _kv("生命周期")
                                 UI["loc_session"] = _kv("定位会话")
-                                UI["loc_match"] = _kv("位姿状态")
+                                UI["loc_match"] = _kv("收敛状态")
                                 UI["loc_pose"] = _kv("当前位姿")
                                 UI["l_fresh"] = _kv("数据新鲜度")
                                 UI["loc_rviz"] = _kv("RViz")
-                            UI["loc_track_result"] = _kv("跟踪结果")
+                            UI["loc_track_result"] = _kv("跟踪切换反馈")
+
+                            with ui.column().classes("w-full gap-2 sub-panel p-2.5") as offline_loc_controls:
+                                UI['offline_localization_controls'] = offline_loc_controls
+                                with ui.row().classes("w-full gap-2 items-center flex-wrap"):
+                                    UI["map_path"] = ui.input(
+                                        "定位参考 PCD",
+                                        value=(current_map_path if os.path.isfile(current_map_path) else
+                                               (DEFAULT_MAP_PATH if os.path.isfile(DEFAULT_MAP_PATH) else ""))
+                                    ).props("outlined dense").classes("grow min-w-[220px]")
+                                    UI['loc_map_action'] = ui.button("② 选择/加载地图", on_click=apply_map_path)\
+                                        .props("outline dense")
+                                    ui.button("③ 开始重定位", on_click=begin_relocalization).props("outline dense")
+                                    ui.button("⑤ 进入跟踪", on_click=request_enter_tracking).props("color=positive dense")
+                                with ui.row().classes("w-full gap-2 items-center flex-wrap"):
+                                    UI["ip_x"] = ui.number("初始 x[m]", value=0.0, format="%.2f").props("outlined dense").classes("w-24")
+                                    UI["ip_y"] = ui.number("初始 y[m]", value=0.0, format="%.2f").props("outlined dense").classes("w-24")
+                                    UI["ip_yaw"] = ui.number("yaw[deg]", value=0.0, format="%.1f").props("outlined dense").classes("w-24")
+                                    UI["ip_frame"] = ui.input("坐标系", value="map").props("outlined dense").classes("w-24")
+                                    ui.button("④ 发送初始位姿", on_click=send_initialpose).props("outline dense color=primary")
+
                             with ui.expansion("高级定位状态", icon="tune").classes(
                                     "w-full compact-expansion") as offline_advanced:
                                 UI['offline_loc_advanced'] = offline_advanced
-                                with ui.grid(columns=4).classes("w-full gap-x-3 gap-y-1"):
-                                    UI["loc_desk"] = _kv("定位进程")
-                                    UI["loc_map_loaded"] = _kv("地图加载")
-                                    UI["loc_reloc"] = _kv("重定位")
-                                    UI["loc_fitness"] = _kv("fitness")
-                                    UI["loc_pose_age"] = _kv("位姿年龄")
-                                    UI["loc_map_pts"] = _kv("地图点数")
-                                    UI["loc_ground"] = _kv("地面 z")
-                                    UI["tf_check"] = _kv("TF")
-                                    UI["loc_pcd_match"] = _kv("PCD 一致性")
-                                    UI["loc_status"] = _kv("loc_status")
-                                    UI["ip_result"] = _kv("初始位姿")
-                                    UI["loc_svc_result"] = _kv("服务结果")
-                                UI["loc_map_path"] = _kv("地图路径")
+                                with ui.column().classes("w-full gap-2 p-2"):
+                                    with ui.element("div").classes("grid grid-cols-2 sm:grid-cols-4 gap-2 w-full"):
+                                        UI["loc_desk"] = _kv("定位进程")
+                                        UI["loc_map_loaded"] = _kv("地图加载")
+                                        UI["loc_reloc"] = _kv("重定位")
+                                        UI["loc_fitness"] = _kv("fitness")
+                                        UI["loc_pose_age"] = _kv("位姿年龄")
+                                        UI["loc_map_pts"] = _kv("地图点数")
+                                        UI["loc_ground"] = _kv("地面 z")
+                                        UI["tf_check"] = _kv("TF")
+                                        UI["loc_pcd_match"] = _kv("PCD 一致性")
+                                        UI["loc_status"] = _kv("loc_status")
+                                        UI["ip_result"] = _kv("初始位姿")
+                                        UI["loc_svc_result"] = _kv("服务结果")
+                                    UI["loc_map_path"] = _kv("地图路径")
 
-            with ui.tab_panel("导航"):
-                with _card2('运行流程（点击环节查看原因与恢复条件）'):
-                    UI['run_flow_html']=ui.html(_run_flow_html(),sanitize=False).classes('w-full')
-                with _card2("恢复策略（运行时调试，写入即生效）"):
-                    with ui.row().classes("w-full gap-3 items-end"):
-                        UI["rec_local"]=ui.number("局部绕行次数",value=15,min=1,max=50,format="%d").classes("w-32")
-                        UI["rec_global"]=ui.number("全局重规划次数",value=5,min=1,max=20,format="%d").classes("w-32")
-                        UI["rec_wait"]=ui.number("等待超时 [s]（0=手动）",value=0,min=0,max=600,format="%.0f").classes("w-40")
-                        ui.button("应用",on_click=_apply_recovery).props("outline dense")
-                        ui.button("继续任务",on_click=_resume_recovery).props("outline dense color=positive")
-                    UI["rec_status"]=ui.label("恢复策略：未触发").classes("text-xs text-slate-400")
-                    _lbl("局部绕行用尽后自动全局重规划，两者都用尽则零速等待并保留目标；参数写入规划节点，不重启。等待超时>0且自动恢复开启时按其重试。","text-xs text-slate-400")
-                with _card2("③ 导航模块"):
-                    UI['navigation_mode']=ui.select(['地图选点移动','手动记录路线'],value=TASK_STATE.mode,
-                        on_change=lambda e:change_navigation_mode(e.value),label='导航模式').classes('w-64')
-                    _lbl('地图模式：选点后规划并开始行驶。路线模式：遥控到点停车→记录→保存→加载→开始运行（先到起点）。','text-xs text-slate-400')
-                    with ui.row().classes("gap-2"):
-                        ui.button('结束当前任务',icon='stop_circle',on_click=stop_navigation_motion).props('outline dense color=negative')
-                        ui.button("导航 RViz", icon="visibility", on_click=start_nav_visualization).props("outline dense")
-                        ui.button("关闭导航 RViz", on_click=stop_nav_visualization).props("flat dense")
-                    with ui.row().classes("w-full gap-4 items-start"):
-                        with ui.column().classes("w-full lg:w-[430px] gap-2"):
-                            UI["nav_pcd"] = ui.input(
-                                "导航 PCD",
-                                value=(DEFAULT_MAP_PATH
-                                       if os.path.isfile(DEFAULT_MAP_PATH) else ""),
-                            ).classes("w-full")
-                            UI["nav_ground_z"] = ui.number(
-                                "导航地面 z", value=DEFAULT_NAV_GROUND, format="%.2f").classes("w-28")
-                            with ui.row().classes("gap-2 flex-wrap"):
-                                ui.button("同步 PCD", on_click=sync_nav_pcd)\
-                                    .props("outline dense")
-                                ui.button("同步地面", on_click=sync_nav_ground)\
-                                    .props("outline dense")
-                            with ui.row().classes("gap-2 items-center flex-wrap").bind_visibility_from(UI['navigation_mode'],'value',backward=lambda v:v=='地图选点移动'):
-                                UI["goal_x"] = ui.number("目标 x", value=0.0, format="%.2f").classes("w-28")
-                                UI["goal_y"] = ui.number("目标 y", value=0.0, format="%.2f").classes("w-28")
-                                UI["goal_yaw"] = ui.number("目标 yaw [deg]", value=0.0, format="%.1f").classes("w-32")
-                                UI["goal_yaw_on"] = ui.checkbox(
-                                    "设置朝向（关闭=按当前机身朝向）", value=False,
-                                    on_change=lambda e:_goal_yaw_mode(e.value)).classes("text-xs")
-                                UI["goal_yaw"].enabled = False
-                                ui.button("发送导航目标", on_click=send_goal)\
-                                    .props("color=primary")
-                            _lbl("规划成功后，确认条件就绪再点“开始沿路径行驶”；不会自动动。",
-                                 "text-xs text-amber-300")
-                            _lbl('速度上限支持0.01～0.8 m/s；更改后重新启动导航。实际速度还受路径、制动距离和轮转向约束限制。','text-xs text-slate-400')
-                            UI["drive_ready"] = _kv("行驶条件")
-                            with ui.row().classes("gap-2 items-center flex-wrap"):
-                                UI["slow_speed"] = ui.number(
-                                    "速度上限 m/s", value=0.4, format="%.3f",
-                                    min=0.01, max=0.8).classes("w-28")
-                                UI["planning_model"] = ui.select(
-                                    {"urdf": "URDF 足迹", "double_cylinder": "双圆柱（原始 SCAN）"},
-                                    value="urdf", label="规划模型（下次启动生效）").classes("w-56")
-                                UI['slow_cbf'] = ui.checkbox('CBF（后续专项验收）', value=False).disable()
-                                UI["drive_button"] = ui.button(
-                                    "开始沿路径行驶",
-                                    on_click=start_navigation_motion)\
-                                    .props("color=negative").bind_visibility_from(UI['navigation_mode'],'value',backward=lambda v:v=='地图选点移动')
-                                ui.button("停止行驶（零速）", on_click=stop_navigation_motion)\
-                                    .props("outline dense")
-                            UI["slow_status"] = _kv("行驶状态")
-                            UI["motion_result"] = _kv("执行结果")
-                            UI["goal_result"] = _kv("目标结果")
-                            build_teaching_panel()
-                            build_pcd_tools_panel()
-                        with ui.column().classes("w-full grow gap-2"):
-                            with ui.grid(columns=4).classes("w-full gap-x-3 gap-y-1 status-grid"):
-                                UI["life_nav"] = _kv("生命周期")
-                                UI["nav_ready"] = _kv("导航就绪")
-                                UI["nav_gate"] = _kv("目标门控")
-                                UI["nav_global_plan"] = _kv("导航路径（动态更新）")
-                                UI["nav_feasibility"] = _kv("可行性")
-                            UI["nav_blockers"] = _kv("阻塞项")
-                            UI["nav_start_summary"] = ui.label("导航生命周期：尚未操作")\
-                                .classes("text-xs whitespace-pre-wrap break-all w-full")
-                            with ui.expansion("高级导航状态", icon="tune").classes(
-                                    "w-full compact-expansion"):
-                                UI["nav_plan"] = _kv("内部局部规划状态")
-                                with ui.grid(columns=4).classes("w-full gap-x-3 gap-y-1"):
-                                    UI["nav_pose"] = _kv("导航位姿")
-                                    UI["n_fresh"] = _kv("导航输入")
-                                    UI["nav_rviz"] = _kv("导航 RViz")
-                                    UI["nav_pcd_match"] = _kv("PCD 一致性")
-                                    UI["nav_ground_match"] = _kv("地面一致性")
-                                UI["nav_result"] = _kv("导航操作")
+                            with ui.expansion('建图 bag 只读核验（可选）', icon='inventory_2').classes('w-full compact-expansion'):
+                                with ui.row().classes("w-full gap-2 items-center p-2 flex-wrap"):
+                                    UI['loc_bag_path'] = ui.input('bag 目录或 metadata.yaml').props('outlined dense').classes('grow min-w-[220px]')
+                                    ui.button('核验 bag 记录', on_click=inspect_selected_bag).props('outline dense')
+                                    UI['loc_bag_result'] = ui.label('未选择历史记录，不影响在线定位。').classes('text-[11px] text-slate-400 w-full break-all')
 
-            with ui.tab_panel("参数管理"):
-                with _card2("参数管理（我方设计参数，不含甲方）"):
-                    from param_manager import options as _pm_options
-                    _pm_opts=_pm_options()
-                    _pm_first=next(iter(_pm_opts))
-                    with ui.row().classes("w-full gap-3 items-end"):
-                        UI["pm_select"]=ui.select(_pm_opts,value=_pm_first,label="参数",
-                            on_change=lambda e:_pm_select(e.value)).classes("w-[28rem]").props("outlined dense")
-                        UI["pm_value"]=ui.input("值").classes("w-32").props("dense")
-                        ui.button("读取",on_click=_pm_read).props("flat dense")
-                        ui.button("应用",on_click=_pm_apply).props("outline dense")
-                    UI["pm_desc"]=ui.label(_pm_text(_pm_first)).classes("text-xs text-slate-300 whitespace-pre-line")
-                    UI["pm_result"]=ui.label("").classes("text-xs text-slate-400")
-                    _lbl("只列本仓库定义的速度/恢复/审查/规划参数；甲方 SLAM、底盘、雷达、遥控参数不在此列。标“重启”的参数写入后需重启对应节点。","text-xs text-amber-400")
-            with ui.tab_panel("节点管理"):
-                with _card2("系统节点管理"):
-                    _lbl("按功能查看当前 ROS 图；分类不代表进程所有权。"
-                         "话题随发布节点生灭，TF 允许多个节点发布不同坐标边。",
-                         "text-xs text-slate-400")
-                    with ui.row().classes("w-full gap-2 items-center"):
-                        UI["node_category"] = ui.select(
-                            ["全部", *NODE_CATEGORIES], value="全部", label="功能分类",
-                            on_change=lambda _: refresh_health()).props("dense outlined").classes("w-52")
-                        UI["node_search"] = ui.input(
-                            "搜索节点 / 进程 / 关键话题", on_change=lambda _: refresh_health())\
-                            .props("dense outlined clearable").classes("grow")
-                        ui.button("刷新节点", icon="refresh", on_click=refresh_census_now).props("flat dense")
-                    UI["node_category_summary"] = ui.label("等待节点普查…").classes("text-xs text-slate-400")
-                    with ui.grid(columns=4).classes("w-full gap-x-3 gap-y-1 status-grid"):
-                        UI["health_count"] = _kv("节点数")
-                        UI["health_dup"] = _kv("重复节点")
-                        UI["proc_nodes"] = _kv("进程节点")
-                        UI["proc_procs"] = _kv("进程")
-                    UI["dup_banner"] = _kv("重复提示")
-                    UI["health_nodes"] = ui.table(columns=[
-                        {"name": key, "label": label, "field": key, "align": "left", "sortable": True}
-                        for key, label in (
-                            ("category", "分类"), ("name", "节点"), ("role", "功能"),
-                            ("count", "同名数"), ("state", "状态"),
-                            ("owner", "进程/归属"), ("management", "管理入口"),
-                            ("topics", "关键发布话题"))], rows=[], row_key="name", pagination=10)\
-                        .props("dense flat bordered wrap-cells").classes("w-full")
-                    UI["node_detail_select"] = ui.select(
-                        [], label="选择节点查看完整接口 / 填入停止计划", on_change=select_node_detail)\
-                        .props("dense outlined clearable use-input").classes("w-full")
-                    UI["node_detail"] = ui.label("选择节点查看发布/订阅接口。")\
-                        .classes("text-xs font-mono whitespace-pre-wrap max-h-52 overflow-auto w-full")
-                    with ui.expansion("关键话题发布者", icon="hub").classes("w-full compact-expansion"):
-                        UI["health_topics"] = ui.table(columns=[
-                            {"name": key, "label": label, "field": key, "align": "left"}
-                            for key, label in (("topic", "话题"), ("n", "发布节点数"),
-                                               ("state", "状态"), ("pubs", "发布节点"))],
-                            rows=[], row_key="topic", pagination=10).props("dense flat wrap-cells").classes("w-full")
-                    with ui.expansion("生命周期规则", icon="info").classes("w-full compact-expansion"):
-                        _lbl("定位/建图：互斥启动，检查前置链和残留；只停止 GUI 登记的进程组。"
-                             "导航：停止受管旧导航并复查，再启动；独立定位与驱动保留。"
-                             "雷达：已有唯一正确发布者时复用；重复/类型冲突阻止再启动。"
-                             "其他外部节点：核对归属后通过原启动入口管理。",
-                             "text-xs text-slate-400")
-                    with ui.expansion("节点停止工具", icon="power_settings_new").classes(
-                            "w-full compact-expansion"):
-                        UI["orphan_result"] = _kv("孤儿进程")
-                        UI["kill_target"] = ui.input("停止节点名").classes("w-full")
-                        UI["kill_external_nodes"] = ui.checkbox(
-                            "允许操作非本 GUI 托管的进程（外部终端启动）").classes("text-xs")
-                        _lbl("默认只停本 GUI 登记的进程组；勾选后可处理终端启动的 N-01 节点。"
-                             "甲方底盘 / 腿控 / 手柄 / Livox / lpms 始终受保护。",
-                             "text-xs text-amber-400")
-                        UI["kill_result"] = _kv("停止结果")
-                        with ui.row().classes("gap-2"):
-                            ui.button("查看停止计划", on_click=show_kill_plan)\
-                                .props("outline dense")
-                            ui.button("执行停止", on_click=kill_selected)\
-                                .props("color=negative dense")
-                    with ui.expansion("完整诊断信息", icon="monitor_heart").classes(
-                            "w-full compact-expansion"):
-                        UI["diag_topics"] = _kv("话题")
-                        UI["diag_nodes"] = _kv("节点")
-                        UI["ds_table"] = _kv("数据源")
-                        with ui.element("div").classes("hidden"):
-                            UI["chart_info"] = _kv("图表信息")
-                            UI["chart"] = _kv("图表")
-                            UI["life_slam_note"] = _kv("生命周期说明")
-                            UI["viz_ws"] = _kv("工作空间")
-                        with ui.row().classes("gap-2"):
-                            ui.button("启动 Foxglove 桥", on_click=start_bridge).props("outline dense")
-                            ui.button("停止 Foxglove 桥", on_click=stop_bridge).props("outline dense")
-                        UI["viz_bridge_status"] = _kv("Foxglove 桥")
-                        UI["viz_rviz_status"] = _kv("RViz 状态")
+                    # ---------------- Tab 4: 导航 ----------------
+                    with ui.tab_panel("导航"):
+                        with ui.column().classes("w-full gap-2.5"):
+                            with _card2("③ 导航模块"):
+                                # 顶部工具条：模式切换 + 可视化 + 急停取消集中在一行
+                                with ui.row().classes("w-full items-center gap-2 flex-wrap"):
+                                    UI['navigation_mode'] = ui.select(
+                                        ['地图选点移动', '手动记录路线'], value=TASK_STATE.mode,
+                                        on_change=lambda e: change_navigation_mode(e.value), label='任务模式'
+                                    ).props('outlined dense').classes('w-44')
+                                    with ui.row().classes("items-center gap-1.5 ml-auto flex-wrap"):
+                                        ui.button("导航 RViz", icon="visibility", on_click=start_nav_visualization)\
+                                            .props("outline dense size=sm")
+                                        ui.button("关闭 RViz", on_click=stop_nav_visualization)\
+                                            .props("flat dense size=sm")
+                                        ui.button('结束当前任务', icon='stop_circle', on_click=stop_navigation_motion)\
+                                            .props('color=negative dense size=sm')
 
-    with ui.footer().classes("bg-slate-950 px-4 py-1"):
-        with ui.row().classes("w-full items-center gap-3"):
-            ui.label("运行日志").classes("text-xs text-slate-400 shrink-0")
-            UI["log"] = ui.log(max_lines=300).classes("w-full max-h-32 text-xs")
+                                # 核心状态指标卡（6宫格对齐）
+                                with ui.element("div").classes("grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-2 w-full status-grid"):
+                                    UI["life_nav"] = _kv("生命周期")
+                                    UI["nav_ready"] = _kv("导航就绪")
+                                    UI["nav_gate"] = _kv("目标门控")
+                                    UI["nav_global_plan"] = _kv("全局路径")
+                                    UI["nav_feasibility"] = _kv("可行性审查")
+                                    UI["nav_blockers"] = _kv("阻塞项")
+
+                                # 双栏主操作台：左栏地图/地面基准，右栏目标下发与闭环行驶
+                                with ui.element("div").classes("grid grid-cols-1 xl:grid-cols-2 gap-2.5 w-full items-stretch"):
+                                    with ui.column().classes("sub-panel p-2.5 gap-2 w-full justify-between"):
+                                        _lbl("地图基准与规划包络（跟踪后自动同步 PCD 与地面）", "text-xs font-semibold text-slate-200")
+                                        with ui.row().classes("w-full gap-1.5 items-center no-wrap"):
+                                            UI["nav_pcd"] = ui.input(
+                                                "导航 PCD",
+                                                value=(DEFAULT_MAP_PATH if os.path.isfile(DEFAULT_MAP_PATH) else "")
+                                            ).props("outlined dense").classes("grow min-w-0")
+                                        with ui.row().classes("w-full gap-2 items-center flex-wrap"):
+                                            UI["nav_ground_z"] = ui.number(
+                                                "地面 z[m]", value=DEFAULT_NAV_GROUND, format="%.2f"
+                                            ).props("outlined dense").classes("w-24")
+                                            UI["planning_model"] = ui.select(
+                                                {"urdf": "URDF 足迹", "double_cylinder": "双圆柱"},
+                                                value="urdf", label="包络模型"
+                                            ).props("outlined dense").classes("grow min-w-[120px]")
+                                            UI['slow_cbf'] = ui.checkbox('CBF', value=False).props('dense').classes('hidden')
+
+                                    with ui.column().classes("sub-panel p-2.5 gap-2 w-full justify-between").bind_visibility_from(
+                                            UI['navigation_mode'], 'value', backward=lambda v: v == '地图选点移动'):
+                                        _lbl("目标规划与闭环执行（规划后手动授权行驶）", "text-xs font-semibold text-cyan-300")
+                                        with ui.row().classes("w-full gap-1.5 items-center flex-wrap"):
+                                            UI["goal_x"] = ui.number("目标 x", value=0.0, format="%.2f").props("outlined dense").classes("w-20")
+                                            UI["goal_y"] = ui.number("目标 y", value=0.0, format="%.2f").props("outlined dense").classes("w-20")
+                                            UI["goal_yaw"] = ui.number("朝向°", value=0.0, format="%.1f").props("outlined dense").classes("w-20")
+                                            UI["goal_yaw_on"] = ui.checkbox(
+                                                "指定朝向", value=False, on_change=lambda e: _goal_yaw_mode(e.value)
+                                            ).props("dense").classes("text-xs")
+                                            UI["goal_yaw"].enabled = False
+                                            ui.button("发送目标", icon="send", on_click=send_goal)\
+                                                .props("color=primary dense").classes("ml-auto")
+                                        with ui.row().classes("w-full gap-1.5 items-center flex-wrap"):
+                                            UI["slow_speed"] = ui.number(
+                                                "限速[m/s]", value=0.4, format="%.2f", min=0.01, max=1.0
+                                            ).props("outlined dense").classes("w-24")
+                                            ui.button("应用限速", on_click=apply_navigation_speed).props("outline dense size=sm")
+                                            UI["drive_button"] = ui.button(
+                                                "开始沿路径行驶", on_click=start_navigation_motion
+                                            ).props("color=negative dense")
+                                            ui.button("暂停", on_click=pause_navigation_motion).props("outline dense size=sm")
+                                            ui.button("恢复", on_click=resume_navigation_motion).props("outline dense size=sm")
+                                            ui.button("停车", on_click=stop_navigation_motion).props("outline dense size=sm")
+
+                                build_teaching_panel()
+
+                                # 执行反馈四联栅格（告别竖向长条堆叠）
+                                with ui.element("div").classes("grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2 w-full status-grid"):
+                                    UI["drive_ready"] = _kv("行驶准入")
+                                    UI["goal_result"] = _kv("规划反馈")
+                                    UI["slow_status"] = _kv("控制器状态")
+                                    UI["motion_result"] = _kv("执行结果")
+
+                            # 紧凑八阶段流程卡
+                            with _card2("运行流程（点击阶段展开证据）"):
+                                UI['run_flow_html'] = ui.html(_run_flow_html(), sanitize=False).classes('w-full')
+
+                            # 低频调参与高级诊断统一折叠收纳
+                            with ui.expansion("恢复策略与运行时调参", icon="published_with_changes").classes("w-full compact-expansion"):
+                                with ui.column().classes("w-full gap-2 p-2"):
+                                    with ui.row().classes("w-full gap-2 items-center flex-wrap"):
+                                        UI["rec_local"] = ui.number("局部绕行次数", value=15, min=1, max=50, format="%d").props("outlined dense").classes("w-28")
+                                        UI["rec_global"] = ui.number("全局重规划次数", value=5, min=1, max=20, format="%d").props("outlined dense").classes("w-32")
+                                        UI["rec_wait"] = ui.number("等待超时[s]", value=0, min=0, max=600, format="%.0f").props("outlined dense").classes("w-28")
+                                        ui.button("应用", on_click=_apply_recovery).props("outline dense")
+                                        ui.button("继续任务", on_click=_resume_recovery).props("outline dense color=positive")
+                                    UI["rec_status"] = ui.label("恢复策略：未触发").classes("text-xs text-slate-400")
+
+                            with ui.expansion("高级导航状态", icon="tune").classes("w-full compact-expansion"):
+                                with ui.column().classes("w-full gap-2 p-2"):
+                                    with ui.element("div").classes("grid grid-cols-2 sm:grid-cols-3 gap-2 w-full"):
+                                        UI["nav_plan"] = _kv("局部规划状态")
+                                        UI["nav_pose"] = _kv("导航位姿")
+                                        UI["n_fresh"] = _kv("导航输入")
+                                        UI["nav_rviz"] = _kv("导航 RViz")
+                                        UI["nav_pcd_match"] = _kv("PCD 一致性")
+                                        UI["nav_ground_match"] = _kv("地面一致性")
+                                    UI["nav_start_summary"] = ui.label("导航生命周期：尚未操作").classes(
+                                        "text-xs whitespace-pre-wrap break-all w-full text-slate-300")
+                                    UI["nav_result"] = _kv("导航操作输出")
+
+                    # ---------------- Tab 5: 参数管理 ----------------
+                    with ui.tab_panel("参数管理"):
+                        with ui.column().classes("w-full gap-2.5"):
+                            with _card2("参数管理（N-01 自有参数，不含甲方驱动）"):
+                                from param_manager import options as _pm_options
+                                _pm_opts = _pm_options()
+                                _pm_first = next(iter(_pm_opts))
+                                with ui.row().classes("w-full gap-2 items-center flex-wrap"):
+                                    UI["pm_select"] = ui.select(
+                                        _pm_opts, value=_pm_first, label="参数项",
+                                        on_change=lambda e: _pm_select(e.value)
+                                    ).classes("grow min-w-[260px]").props("outlined dense")
+                                    UI["pm_value"] = ui.input("设定值").classes("w-32").props("outlined dense")
+                                    ui.button("读取", on_click=_pm_read).props("outline dense")
+                                    ui.button("应用", on_click=_pm_apply).props("color=primary dense")
+                                UI["pm_desc"] = ui.label(_pm_text(_pm_first)).classes("text-xs text-slate-300 whitespace-pre-line sub-panel p-2 w-full")
+                                UI["pm_result"] = ui.label("").classes("text-xs text-cyan-300")
+                                _lbl("标有“重启”的参数写入后需重启对应导航节点生效。", "text-[11px] text-amber-400")
+
+                            with _card2("最新 mesh 几何标定（只读采集）"):
+                                with ui.row().classes("w-full gap-2 items-center flex-wrap"):
+                                    ui.button("一键标定", icon="straighten", on_click=run_geometry_calibration).props("color=primary dense")
+                                    UI["cal_status"] = ui.label(
+                                        "采集 footprint / body z / 地面证据，不自动改写安全参数"
+                                    ).classes("text-xs text-slate-400")
+                                UI["cal_result"] = ui.label("").classes("text-[11px] font-mono whitespace-pre-wrap w-full")
+
+                    # ---------------- Tab 6: 节点管理 / 诊断 ----------------
+                    with ui.tab_panel("节点管理"):
+                        with _card2("系统节点与诊断"):
+                            with ui.row().classes("w-full gap-2 items-center flex-wrap"):
+                                UI["node_category"] = ui.select(
+                                    ["全部", *NODE_CATEGORIES], value="全部", label="功能分类",
+                                    on_change=lambda _: refresh_health()
+                                ).props("dense outlined").classes("w-44")
+                                UI["node_search"] = ui.input(
+                                    "搜索节点 / 进程 / 话题", on_change=lambda _: refresh_health()
+                                ).props("dense outlined clearable").classes("grow min-w-[180px]")
+                                ui.button("刷新", icon="refresh", on_click=refresh_census_now).props("outline dense")
+                            UI["node_category_summary"] = ui.label("等待节点普查…").classes("text-[11px] text-slate-400")
+                            with ui.element("div").classes("grid grid-cols-2 sm:grid-cols-4 gap-2 w-full status-grid"):
+                                UI["health_count"] = _kv("在线节点")
+                                UI["health_dup"] = _kv("重名检查")
+                                UI["proc_nodes"] = _kv("SLAM在位")
+                                UI["proc_procs"] = _kv("GUI托管")
+                            UI["dup_banner"] = _kv("图健康提示")
+                            UI["health_nodes"] = ui.table(columns=[
+                                {"name": key, "label": label, "field": key, "align": "left", "sortable": True}
+                                for key, label in (
+                                    ("category", "分类"), ("name", "节点"), ("role", "职责"),
+                                    ("count", "同名"), ("state", "状态"),
+                                    ("owner", "宿主进程"), ("management", "管理入口"),
+                                    ("topics", "关键发布"))], rows=[], row_key="name", pagination=8)\
+                                .props("dense flat bordered wrap-cells").classes("w-full text-xs")
+                            UI["node_detail_select"] = ui.select(
+                                [], label="选择节点查看发布/订阅接口或填入停止计划", on_change=select_node_detail
+                            ).props("dense outlined clearable use-input").classes("w-full")
+                            UI["node_detail"] = ui.label("选择节点查看发布/订阅接口。")\
+                                .classes("text-[11px] font-mono whitespace-pre-wrap max-h-40 overflow-auto w-full sub-panel p-2")
+                            with ui.expansion("关键话题发布者", icon="hub").classes("w-full compact-expansion"):
+                                UI["health_topics"] = ui.table(columns=[
+                                    {"name": key, "label": label, "field": key, "align": "left"}
+                                    for key, label in (("topic", "话题"), ("n", "发布数"),
+                                                       ("state", "状态"), ("pubs", "发布节点"))],
+                                    rows=[], row_key="topic", pagination=8).props("dense flat wrap-cells").classes("w-full text-xs")
+                            with ui.expansion("节点停止工具", icon="power_settings_new").classes("w-full compact-expansion"):
+                                with ui.column().classes("w-full gap-2 p-2"):
+                                    UI["orphan_result"] = _kv("孤儿进程")
+                                    with ui.row().classes("w-full gap-2 items-center flex-wrap"):
+                                        UI["kill_target"] = ui.input("目标节点名").props("outlined dense").classes("grow")
+                                        UI["kill_external_nodes"] = ui.checkbox("允许操作外部进程").props("dense").classes("text-xs")
+                                        ui.button("查看计划", on_click=show_kill_plan).props("outline dense")
+                                        ui.button("执行停止", on_click=kill_selected).props("color=negative dense")
+                                    UI["kill_result"] = _kv("停止结果")
+                            with ui.expansion("完整诊断信息", icon="monitor_heart").classes("w-full compact-expansion"):
+                                with ui.column().classes("w-full gap-2 p-2"):
+                                    UI["diag_topics"] = _kv("话题年龄")
+                                    UI["diag_nodes"] = _kv("节点汇总")
+                                    UI["ds_table"] = _kv("数据源普查")
+                                    with ui.element("div").classes("hidden"):
+                                        UI["chart_info"] = _kv("图表信息")
+                                        UI["chart"] = _kv("图表")
+                                        UI["life_slam_note"] = _kv("生命周期说明")
+                                        UI["viz_ws"] = _kv("工作空间")
+                                    with ui.row().classes("gap-2 items-center flex-wrap"):
+                                        ui.button("启动 Foxglove 桥", on_click=start_bridge).props("outline dense size=sm")
+                                        ui.button("停止 Foxglove 桥", on_click=stop_bridge).props("outline dense size=sm")
+                                        UI["viz_bridge_status"] = _kv("Foxglove 桥")
+                                        UI["viz_rviz_status"] = _kv("RViz 状态")
+
+                # 右栏底部可折叠运行日志（不占用全屏固定底栏高度）
+                with ui.expansion("运行日志", icon="terminal", value=True).classes("w-full compact-expansion"):
+                    UI["log"] = ui.log(max_lines=300).classes(
+                        "w-full h-24 text-[11px] font-mono bg-slate-950/80 rounded p-1.5")
+
     refresh_backend_descriptions()
 
 def build_page() -> None:
@@ -7770,8 +7614,8 @@ def build_page() -> None:
     build_console_page()
     # Element timers belong to this page and are cancelled on deletion. The
     # process-wide worker and owned ROS nodes survive browser reconnects.
-    for interval,callback in ((.5,refresh_console),(.5,refresh_panels),(.5,refresh_chain),
-                              (1.,refresh_health),(.3,draw_grid),(.3,drain_logs)):
+    for interval,callback in ((.5,refresh_console),(1.,refresh_panels),(1.,refresh_chain),
+                              (1.5,refresh_health),(.5,draw_grid),(.5,drain_logs)):
         view.timers.append(ui.timer(interval,callback))
 
 

@@ -62,7 +62,10 @@ class MotionFeedback:
                        'CHASSIS_KINEMATICS_BLOCKED': '行驶暂停：底盘运动学约束不满足',
                        'CBF_SENSOR_STALE': '行驶暂停：CBF 所需传感器数据过期',
                        'CBF_INVALID_TRACK': '行驶暂停：CBF 障碍物跟踪数据无效',
-                       'ALIGN': '正在调整朝向'})
+                       'ALIGN': '正在调整朝向', 'SETTLING': '旋转后停稳确认',
+                       'FINAL_APPROACH': '低速最终进近', 'REVERSING': '受限倒车恢复',
+                       'WAITING_FOR_STEERING': '等待转向条件',
+                       'PAUSED': '用户暂停', 'SAFETY_HOLD': '安全保持：等待条件恢复'})
         if state=='MOVING' and (data.get('navigation_degraded') or data.get('steering_degraded')):
             labels['MOVING']='降速行驶'
         text = labels.get(state, '行驶暂停/等待：' + state)

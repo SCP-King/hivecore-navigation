@@ -1,5 +1,6 @@
 #include <navigation/recovery.hpp>
 #include <unordered_map>
+#include <map>
 #ifndef _SCAN_REPLAN_FSM_H_
 #define _SCAN_REPLAN_FSM_H_
 
@@ -141,6 +142,11 @@ namespace scan_planner
     std::string global_phase_,global_reason_,local_phase_,local_reason_;
     double planning_phase_since_{0.};
     int local_attempts_{0},global_replans_{0};
+    double local_stage_horizon_{4.0};
+    double final_handoff_radius_{0.50};
+    int auto_resume_attempts_{0}, auto_resume_max_{3};
+    std::map<std::string,int> local_failure_counts_;
+    std::string dominant_local_failure_;
     void publishGlobalPath();
     void refreshGlobalPathSamples();
     bool checkAndRepairDirtyGlobal();

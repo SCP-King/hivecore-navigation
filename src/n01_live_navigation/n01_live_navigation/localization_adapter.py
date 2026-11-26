@@ -81,6 +81,7 @@ class N01LocalizationAdapter(Node):
             "output_pose_child_frame": "",
             "pose_mirror_topic": "",
             "broadcast_pose_tf": False,
+            "broadcast_input_pose_tf": False,
             "initial_pose_input_topic": "",
             "initial_pose_output_topic": "",
             "initial_pose_preserve_height": False,
@@ -107,6 +108,7 @@ class N01LocalizationAdapter(Node):
         self.output_child = str(get("output_pose_child_frame")).lstrip("/")
         self.mirror_topic = str(get("pose_mirror_topic"))
         self.broadcast_pose_tf = bool(get("broadcast_pose_tf"))
+        self.broadcast_input_pose_tf = bool(get("broadcast_input_pose_tf"))
         self.initial_preserve_height = bool(get('initial_pose_preserve_height'))
         self.last_output_height = None
         self.last_output_stamp_ns = 0
@@ -147,6 +149,7 @@ class N01LocalizationAdapter(Node):
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.tf_broadcaster = TransformBroadcaster(self) if self.broadcast_pose_tf else None
+        self.input_tf_broadcaster = TransformBroadcaster(self) if self.broadcast_input_pose_tf else None
         initial_input, initial_output = str(get('initial_pose_input_topic')), str(get('initial_pose_output_topic'))
         if initial_input and initial_output:
             if initial_input == initial_output:
@@ -293,6 +296,15 @@ class N01LocalizationAdapter(Node):
                 self.pose_counts["unexpected_frame"] += 1
             elif issue.startswith("unexpected_child_frame_id:"):
                 self.pose_counts["unexpected_child_frame"] += 1
+        if self.input_tf_broadcaster and not issues:
+            input_tf = TransformStamped()
+            input_tf.header = copy.deepcopy(message.header)
+            input_tf.child_frame_id = message.child_frame_id
+            p = message.pose.pose.position
+            q = message.pose.pose.orientation
+            input_tf.transform.translation.x, input_tf.transform.translation.y, input_tf.transform.translation.z = p.x, p.y, p.z
+            input_tf.transform.rotation = copy.deepcopy(q)
+            self.input_tf_broadcaster.sendTransform(input_tf)
         if self.output_child and self.output_child != self.expected_pose_child_frame:
             if issues:
                 return  # Cannot transform a sample with an unknown frame/time.

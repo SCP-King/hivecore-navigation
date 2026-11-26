@@ -37,15 +37,16 @@ def setup(node):
 def live_points(node,with_stamp=False):
     # Raw full-azimuth data avoids the preprocessor's rear azimuth crop.
     # Delayed TF can match an earlier buffered scan; latest-TF substitution is forbidden.
+    max_age=float(getattr(node,'scene_max_age_s',3.0))
     for msg in reversed(node.rotation_raw):
         age=(node.get_clock().now().nanoseconds-(msg.header.stamp.sec*10**9+msg.header.stamp.nanosec))/1e9
-        if not -.1<=age<=.6:continue
+        if not -.1<=age<=max_age:continue
         stamp=msg.header.stamp.sec*10**9+msg.header.stamp.nanosec
         try:
             predicted=prediction_metadata(getattr(node,'readiness',None)) is not None
             if predicted:
                 stamp=msg.header.stamp.sec*10**9+msg.header.stamp.nanosec
-                body=interpolate_pose(list(node.rotation_pose_cache),stamp,.2)
+                body=interpolate_pose(list(node.rotation_pose_cache),stamp,.5)
                 if body is None:continue
                 tf=node.rotation_tf.lookup_transform('base_link',msg.header.frame_id,Time.from_msg(msg.header.stamp))
             else:

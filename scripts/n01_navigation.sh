@@ -60,7 +60,7 @@ managed_nodes_absent() {
   local nodes="$1" node
   local managed=(/n01_robot_footprint /n01_trajectory_display /n01_static_map /n01_realtime_reference /n01_environment_display /n01_live_runtime_supervisor
     /n01_live_safety_supervisor /n01_live_dynamic_obstacle_tracker
-    /n01_hive2_trajectory_monitor /n01_live_scan_goal_gate /scan_planner_node
+    /n01_hive2_trajectory_monitor /n01_live_scan_goal_gate /n01_run_cmd_logger /scan_planner_node
     /n01_live_navigation_rviz)
   for node in "${managed[@]}"; do
     if grep -Fxq "$node" <<<"$nodes"; then return 1; fi
@@ -222,9 +222,18 @@ start_stack() {
   if [[ -n "$NAV_REFERENCE_TOPIC" ]]; then
     launch_args+=(realtime_reference_topic:="$NAV_REFERENCE_TOPIC")
   fi
-  nohup setsid ros2 launch n01_live_navigation live_scan.launch.py \
-    "${launch_args[@]}" \
-    >"$launch_log" 2>&1 </dev/null &
+  if [[ -z "${N01_NAV_CPU_SET:-}" ]] && [[ "$(nproc)" -ge 8 ]]; then
+    N01_NAV_CPU_SET="3-5"
+  fi
+  if [[ -n "${N01_NAV_CPU_SET:-}" ]] && command -v taskset >/dev/null 2>&1; then
+    nohup setsid taskset -c "$N01_NAV_CPU_SET" ros2 launch n01_live_navigation live_scan.launch.py \
+      "${launch_args[@]}" \
+      >"$launch_log" 2>&1 </dev/null &
+  else
+    nohup setsid ros2 launch n01_live_navigation live_scan.launch.py \
+      "${launch_args[@]}" \
+      >"$launch_log" 2>&1 </dev/null &
+  fi
   launch_pid=$!
   echo "$launch_pid" > "$PID_FILE"
   echo "launch_pid=$launch_pid"

@@ -21,7 +21,7 @@ def test_solid_render_preserves_unknown_and_highlights_current_observations():
     rgb=occupancy_colors(occ,live,.06)
     assert tuple(rgb[0,0])==(12,20,31)
     assert tuple(rgb[41,41])==(79,239,219)
-    assert tuple(rgb[20,20])==(116,151,182)
+    assert tuple(rgb[20,20])==(190,150,255)
     assert tuple(rgb[39,41])!=(12,20,31)  # Local visual halo.
     assert tuple(rgb[30,30])==(12,20,31)  # No fictitious free bounding box.
 
@@ -64,8 +64,8 @@ def test_occupancy_grid_projection_colors_layers_without_scipy():
            if isinstance(n,ast.FunctionDef) and n.name=='_project_occupancy')
     scope=dict(np=np,GRID_RES=.06,GRID_MAX_N=600,
                _GRID_UNKNOWN=(12,20,31),_GRID_FREE=(26,40,62),_GRID_BASE=(70,90,115),
-               _GRID_REF=(116,151,182),_GRID_LIVE=(79,239,219),
-               _GRID_BOTH=(255,196,87),_GRID_CLEARED=(60,110,90),_GRID_BASE_PTS={'pts':None})
+               _GRID_REF=(190,150,255),_GRID_LIVE=(79,239,219),
+               _GRID_REACHABLE=(246,246,242),_GRID_UNASSESSED=(76,86,105),_GRID_BASE_PTS={'pts':None})
     exec(compile(ast.Module(body=[f],type_ignores=[]),'projection','exec'),scope)
     data=np.zeros((20,20),np.int8)          # 0 = free
     data[2:6,2:6]=100                       # reference occupied block
@@ -74,29 +74,32 @@ def test_occupancy_grid_projection_colors_layers_without_scipy():
     ref=(data,0.,0.,.05,0.); live_layer=(live,0.,0.,.05,0.)
     rgb=scope['_project_occupancy'](ref,live_layer,{'x0':0.,'y0':0.,'size_m':2.0},600)
     colors=set(map(tuple,rgb.reshape(-1,3)))
-    assert (116,151,182) in colors, 'reference layer must be drawn'
+    assert (190,150,255) in colors, 'reference layer must be drawn'
     assert (79,239,219) in colors, 'live layer must be drawn'
-    assert (26,40,62) in colors, 'observed free must be distinguishable'
+    assert (76,86,105) in colors, 'observed free without search coverage must be marked unassessed'
     assert (12,20,31) in colors, 'never-observed stays darkest'
 
 
-def test_occupancy_agreement_colours_show_overlap_and_clearing():
+def test_search_inflation_is_visible_and_live_obstacles_keep_priority():
     source=(Path(__file__).resolve().parents[1]/'slam_lite_gui.py').read_text()
     f=next(n for n in ast.parse(source).body
            if isinstance(n,ast.FunctionDef) and n.name=='_project_occupancy')
     scope=dict(np=np,GRID_RES=.06,GRID_MAX_N=600,
                _GRID_UNKNOWN=(12,20,31),_GRID_FREE=(26,40,62),_GRID_BASE=(70,90,115),
-               _GRID_REF=(116,151,182),_GRID_LIVE=(79,239,219),
-               _GRID_BOTH=(255,196,87),_GRID_CLEARED=(60,110,90),_GRID_BASE_PTS={'pts':None})
+               _GRID_REF=(190,150,255),_GRID_LIVE=(79,239,219),
+               _GRID_REACHABLE=(246,246,242),_GRID_UNASSESSED=(76,86,105),_GRID_BASE_PTS={'pts':None})
     exec(compile(ast.Module(body=[f],type_ignores=[]),'projection','exec'),scope)
     ref=np.full((20,20),-1,np.int8); ref[2:8,2:8]=100
     live=np.full((20,20),-1,np.int8); live[2:8,2:8]=100
     live[2:4,2:4]=0; live[10:14,10:14]=100
+    live[0:2,0:2]=0
+    search=np.zeros_like(ref); search[15:18,15:18]=100
     rgb=scope['_project_occupancy']((ref,0.,0.,.05,0.),(live,0.,0.,.05,0.),
-                                    {'x0':0.,'y0':0.,'size_m':1.0},600)
+                                    {'x0':0.,'y0':0.,'size_m':1.0},600,
+                                    search_layer=(search,0.,0.,.05,0.))
     colors=set(map(tuple,rgb.reshape(-1,3)))
-    assert (255,196,87) in colors, 'static+live overlap must be visible'
-    assert (60,110,90) in colors, 'live clearing static must be visible'
+    assert (142,102,54) not in colors, 'search-occupied must not flood the diagnostic map'
+    assert (246,246,242) in colors, 'known free and planner-connected must be white'
     assert (79,239,219) in colors, 'live-only must stay distinct'
 
 
@@ -114,7 +117,17 @@ def test_low_cost_navigation_never_falls_back_to_point_cloud():
     exec(compile(ast.Module(body=[f],type_ignores=[]),'source_selection','exec'),scope)
     points,label,seq,dyn,pose,z,trail,grids,style=scope['_grid_source']()
     assert points is None and grids is None, 'low-cost navigation must not render point clouds'
-    assert '等待栅格' in label
+    assert '等待局部栅格' in label
+    scope['UI']['src'].value = '自动'
+    state.loc['session'] = 'tracking'
+    state.node_rows = [{'name': '/scan_planner_node', 'count': 1}]
+    assert scope['_grid_source']()[1].startswith('导航')
+    state.node_rows = []
+    scope['PROCS'].running = lambda _: False
+    state.age_of = lambda key: .1 if key == 'loc_map' else None
+    scope['_points_to_grid_layer'] = lambda points: None
+    assert scope['_grid_source']()[1].startswith('定位')
+
 
 
 def test_points_to_grid_layer_bins_points_into_cells():

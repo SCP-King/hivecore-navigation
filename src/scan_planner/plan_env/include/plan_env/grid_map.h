@@ -16,6 +16,7 @@
 #include <nav_msgs/msg/occupancy_grid.hpp>
 #include <queue>
 #include <unordered_map>
+#include <unordered_set>
 #include <rclcpp/rclcpp.hpp>
 #include <rmw/qos_profiles.h>
 #include <tuple>
@@ -171,6 +172,7 @@ public:
   ~GridMap() {}
 
   enum { INVALID_IDX = -10000 };
+  static constexpr double OBSTACLE_Z_MAX_M = 1.60;
 
   // occupancy map management
   void resetBuffer();
@@ -188,6 +190,26 @@ public:
   inline int getOccupancy(Eigen::Vector3d pos);
   inline int getOccupancy(Eigen::Vector3i id);
   inline int getInflateOccupancy(Eigen::Vector3d pos, double yaw, bool allow_unknown=false, bool honor_fixed_heading=true);
+  // Read-only 2D fusion: local explicit observation wins inside the local
+  // window; local unknown falls back to the immutable global layer.
+  int fusedCellState(double x, double y) const;
+  void rebuildFusedGrid();
+  // Single read-only planning surface: global_base overlaid by the current
+  // session local observation. Used by A*, local SCAN and GUI reachability.
+  void rebuildPlanningGrid();
+  bool hasPlanningGrid() const { return planning_w_>0 && planning_h_>0 && !planning_grid_.empty(); }
+  const pcl::PointCloud<pcl::PointXYZ>& getPlanningOccupancyCloud();
+  Eigen::Vector3d getPlanningMin() const { return Eigen::Vector3d(planning_origin_.x(),planning_origin_.y(),0.); }
+  Eigen::Vector3d getPlanningMax() const { return Eigen::Vector3d(planning_origin_.x()+planning_w_*planning_res_,planning_origin_.y()+planning_h_*planning_res_,0.); }
+  double getPlanningResolution() const { return planning_res_; }
+  int planningCellState(double x, double y) const {
+    if(!hasPlanningGrid() || !std::isfinite(x) || !std::isfinite(y)) return -1;
+    const int ix=static_cast<int>(std::floor((x-planning_origin_.x())/planning_res_));
+    const int iy=static_cast<int>(std::floor((y-planning_origin_.y())/planning_res_));
+    if(ix<0||iy<0||ix>=planning_w_||iy>=planning_h_)return -1;
+    const int8_t v=planning_grid_[static_cast<size_t>(iy)*planning_w_+ix];
+    return v<0?-1:(v>=100?100:0);
+  }
 
   inline void boundIndex(Eigen::Vector3i& id);
   inline bool isUnknown(const Eigen::Vector3i& id);
@@ -255,10 +277,11 @@ public:
     }
     return inside || edge_distance<=mp_.environment_margin_+1e-9;
   }
+  bool usesTransientFusion() const { return fused_2d_enabled_; }
   bool hasStaticSource() const { return static_source_valid_; }
   const pcl::PointCloud<pcl::PointXYZ>& getStaticSourceCloud() {
     refreshStaticObservations(true);
-    return effective_static_source_.empty() ? static_source_decoded_ : effective_static_source_;
+    return effective_static_source_;
   }
   Eigen::Vector3d getStaticSourceMin() const { return static_source_min_; }
   Eigen::Vector3d getStaticSourceMax() const { return static_source_max_; }
@@ -333,7 +356,10 @@ public:
     // Global and local use accumulated measured occupancy, not only one scan.
     for(const auto& e:observation_times_)if(collisionRisk(md_.occupancy_buffer_[e.first])){
       Eigen::Vector3i id;hashIdToGlobalIndex(e.first,id);Eigen::Vector3d p;indexToPos(id,p);
-      if(isInMap(p))points.push_back(p);
+      if(!isInMap(p))continue;
+      if(p.z()<=getObstacleGroundCutoff(p.x(),p.y()) ||
+         p.z()>getObstacleHeightMax(p.x(),p.y()))continue;
+      points.push_back(p);
     }
     return points;
   }
@@ -386,6 +412,10 @@ public:
   double getBodyUp() const { return mp_.obstacles_inflation_z_down; }
   double getObstacleGroundCutoff(double x=0.0, double y=0.0) const {
     return mp_.ground_height_ + mp_.ground_slope_x_*x + mp_.ground_slope_y_*y + mp_.ground_clearance_;
+  }
+  // Single unified obstacle height ceiling, relative to the fitted ground.
+  double getObstacleHeightMax(double x=0.0, double y=0.0) const {
+    return mp_.ground_height_ + mp_.ground_slope_x_*x + mp_.ground_slope_y_*y + OBSTACLE_Z_MAX_M;
   }
   Eigen::Vector3d getGroundCutoffPlane() const {
     return Eigen::Vector3d(mp_.ground_slope_x_, mp_.ground_slope_y_, mp_.ground_height_+mp_.ground_clearance_);
@@ -516,7 +546,7 @@ private:
   int64_t prediction_stamp_ns_{0};
   bool predictionFresh() const {
     double age=(node_->now().nanoseconds()-prediction_stamp_ns_)*1e-9;
-    return prediction_stamp_ns_>0 && age>=-.1 && age<=.6;
+    return prediction_stamp_ns_>0 && age>=-.1 && age<=2.0;
   }
   bool require_observed_space_{false};
   double observation_ttl_s_{3.};
@@ -573,6 +603,19 @@ private:
   int global_tile_m_{2};
   double last_global_rebuild_s_{-1.};
   uint64_t global_version_{0};
+  bool fused_2d_enabled_{false};
+  bool pcd_bounds_free_enabled_{false};
+  std::vector<int8_t> fused_2d_;
+  Eigen::Vector2d fused_origin_{Eigen::Vector2d::Zero()};
+  double fused_res_{0.1};
+  int fused_w_{0}, fused_h_{0};
+  std::vector<int8_t> planning_grid_;
+  pcl::PointCloud<pcl::PointXYZ> planning_cloud_;
+  Eigen::Vector2d planning_origin_{Eigen::Vector2d::Zero()};
+  double planning_res_{0.1};
+  int planning_w_{0}, planning_h_{0};
+  bool planning_dirty_{true};
+  std::unordered_set<uint64_t> known_free_cells_;
   std::vector<int8_t> reference_grid_data_, live_grid_data_;
   Eigen::Vector2d reference_grid_origin_{Eigen::Vector2d::Zero()};
   double reference_grid_res_{0.1};
@@ -699,6 +742,31 @@ inline int GridMap::getInflateOccupancy(Eigen::Vector3d pos, double yaw, bool al
   const bool check_observed=require_observed_space_ && !allow_unknown;
   bool unobserved=false;
   const auto sample=[&](const Eigen::Vector3d& point)->int {
+    if(fused_2d_enabled_) {
+      // Single authoritative 2-D surface: global base + local overlay.
+      // All consumers (A*, SCAN, goal check, GUI search) use this same grid.
+      if(hasPlanningGrid()) {
+        const int state=planningCellState(point.x(),point.y());
+        if(state==100)return 1;
+        if(state==0)return 0;
+        unobserved=true;
+        return 0;
+      }
+      // Before the planning grid exists, use the fused local window. Outside
+      // it, global remains authoritative.
+      const int fused=fusedCellState(point.x(),point.y());
+      if(fused==100)return 1;
+      if(fused==0)return 0;
+      if(fused==-2) {
+        const int global=globalCellState(point.x(),point.y());
+        if(global==100)return 1;
+        if(global==0)return 0;
+        unobserved=true;
+        return 0;
+      }
+      if(fused==-1){unobserved=true;return 0;}
+    }
+    // The XY display projection cannot certify clearance at body height.
     const int live=getInflateOccupancyFromBuffer(point,md_.occupancy_buffer_inflate_);
     if(live!=0)return live;
     if(static_cloud_enabled_ && !static_prior_as_cost_ && !static_inflate_buffer_.empty()) {

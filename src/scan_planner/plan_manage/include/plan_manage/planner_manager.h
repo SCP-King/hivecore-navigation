@@ -34,6 +34,7 @@ namespace scan_planner
     bool planGlobalTrajWaypoints(const Eigen::Vector3d &start_pos, const Eigen::Vector3d &start_vel, const Eigen::Vector3d &start_acc,
                                  const std::vector<Eigen::Vector3d> &waypoints, const Eigen::Vector3d &end_vel, const Eigen::Vector3d &end_acc);
 
+    void refreshSearchPreview(const Eigen::Vector3d &position);
     void initPlanModules(rclcpp::Node *node, PlanningVisualization::Ptr vis = nullptr);
 
     std::string last_global_error_,last_local_error_;
@@ -44,6 +45,10 @@ namespace scan_planner
 
   private:
     rclcpp::Node *node_{nullptr};
+    rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr search_grid_pub_;
+    double last_preview_s_{-1.};
+    std::vector<Eigen::Vector3d> searchGlobal(const Eigen::Vector3d&, const Eigen::Vector3d&,
+        std::function<bool(const Eigen::Vector3d&)>*, bool preview);
     /* main planning algorithms & modules */
     PlanningVisualization::Ptr visualization_;
 

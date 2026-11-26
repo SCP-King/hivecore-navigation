@@ -96,7 +96,7 @@ namespace scan_planner
           const Eigen::Vector3d goal(msg->point.x,msg->point.y,msg->point.z);
           const double age=(node_->now()-rclcpp::Time(msg->header.stamp)).seconds();
           if (!goal.allFinite() || (goal-end_pt_).norm()>.02 ||
-              (odom_pos_-end_pt_).head<2>().norm()>.12 || age<-.2 || age>1.) return;
+              (odom_pos_-end_pt_).head<2>().norm()>.10 || age<-.2 || age>1.) return;
           have_target_=false;have_new_target_=false;replan_fail_count_=0;
           changeFSMExecState(WAIT_TARGET,"EXECUTOR_CONFIRMED_ARRIVAL");
         });
@@ -111,6 +111,7 @@ namespace scan_planner
     load_parameter<int>(node_,"recovery.global_attempts",5);
     load_parameter<double>(node_,"recovery.wait_timeout_s",0.);
     load_parameter<bool>(node_,"recovery.auto_resume",true);
+    auto_resume_max_ = std::max(1, std::min(10, load_parameter<int>(node_, "recovery.max_auto_resumes", 3)));
     recovery_resume_sub_=node_->create_subscription<std_msgs::msg::Bool>(
       "/n01/navigation/resume",10,[this](std_msgs::msg::Bool::ConstSharedPtr p){
         if(!p->data || !have_target_ || recovery_ladder_.stage!=navigation::RecoveryLadder::WAIT)return;
@@ -120,6 +121,12 @@ namespace scan_planner
       });
     no_replan_thresh_ = load_parameter<double>(node_, "fsm.thresh_no_replan", -1.0);
     planning_horizon_ = load_parameter<double>(node_, "fsm.planning_horizon", -1.0);
+    local_stage_horizon_ = load_parameter<double>(node_, "fsm.local_stage_horizon", 4.0);
+    final_handoff_radius_ = load_parameter<double>(node_, "fsm.final_handoff_radius", 0.50);
+    if (!std::isfinite(final_handoff_radius_) || final_handoff_radius_ < .1 || final_handoff_radius_ > 2.0)
+      final_handoff_radius_ = .50;
+    if (!std::isfinite(local_stage_horizon_) || local_stage_horizon_ < 1.0 || local_stage_horizon_ > 20.0)
+      local_stage_horizon_ = 4.0;
     emergency_time_ = load_parameter<double>(node_, "fsm.emergency_time", 1.0);
     enable_fail_safe_ = load_parameter<bool>(node_, "fsm.fail_safe", true);
     self_inflation_z_up_ = load_parameter<double>(node_, "grid_map.obstacles_inflation_z_up", 0.0);
@@ -237,6 +244,7 @@ namespace scan_planner
     const uint64_t incoming_goal = static_cast<uint64_t>(msg->header.stamp.sec) * 1000000000ULL + msg->header.stamp.nanosec;
     if (incoming_goal == 0 || incoming_goal <= navigation_goal_id_) return;
     navigation_goal_id_ = incoming_goal;
+    auto_resume_attempts_ = 0;
     clearGlobalPath();
     resetRecovery();
 
@@ -271,7 +279,7 @@ namespace scan_planner
       vector<Eigen::Vector3d> gloabl_traj(i_end);
       for (int i = 0; i < i_end; i++)
       {
-        gloabl_traj[i] = planner_manager_->global_data_.global_traj_.evaluate(i * step_size_t);
+        gloabl_traj[i] = planner_manager_->global_data_.getPosition(i * step_size_t);
       }
 
       end_vel_.setZero();
@@ -331,7 +339,7 @@ namespace scan_planner
     std::vector<Eigen::Vector3d> gloabl_traj(i_end);
     for (int i = 0; i < i_end; i++)
     {
-      gloabl_traj[i] = planner_manager_->global_data_.global_traj_.evaluate(i * step_size_t);
+      gloabl_traj[i] = planner_manager_->global_data_.getPosition(i * step_size_t);
     }
 
     end_vel_.setZero();
@@ -378,7 +386,7 @@ namespace scan_planner
     std::vector<Eigen::Vector3d> gloabl_traj(i_end);
     for (int i = 0; i < i_end; i++)
     {
-      gloabl_traj[i] = planner_manager_->global_data_.global_traj_.evaluate(i * step_size_t);
+      gloabl_traj[i] = planner_manager_->global_data_.getPosition(i * step_size_t);
     }
 
     end_vel_.setZero();
@@ -408,8 +416,8 @@ namespace scan_planner
 
     constexpr double sample_dt = 0.05;
     const int sample_num = std::max(1, static_cast<int>(std::ceil(duration / sample_dt)));
-    const Eigen::Vector3d final_pt = global_data.global_traj_.evaluate(duration);
-    const Eigen::Vector3d final_prev = global_data.global_traj_.evaluate(duration * (sample_num - 1) / sample_num);
+    const Eigen::Vector3d final_pt = global_data.getPosition(duration);
+    const Eigen::Vector3d final_prev = global_data.getPosition(duration * (sample_num - 1) / sample_num);
     const int final_occ = map->getInflateOccupancy(final_pt, end_yaw_, false, false);
     if (final_occ <= 0)
       return true;
@@ -427,8 +435,8 @@ namespace scan_planner
     {
       const double t = duration * i / sample_num;
       const double prev_t = duration * std::max(0, i - 1) / sample_num;
-      const Eigen::Vector3d pt = global_data.global_traj_.evaluate(t);
-      const Eigen::Vector3d prev_pt = global_data.global_traj_.evaluate(prev_t);
+      const Eigen::Vector3d pt = global_data.getPosition(t);
+      const Eigen::Vector3d prev_pt = global_data.getPosition(prev_t);
 
       if (map->getInflateOccupancy(pt, estimateYawFromSegment(prev_pt, pt)) == 0)
       {
@@ -517,6 +525,7 @@ namespace scan_planner
     odom_orient_.z() = msg->pose.pose.orientation.z;
 
     have_odom_ = true;
+    planner_manager_->refreshSearchPreview(odom_pos_);
     publishSelfInflationMarker();
     if (navi_mode_ == NAVI_MODE::PRESET_TARGET && !preset_started_)
     {
@@ -530,7 +539,7 @@ namespace scan_planner
     const auto &info = planner_manager_->local_data_;
     if (execution_progress_ && execution_progress_->goal_id == navigation_goal_id_ &&
         execution_progress_->revision == info.traj_id_ &&
-        (node_->now() - rclcpp::Time(execution_progress_->header.stamp)).seconds() <= .6)
+        (node_->now() - rclcpp::Time(execution_progress_->header.stamp)).seconds() <= 2.0)
       return std::clamp(execution_progress_->parameter_time, 0.0, info.duration_);
     // Before execution / after revision: measure actual geometric progress,
     // not elapsed wall time. Waiting at start cannot consume the trajectory.
@@ -682,6 +691,19 @@ namespace scan_planner
       fsm_num = 0;
     }
 
+    if (have_target_ && execution_progress_ &&
+        execution_progress_->goal_id == navigation_goal_id_) {
+      const std::string phase = execution_progress_->phase;
+      const bool final_phase = phase == "FINAL_APPROACH" || phase == "ALIGN" ||
+          phase == "ROTATING" || phase == "SETTLING" ||
+          phase == "VERIFYING_ARRIVAL";
+      if (final_phase && (end_pt_ - odom_pos_).head<2>().norm() <= final_handoff_radius_) {
+        if (exec_state_ != EXEC_TRAJ)
+          changeFSMExecState(EXEC_TRAJ, "TERMINAL_HOLD");
+        publishPlanningStatus("TERMINAL_HOLD", "controller_final_alignment");
+        return;
+      }
+    }
     switch (exec_state_)
     {
     case INIT:
@@ -713,8 +735,15 @@ namespace scan_planner
     {
       // Arrival is measured from live odometry, never from spline time.
       // Do not count an already reached target as a planning failure.
+      // Do not retire the target on position alone: the executor still has to
+      // finish the final yaw alignment. Only the executor's ARRIVED progress
+      // (or the explicit goal_reached callback) may clear the planning target.
+      const bool executor_arrived =
+          execution_progress_ && execution_progress_->goal_id == navigation_goal_id_ &&
+          execution_progress_->phase == "ARRIVED";
       if (navi_mode_ == NAVI_MODE::MANUAL_TARGET &&
-          (end_pt_ - odom_pos_).head<2>().norm() <= .08)
+          (end_pt_ - odom_pos_).head<2>().norm() <= .08 &&
+          (!execution_progress_ || executor_arrived))
       {
         have_target_ = false;
         have_new_target_ = false;
@@ -790,8 +819,12 @@ namespace scan_planner
       t_cur = min(info->duration_, t_cur);
 
       Eigen::Vector3d pos = info->position_traj_.evaluateDeBoorT(t_cur);
+      const bool executor_arrived =
+          execution_progress_ && execution_progress_->goal_id == navigation_goal_id_ &&
+          execution_progress_->phase == "ARRIVED";
       if (navi_mode_ == NAVI_MODE::MANUAL_TARGET &&
-          (end_pt_ - odom_pos_).head<2>().norm() <= .08)
+          (end_pt_ - odom_pos_).head<2>().norm() <= .08 &&
+          (!execution_progress_ || executor_arrived))
       {
         have_target_ = false;
         replan_fail_count_ = 0;
@@ -1145,7 +1178,7 @@ namespace scan_planner
     const int64_t scene_stamp = grid_map->sceneStamp();
     const double scene_age = scene_stamp > 0
         ? (node_->now().nanoseconds() - scene_stamp) * 1e-9 : -1.;
-    if (scene_age < 0. || scene_age > 2.0) {
+    if (scene_age < 0. || scene_age > 4.5) {
       recovery_ladder_.reset();
       publishPlanningStatus("WAITING_FOR_SCENE", "scene_not_ready");
       return;
@@ -1153,6 +1186,14 @@ namespace scan_planner
     recovery_ladder_.configure(recoveryLimit("recovery.local_attempts", 15),
                                recoveryLimit("recovery.global_attempts", 5));
     const auto step = recovery_ladder_.noteFailure();
+    // Aggregate the concrete per-attempt reason, not just the generic
+    // "no collision-free solution" seen by the controller.
+    std::string detail = planner_manager_->last_local_error_;
+    if (detail.empty()) detail = local_reason_.empty() ? "local_failed_unknown" : local_reason_;
+    ++local_failure_counts_[detail];
+    const auto dominant = std::max_element(local_failure_counts_.begin(), local_failure_counts_.end(),
+        [](const auto &a, const auto &b) { return a.second < b.second; });
+    dominant_local_failure_ = dominant == local_failure_counts_.end() ? std::string("") : dominant->first;
     if (step.stage == navigation::RecoveryLadder::WAIT) {
       recovery_wait_since_ = node_->now().seconds();
       need_hover_stop_ = true;
@@ -1180,9 +1221,16 @@ namespace scan_planner
     if (!node_->get_parameter("recovery.auto_resume").as_bool()) return;
     const double timeout = node_->get_parameter("recovery.wait_timeout_s").as_double();
     if (!(timeout > 0.) || node_->now().seconds() - recovery_wait_since_ < timeout) return;
+    if (auto_resume_attempts_ >= auto_resume_max_) {
+      need_hover_stop_ = true;
+      publishPlanningStatus("PLAN_HOLD", "auto_resume_exhausted");
+      return;
+    }
+    ++auto_resume_attempts_;
     resetRecovery();
     need_hover_stop_ = false;
-    RCLCPP_INFO(node_->get_logger(), "Recovery wait timeout elapsed; retrying the retained target");
+    RCLCPP_INFO(node_->get_logger(), "Recovery wait timeout elapsed; retrying retained target (%d/%d)",
+                auto_resume_attempts_, auto_resume_max_);
     changeFSMExecState(have_target_ ? GEN_NEW_TRAJ : WAIT_TARGET, "RECOVERY_TIMEOUT");
   }
 
@@ -1224,7 +1272,12 @@ namespace scan_planner
       {"recovery_global_attempts",recovery_ladder_.global_attempts},
       {"recovery_local_limit",recoveryLimit("recovery.local_attempts",15)},
       {"recovery_global_limit",recoveryLimit("recovery.global_attempts",5)},
-      {"recovery_wait_s",recovery_ladder_.stage==navigation::RecoveryLadder::WAIT?node_->now().seconds()-recovery_wait_since_:0.}};
+      {"recovery_wait_s",recovery_ladder_.stage==navigation::RecoveryLadder::WAIT?node_->now().seconds()-recovery_wait_since_:0.},
+      {"local_stage_horizon_m",local_stage_horizon_},
+      {"final_handoff_radius_m",final_handoff_radius_},
+      {"local_last_error",planner_manager_->last_local_error_},
+      {"local_failure_counts",local_failure_counts_},
+      {"dominant_local_failure", dominant_local_failure_}};
     std_msgs::msg::String msg;msg.data=data.dump();planning_status_pub_->publish(msg);
   }
 
@@ -1245,7 +1298,7 @@ namespace scan_planner
     const double step=std::max(.2,planner_manager_->pp_.global_waypoint_spacing_);
     auto map=planner_manager_->grid_map_;
     for(double t=0.;t<=duration+1e-6;t+=step){
-      const auto p=gd.global_traj_.evaluate(std::min(duration,t));
+      const auto p=gd.getPosition(std::min(duration,t));
       global_path_samples_.push_back(p);
       global_path_versions_.push_back(map->hasGlobalGrid()?map->globalTileVersion(p.x(),p.y()):0u);
     }
@@ -1286,7 +1339,7 @@ namespace scan_planner
       auto& gd=planner_manager_->global_data_;
       std::vector<Eigen::Vector3d> seg;
       const double step=std::max(.2,planner_manager_->pp_.global_waypoint_spacing_);
-      for(double t=0.;t<=gd.global_duration_+1e-6;t+=step)seg.push_back(gd.global_traj_.evaluate(std::min(gd.global_duration_,t)));
+      for(double t=0.;t<=gd.global_duration_+1e-6;t+=step)seg.push_back(gd.getPosition(std::min(gd.global_duration_,t)));
       if(seg.size()<2)continue;
       std::vector<Eigen::Vector3d> combined(global_path_samples_.begin(),global_path_samples_.begin()+i0+1);
       combined.insert(combined.end(),seg.begin()+1,seg.end());
@@ -1306,7 +1359,7 @@ namespace scan_planner
   void SCANReplanFSM::publishGlobalPath()
   {
     auto &gd = planner_manager_->global_data_;
-    const double duration = gd.global_traj_.getTimeSum();
+    const double duration = gd.global_duration_;
     if (!(duration > 1e-3)) return;
     nav_msgs::msg::Path path;
     path.header.frame_id = "map";
@@ -1315,8 +1368,8 @@ namespace scan_planner
     const double dt = duration / static_cast<double>(samples);
     for (int i = 0; i <= samples; ++i) {
       const double t = std::min(duration, dt * static_cast<double>(i));
-      const Eigen::Vector3d p = gd.global_traj_.evaluate(t);
-      const Eigen::Vector3d p_next = gd.global_traj_.evaluate(std::min(duration, t + dt));
+      const Eigen::Vector3d p = gd.getPosition(t);
+      const Eigen::Vector3d p_next = gd.getPosition(std::min(duration, t + dt));
       const double yaw = std::atan2(p_next.y() - p.y(), p_next.x() - p.x());
       geometry_msgs::msg::PoseStamped pose;
       pose.header = path.header;
@@ -1336,7 +1389,8 @@ namespace scan_planner
   {
     double t;
 
-    double t_step = planning_horizon_ / 20 / planner_manager_->pp_.max_vel_;
+    const double stage_horizon = std::min(planning_horizon_, local_stage_horizon_);
+    double t_step = stage_horizon / 20 / planner_manager_->pp_.max_vel_;
     double dist_min = 9999, dist_min_t = 0.0;
     double target_t = planner_manager_->global_data_.global_duration_;
     for (t = planner_manager_->global_data_.last_progress_time_; t < planner_manager_->global_data_.global_duration_; t += t_step)
@@ -1344,7 +1398,7 @@ namespace scan_planner
       Eigen::Vector3d pos_t = planner_manager_->global_data_.getPosition(t);
       double dist = (pos_t - start_pt_).norm();
 
-      if (t < planner_manager_->global_data_.last_progress_time_ + 1e-5 && dist > planning_horizon_)
+      if (t < planner_manager_->global_data_.last_progress_time_ + 1e-5 && dist > stage_horizon)
       {
         RCLCPP_ERROR(node_->get_logger(),
                      "Local target progress mismatch: distance=%.3f horizon=%.3f progress_time=%.3f",
@@ -1359,7 +1413,7 @@ namespace scan_planner
         dist_min = dist;
         dist_min_t = t;
       }
-      if (dist >= planning_horizon_)
+      if (dist >= stage_horizon)
       {
         local_target_pt_ = pos_t;
         target_t = t;

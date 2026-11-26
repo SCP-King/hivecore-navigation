@@ -18,6 +18,11 @@ namespace scan_planner
   private:
   public:
     PolynomialTraj global_traj_;
+    // Piecewise-linear/rounded global reference. When non-empty it is the
+    // authoritative global route; min-snap is not used for this mode.
+    std::vector<Eigen::Vector3d> polyline_;
+    std::vector<double> polyline_s_;
+    double polyline_speed_{0.2};
     vector<UniformBspline> local_traj_;
 
     double global_duration_;
@@ -37,6 +42,8 @@ namespace scan_planner
     {
       global_traj_ = traj;
       global_traj_.init();
+      polyline_.clear();
+      polyline_s_.clear();
       global_duration_ = global_traj_.getTimeSum();
       global_start_time_ = time;
 
@@ -46,6 +53,57 @@ namespace scan_planner
       time_increase_ = 0.0;
       last_time_inc_ = 0.0;
       last_progress_time_ = 0.0;
+    }
+
+    void setPolyline(const std::vector<Eigen::Vector3d>& points, double speed,
+                     const rclcpp::Time &time)
+    {
+      polyline_ = points;
+      polyline_s_.clear();
+      polyline_s_.reserve(polyline_.size());
+      double s = 0.0;
+      polyline_s_.push_back(0.0);
+      for (size_t i = 1; i < polyline_.size(); ++i) {
+        s += (polyline_[i] - polyline_[i - 1]).norm();
+        polyline_s_.push_back(s);
+      }
+      polyline_speed_ = std::max(0.05, speed);
+      global_duration_ = s / polyline_speed_;
+      global_start_time_ = time;
+      local_traj_.clear();
+      local_start_time_ = -1;
+      local_end_time_ = -1;
+      time_increase_ = 0.0;
+      last_time_inc_ = 0.0;
+      last_progress_time_ = 0.0;
+    }
+
+    bool hasPolyline() const { return polyline_.size() >= 2; }
+
+    Eigen::Vector3d polylineAt(double t) const
+    {
+      if (!hasPolyline()) return Eigen::Vector3d::Zero();
+      const double total = polyline_s_.back();
+      const double s = std::clamp(t * polyline_speed_, 0.0, total);
+      auto it = std::upper_bound(polyline_s_.begin(), polyline_s_.end(), s);
+      size_t i = (it == polyline_s_.begin()) ? 0 : size_t(it - polyline_s_.begin() - 1);
+      if (i + 1 >= polyline_.size()) return polyline_.back();
+      const double denom = polyline_s_[i + 1] - polyline_s_[i];
+      const double f = denom > 1e-12 ? (s - polyline_s_[i]) / denom : 0.0;
+      return polyline_[i] + f * (polyline_[i + 1] - polyline_[i]);
+    }
+
+    Eigen::Vector3d polylineVelocity(double t) const
+    {
+      if (!hasPolyline()) return Eigen::Vector3d::Zero();
+      const double total = polyline_s_.back();
+      const double s = std::clamp(t * polyline_speed_, 0.0, total);
+      auto it = std::upper_bound(polyline_s_.begin(), polyline_s_.end(), s);
+      size_t i = (it == polyline_s_.begin()) ? 0 : size_t(it - polyline_s_.begin() - 1);
+      if (i + 1 >= polyline_.size()) return Eigen::Vector3d::Zero();
+      const Eigen::Vector3d d = polyline_[i + 1] - polyline_[i];
+      if (d.norm() <= 1e-9) return Eigen::Vector3d::Zero();
+      return d.normalized() * polyline_speed_;
     }
 
     void setLocalTraj(UniformBspline traj, double local_ts, double local_te, double time_inc)
@@ -64,6 +122,7 @@ namespace scan_planner
 
     Eigen::Vector3d getPosition(double t)
     {
+      if (hasPolyline()) return polylineAt(t);
       if (t >= -1e-3 && t <= local_start_time_)
       {
         return global_traj_.evaluate(t - time_increase_ + last_time_inc_);
@@ -82,6 +141,7 @@ namespace scan_planner
 
     Eigen::Vector3d getVelocity(double t)
     {
+      if (hasPolyline()) return polylineVelocity(t);
       if (t >= -1e-3 && t <= local_start_time_)
       {
         return global_traj_.evaluateVel(t);
@@ -100,6 +160,7 @@ namespace scan_planner
 
     Eigen::Vector3d getAcceleration(double t)
     {
+      if (hasPolyline()) return Eigen::Vector3d::Zero();
       if (t >= -1e-3 && t <= local_start_time_)
       {
         return global_traj_.evaluateAcc(t);
@@ -197,6 +258,8 @@ namespace scan_planner
     double feasibility_tolerance_;        // permitted ratio of vel/acc exceeding limits
     double planning_horizon_;
     double global_waypoint_spacing_;      // max spacing between global A* waypoints
+    double min_turn_radius_{0.6};         // global/local curvature floor
+    double max_yaw_rate_{0.45};           // 4WS yaw-rate limit
 
     /* processing time */
     double time_search_ = 0.0;

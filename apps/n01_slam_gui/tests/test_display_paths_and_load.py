@@ -30,11 +30,13 @@ def test_full_reference_remains_visible_beyond_local_prefix():
     scope = dict(ImageDraw=ImageDraw, math=math, GRID_IMAGE_PX=100, GRID_COLORS=colors,
                  _map_xy_to_pixel=lambda x, y, view: (x, y))
     overlay = extract('_grid_overlay', scope)
-    image = overlay(Image.new('RGB', (100, 100)), dict(x0=0, y0=0, size_m=1),
+    image = overlay(Image.new('RGB', (100, 100), (0, 0, 0)), dict(x0=0, y0=0, size_m=10),
                     None, [], None, [(10, 50), (30, 50)], True, False,
                     [(10, 50), (90, 50)], True, False)
     assert image.getpixel((20, 50)) == colors['plan']
     assert image.getpixel((80, 50)) == colors['global_plan']
+    # Map background must stay free of drawn grid lines
+    assert image.getpixel((50, 10)) == (0, 0, 0)
 
 
 def test_global_and_execution_topics_are_distinct_and_correct():

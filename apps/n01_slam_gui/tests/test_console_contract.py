@@ -2,11 +2,13 @@
 """Contract checks for the 2026-11-09 single-page grid console."""
 import ast
 from pathlib import Path
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 source = (ROOT / "slam_lite_gui.py").read_text()
 fast_lio_helper = (ROOT.parents[1] / "scripts" / "runtime" / "start_fast_lio_gui_backend.sh").read_text()
 loc_cfg = (ROOT / "config" / "n01_localization_lite.yaml").read_text()
+loc_params = yaml.safe_load(loc_cfg)["/**"]["ros__parameters"]
 map_cfg = (ROOT / "config" / "n01_mapping_lite.yaml").read_text()
 nav_repo = ROOT.parents[1]
 static_cfg = (nav_repo / "config" / "n01_static_tf_params.yaml")
@@ -29,18 +31,21 @@ checks = {
                             and "srv_click" in source,
     "runtime map path load": "ros2\", \"param\", \"set\"" in source
                              and "apply_map_path" in source,
-    "localization frame matches solver": "mola_vehicle_frame: lidar_link" in loc_cfg and "vehicle_to_scan_xyz: [0.0, 0.0, 0.0]" in loc_cfg,
+    "localization frame matches solver": (
+        loc_params.get("mola_vehicle_frame") == "lidar_link"
+        and loc_params.get("vehicle_to_scan_xyz") == [0.0, 0.0, 0.0]),
     "mapping frame matches solver": "mola_vehicle_frame: lidar_link" in map_cfg and "vehicle_to_scan_xyz: [0.0, 0.0, 0.0]" in map_cfg,
     "desk passes unified params": "static_tf_params_file:={STATIC_TF_PARAMS}" in source
                                   and "LOCALIZATION_PARAMS" in source
                                   and "MAPPING_PARAMS" in source,
     "static TF YAML present": static_cfg.is_file()
-                               and "auto_calibrate_from_topic: true" in static_cfg.read_text(),
+                               and "static_tf_publisher_node:" in static_cfg.read_text(),
     "no actuator publisher": all(
         (ast.unparse(call.args[0]) in ('PoseWithCovarianceStamped', 'PoseStamped')
-         or (ast.unparse(call.args[0])=='Bool' and len(call.args)>1
-             and isinstance(call.args[1],ast.Constant)
-             and call.args[1].value=='/n01/navigation/enable'))
+         or (ast.unparse(call.args[0]) in ('Bool', 'Float64') and len(call.args) > 1
+             and isinstance(call.args[1], ast.Constant)
+             and call.args[1].value in (
+                 '/n01/navigation/enable', '/n01/navigation/pause', '/n01/navigation/speed_limit')))
         for call in ast.walk(ast.parse(source))
         if isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
         and call.func.attr == 'create_publisher' and call.args),
@@ -120,6 +125,10 @@ checks = {
     "goal timeout and pending guard": all(x in source for x in (
         "N01_GLOBAL_TIMEOUT_S", "N01_LOCAL_TIMEOUT_S",
         "全局 A* 阶段", "允许重新选点")),
+    "no pcd ego cleanup in navigation gui": all(x not in source for x in (
+        "build_pcd_tools_panel", "run_pcd_ego_cleanup", "清理历史自车拖影")),
+    "split workbench layout": all(x in source for x in (
+        "lg:col-span-5", "lg:col-span-7", "kv-cell", "map-stage")),
 }
 failed = []
 for name, ok in checks.items():

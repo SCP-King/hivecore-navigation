@@ -20,7 +20,7 @@ body:
   frame: base_link
   parent: base_footprint
   role: "physical body; /body_pose child frame; SCAN odom_pos_ frame"
-  to_lidar_xyz_m: [0.295, 0.0, 0.0]
+  to_lidar_xyz_m: [0.295, 0.0, 0.146366]
 
 ground:
   definition: "body_pose.z - body_to_ground"
@@ -33,7 +33,7 @@ ground:
 sensors:
   lidar_link:
     parent: base_link
-    xyz_m: [0.295, 0.0, 0.0]
+    xyz_m: [0.295, 0.0, 0.146366]
   imu_link:
     parent: lidar_link
     xyz_m: [0.0, 0.0, 0.0]

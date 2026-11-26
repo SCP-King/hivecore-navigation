@@ -7,7 +7,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[2]/'src/n01_live_navigati
 from n01_live_navigation.urdf_projection import RobotProjection
 
 def paint_robot(image, view, pose, polygons, envelope=None, environment=None, observed=None):
-    """White URDF body; purple reviewed robot envelope; amber actual map inflation."""
+    """High-contrast URDF body on both old dark grids and white PGM bases."""
     n=image.width;x,y,yaw=pose;c,s=math.cos(yaw),math.sin(yaw)
     def pixel(px,py):return ((px-view['x0'])/view['size_m']*n,(1-(py-view['y0'])/view['size_m'])*n)
     def visible_pixels(points):
@@ -48,8 +48,8 @@ def paint_robot(image, view, pose, polygons, envelope=None, environment=None, ob
     for link,poly in polygons:
         world=poly@np.array([[c,s],[-s,c]])+np.array([x,y])
         pts=[pixel(*p)for p in world]
-        color=(223,235,246) if 'wheel' not in link else (74,100,121)
-        d.polygon(pts,fill=color,outline=(105,167,192))
+        color=(226,116,42) if 'wheel' not in link else (58,70,84)
+        d.polygon(pts,fill=color,outline=(255,255,255))
     px,py=pixel(x,y)
     d.line((px,py,px+12*c,py-12*s),fill=(255,255,255),width=3)
     return image

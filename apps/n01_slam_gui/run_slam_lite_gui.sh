@@ -44,6 +44,7 @@ if [[ "${N01_GUI_CLEAN_ENV:-0}" != "1" ]]; then
               ROS_SECURITY_STRATEGY ROS_SECURITY_KEYSTORE ROS_LOG_DIR \
               SLAM_GUI_HOST SLAM_GUI_PORT N01_NAV_REPO N01_RUNTIME_DIR \
               N01_RUNTIME_RMW N01_CYCLONE_PREFIX N01_TRANSPORT_ROOT N01_RUNTIME_ROOT \
+              N01_HIVE2_SETUP N01_HIVE2_PREFIX \
               N01_MAPPING_BAG_DIR N01_MAPPING_BAG_TOPICS; do
     if [[ -n "${!name:-}" ]]; then
       clean_env+=("${name}=${!name}")
@@ -60,6 +61,19 @@ fi
 # 关键：source Lite runtime，确保加载正确的 Lite 消息类型与动态库
 # shellcheck disable=SC1090
 n01_source_slam_runtime
+
+# RSP/URDF references package://hive2_description/*.STL. The active chassis is
+# /opt/hivecore/hive2-motion/current, not the legacy 1.0.0 overlay. Source it
+# before the GUI/ROS worker so RViz's resource retriever can resolve meshes.
+HIVE2_SETUP="${N01_HIVE2_SETUP:-/opt/hivecore/hive2-motion/current/install/setup.bash}"
+if [[ -f "$HIVE2_SETUP" ]]; then
+  # colcon scripts read COLCON_TRACE/COLCON_CURRENT_PREFIX without `:-`.
+  # They are not nounset-safe, so temporarily disable `set -u`.
+  set +u
+  # shellcheck disable=SC1090
+  source "$HIVE2_SETUP"
+  set -u
+fi
 
 # Fail closed if the runtime still resolves any old/FROZEN release prefix.
 while IFS= read -r prefix; do

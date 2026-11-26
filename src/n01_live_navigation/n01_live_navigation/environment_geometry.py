@@ -89,7 +89,7 @@ def contour_geometry(points, ground, center=(0.,0.), radius=12., resolution=.06,
     xyz=np.asarray(points,dtype=float).reshape((-1,3))
     a,b,c=ground
     h=xyz[:,2]-(a*xyz[:,0]+b*xyz[:,1]+c)
-    keep=np.isfinite(xyz).all(axis=1)&(h>.03)&(h<=max_height)
+    keep=np.isfinite(xyz).all(axis=1)&(h>.06)&(h<=max_height)
     keep&=np.sum((xyz[:,:2]-center)**2,axis=1)<=radius**2
     xyz=xyz[keep];step=resolution
     while len(xyz):

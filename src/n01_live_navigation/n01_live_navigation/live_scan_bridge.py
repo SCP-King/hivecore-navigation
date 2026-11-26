@@ -1115,10 +1115,12 @@ class LiveScanBridge(Node):
                 "raw_stamp_preserved": True,
                 "held_board_rejections": self.held_pose_rejections,
                 "source_stamp_ns": self.pose_fusion.last_source,
-                "source_pose": ({"x": self.pose_samples[-1][1][0],
-                    "y": self.pose_samples[-1][1][1],
-                    "quaternion": list(self.pose_samples[-1][2])}
-                    if self.pose_samples and self.pose_samples[-1][0]==self.pose_fusion.last_source else None),
+                "source_pose": next(
+                    ({"x": s[1][0], "y": s[1][1], "quaternion": list(s[2])}
+                     for s in reversed(self.pose_samples) if s[0] == self.pose_fusion.last_source),
+                    ({"x": self.pose_samples[-1][1][0], "y": self.pose_samples[-1][1][1],
+                      "quaternion": list(self.pose_samples[-1][2])}
+                     if self.pose_samples else None)),
                 "odom_translation_source": "measured_body_twist_trapezoid",
                 "odom_heading_source": "measured_body_angular_twist_trapezoid",
                 "odom_segment_start_ns": self.twist_odometry.segment_start,

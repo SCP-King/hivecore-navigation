@@ -152,7 +152,8 @@ def matching_arrival(data, task_id, pose, target, phase):
     if data.get('task_id')!=task_id or data.get('state')!='ARRIVED' or pose is None:
         return False
     x,y,yaw=pose
-    if math.hypot(x-target['x'],y-target['y'])>.12:
+    # Unified arrival acceptance: <= 0.10 m position, <= 5 deg yaw.
+    if math.hypot(x-target['x'],y-target['y'])>.10:
         return False
     error=abs(math.atan2(math.sin(yaw-target['yaw']),math.cos(yaw-target['yaw'])))
     return phase!='rotate' or error<=math.radians(5)

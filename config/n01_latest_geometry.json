@@ -1,0 +1,50 @@
+{
+  "schema": "n01.latest_geometry.v1",
+  "captured_utc": "2026-11-23T05:42:30Z",
+  "source": "live /robot_description + /joint_states + /body_pose + ground status",
+  "source_urdf_sha256": "8cf520719a5ab559adec5df7c1e662315a942a140453a294cde01b3688079379",
+  "joint_values_rad": {
+    "fl_ankle_yaw": 0.0,
+    "fl_leg_pitch1": 0.7869345212216788,
+    "fl_leg_pitch2": -1.3284107230545512,
+    "fr_ankle_yaw": 0.0,
+    "fr_leg_pitch1": 0.7846652438577819,
+    "fr_leg_pitch2": -1.3289867581954566,
+    "rl_ankle_yaw": 0.0,
+    "rl_leg_pitch1": 0.7896934680726178,
+    "rl_leg_pitch2": -1.3195372463791735,
+    "rr_ankle_yaw": 0.0,
+    "rr_leg_pitch1": 0.7852000770353763,
+    "rr_leg_pitch2": -1.314763365053238,
+    "wheel_fl": 0.0,
+    "wheel_fr": 0.0,
+    "wheel_rl": 0.0,
+    "wheel_rr": 0.0
+  },
+  "footprint_extent_m": [
+    0.9908477309742492,
+    0.685053560479573
+  ],
+  "body_pose_xyz_m": [
+    -0.5341401639630421,
+    -0.0152126882181604,
+    -0.14570539030202442
+  ],
+  "ground_plane_abc": [
+    -0.00993946835317212,
+    -0.013804268248598484,
+    -0.9255238114609466
+  ],
+  "ground_z_at_body_xy_m": -0.920004742176132,
+  "body_min_z_rel_base_link_m": -0.7720631643559481,
+  "body_max_z_rel_base_link_m": 0.14900095760822296,
+  "lowest_link": "rr_wheel_link",
+  "wheel_bottom_map_z_m": -0.9177685546579726,
+  "wheel_bottom_vs_floor_m": 0.0022361875181594604,
+  "body_to_ground_m": 0.7742993518741076,
+  "suggested_static_ego_filter_z_down_m": 0.7920631643559481,
+  "suggested_static_ego_filter_z_up_m": 0.16900095760822295,
+  "suggested_static_ego_filter_radius_m": 0.6171901394600577,
+  "environment_margin_m": 0.02,
+  "note": "evidence only; safety launch values are not modified"
+}

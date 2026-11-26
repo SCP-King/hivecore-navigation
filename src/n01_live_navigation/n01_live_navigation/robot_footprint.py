@@ -8,7 +8,7 @@ import math
 import numpy as np
 from scipy.spatial import ConvexHull
 
-ENVIRONMENT_MARGIN = .06
+ENVIRONMENT_MARGIN = .02
 
 
 def rotation_sweep(points, center, axis, steps=36):
@@ -38,20 +38,48 @@ def sweep_joints(model, fresh):
 
 
 def steering_hull(model,joints):
-    model.polygons(joints)
+    """Conservative but fast footprint hull from the live mesh model.
+
+    A wheel's continuous spin is represented by its bounding circle rather than
+    sweeping every mesh vertex through 36 poses. Ankle-yaw links sweep their 2D
+    hull only. Other links use their transformed 2D hull directly.
+    """
+    model.transforms_for(joints)
     shapes=[]
-    for link,points,_ in model.geometry:
-        p=points.copy();child=link
+    for link,t,points in model.shapes:
+        frame=model.transforms[link]@t
+        p=points@frame[:3,:3].T+frame[:3,3]
+        if 'wheel_link' in link:
+            center=p.mean(axis=0)
+            radius=float(np.linalg.norm(p-center,axis=1).max())
+            a=np.arange(36)*2*math.pi/36
+            xy=np.column_stack((center[0]+radius*np.cos(a),center[1]+radius*np.sin(a)))
+            shapes.append(xy)
+            continue
+        xy=p[:,:2]
+        if len(xy)>=3:
+            try: xy=xy[np.unique(ConvexHull(xy).vertices)]
+            except Exception: pass
+        # ankle_yaw is vertical; its 2D hull is enough and cheap to rotate.
+        child=link; ankle=False
         while child!='base_link':
             parent,name,kind,_,axis=model.parents[child]
-            if kind=='continuous' or name.endswith('_ankle_yaw'):
-                frame=model.transforms[child]
-                p=rotation_sweep(p,frame[:3,3],frame[:3,:3]@axis)
+            if name.endswith('_ankle_yaw'):
+                ankle=True;break
             child=parent
-        shapes.append(p[:,:2])
-    points=np.concatenate(shapes)
-    return points[ConvexHull(points).vertices]
-
+        if ankle and len(xy):
+            center=frame[:3,3]
+            base_xy=xy-center[:2]
+            a=np.arange(36)*2*math.pi/36
+            cos=np.cos(a)[:,None];sin=np.sin(a)[:,None]
+            swept=np.stack([base_xy[None,:,0]*cos-base_xy[None,:,1]*sin,
+                            base_xy[None,:,0]*sin+base_xy[None,:,1]*cos],axis=2)
+            shapes.append((swept+center[:2]).reshape(-1,2))
+        elif len(xy):
+            shapes.append(xy)
+    if not shapes:raise ValueError('urdf_footprint_empty')
+    all_points=np.concatenate(shapes)
+    return all_points[ConvexHull(all_points).vertices]
 
 def polygon_hits(points, polygon, margin=ENVIRONMENT_MARGIN):
     """Point inside convex CCW polygon or within rounded edge margin."""

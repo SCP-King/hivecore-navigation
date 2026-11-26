@@ -29,7 +29,9 @@ class GroundReferenceNode(Node):
                     'map_frame': 'map', 'body_frame': 'base_link',
                     'footprint_frame': 'base_footprint', 'fit_radius_m': 6.,
                     'fit_period_s': 1., 'max_plane_age_s': 8.,
-                    'max_pose_age_s': 1.5, 'max_residual_m': .04}
+                    'max_pose_age_s': 1.5, 'max_residual_m': .04,
+                    'publish_tf': True,
+                    'accept_fixed_footprint_tf': False}
         for k, v in defaults.items():
             self.declare_parameter(k, v)
         self.cfg = {k: self.get_parameter(k).value for k in defaults}
@@ -90,10 +92,10 @@ class GroundReferenceNode(Node):
         if any(t.header.frame_id == self.cfg['body_frame'] and t.child_frame_id == 'lidar_link'
                for t in msg.transforms):
             self.rsp_seen = True
-            self.fixed_conflict = any(
+            self.fixed_conflict = (not self.cfg['accept_fixed_footprint_tf'] and any(
                 t.child_frame_id == self.cfg['footprint_frame'] or
                 (t.child_frame_id == self.cfg['body_frame'] and
-                 t.header.frame_id == self.cfg['footprint_frame']) for t in msg.transforms)
+                 t.header.frame_id == self.cfg['footprint_frame']) for t in msg.transforms))
 
     def on_map(self, msg):
         now = time.monotonic()
@@ -157,7 +159,8 @@ class GroundReferenceNode(Node):
         t, r = relative
         tf.transform.translation.x,tf.transform.translation.y,tf.transform.translation.z = map(float,t)
         tf.transform.rotation.x,tf.transform.rotation.y,tf.transform.rotation.z,tf.transform.rotation.w = map(float,r)
-        self.tf_pub.sendTransform(tf)
+        if self.cfg['publish_tf']:
+            self.tf_pub.sendTransform(tf)
         pose = PoseStamped()
         pose.header = copy.deepcopy(msg.header)
         t,r = ground

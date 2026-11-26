@@ -88,7 +88,7 @@ class RuntimeChassisModel:
 
     def geometry(self,now=None):
         now=time.monotonic() if now is None else now
-        if self.current is None or now-self.received>3:
+        if self.current is None or now-self.received>30.:
             raise ValueError('live chassis geometry stale/unavailable: '+self.error)
         return self.current
 

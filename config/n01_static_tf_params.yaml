@@ -40,7 +40,7 @@ static_tf_publisher_node:
 
     orientation_topic: "/imu/rpy/filtered"
     enable_publish: true
-    auto_calibrate_from_topic: true
+    auto_calibrate_from_topic: false
     calibration_threshold_deg: 0.25
     calibration_min_interval_sec: 30.0
     calibration_stable_samples: 50

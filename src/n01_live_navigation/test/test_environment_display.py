@@ -67,28 +67,33 @@ def test_stale_live_surfaces_are_deleted_not_latched_as_current_obstacles(grid_s
     pytest.importorskip('rclpy')
     from n01_live_navigation.environment_display import EnvironmentDisplay
     from visualization_msgs.msg import Marker
+    from std_msgs.msg import Header
+    from builtin_interfaces.msg import Time
     fake=S(live_pub=S(get_subscription_count=lambda:1,publish=Mock()),
            reference_pub=S(get_subscription_count=lambda:0),grid_pub=S(get_subscription_count=lambda:0),
+           live_points_pub=S(get_subscription_count=lambda:1,publish=Mock()),
+           reference_points_pub=S(get_subscription_count=lambda:0),ground=(0.,0.,0.),
            live_sub=object(),live_visible=True,last_scan_stamp_ns=scan_stamp*10**9,center=(0.,0.),reference=None,
-           live=S(header=S(frame_id='map',stamp=S(sec=grid_stamp,nanosec=0))),
+           live=S(header=Header(frame_id='map',stamp=Time(sec=grid_stamp))),
            get_clock=lambda:S(now=lambda:S(nanoseconds=10_000_000_000)))
     fake.clear_live=lambda:EnvironmentDisplay.clear_live(fake)
     EnvironmentDisplay.update(fake)
     output=fake.live_pub.publish.call_args.args[0]
     assert all(marker.action==Marker.DELETE for marker in output.markers)
+    assert fake.live_points_pub.publish.call_args.args[0].width == 0
     assert not fake.live_visible
 
 
-def test_gui_and_launch_use_same_surface_first_rviz_configuration():
+def test_gui_and_launch_use_same_filtered_point_cloud_rviz_configuration():
     from pathlib import Path
     import yaml
     root=Path(__file__).resolve().parents[3]
     config=root/'src/n01_live_navigation/rviz/n01_live_navigation.rviz'
     assert config.read_bytes()==(root/'rviz/n01_full_pipeline.rviz').read_bytes()
     displays=yaml.safe_load(config.read_text())['Visualization Manager']['Displays']
-    assert all(not d['Enabled'] for d in displays if d['Class']=='rviz_default_plugins/PointCloud2')
+    assert all(not d['Enabled'] for d in displays if d['Name'].startswith('调试：原始'))
     topics={d.get('Topic',{}).get('Value') for d in displays if d['Enabled']}
-    assert {'/n01/navigation/live_surfaces','/n01/navigation/reference_surfaces','/n01/navigation/path'}<=topics
+    assert {'/n01/navigation/live_obstacle_points','/n01/navigation/reference_obstacle_points','/n01/navigation/rviz/execution_path','/n01/navigation/rviz/global_path','/n01/navigation/rviz/local_path','/n01/navigation/rviz/goal'}<=topics
 
 
 def test_oriented_patches_follow_sloped_surface_without_voxel_extrusion():
@@ -119,3 +124,41 @@ def test_live_surface_uses_compensated_measurement_instead_of_planning_voxels():
     EnvironmentDisplay.on_live_cloud(fake,msg)
     assert fake.live is msg
     fake.on_scan.assert_called_once_with(msg)
+
+def test_obstacle_cloud_preserves_sample_coordinates_above_sloped_floor():
+    from std_msgs.msg import Header
+    from n01_live_navigation.environment_display import obstacle_cloud
+    xyz = np.array([[2., 0., .11], [2., 0., .5], [2., 0., 2.5]])
+    msg = obstacle_cloud(xyz, Header(frame_id='map'), (.02, 0., 0.))
+    assert msg.width == 1
+    np.testing.assert_allclose(np.frombuffer(bytes(msg.data), dtype='<f4'), xyz[1])
+
+
+def test_live_obstacle_display_excludes_scan_ground_even_above_plane_cutoff():
+    from n01_live_navigation.core import decode_pointcloud_xyz
+    from n01_live_navigation.environment_display import obstacle_cloud
+    from sensor_msgs.msg import PointCloud2, PointField
+    points = np.array([[1, 0, .10, 1], [2, 0, .20, 0]], dtype='<f4')
+    fields = [PointField(name=name, offset=4*i, datatype=7, count=1)
+              for i, name in enumerate(('x', 'y', 'z', 'ground'))]
+    source = PointCloud2(width=2, height=1, point_step=16, row_step=32,
+                         fields=fields, data=points.tobytes())
+    measured = decode_pointcloud_xyz(source, exclude_ground=True)
+    display = obstacle_cloud(measured, source.header, (0., 0., 0.))
+    np.testing.assert_allclose(np.frombuffer(bytes(display.data), dtype='<f4'), points[1, :3])
+
+
+def test_rviz_path_uses_ground_height_without_changing_planning_message():
+    from geometry_msgs.msg import PoseStamped
+    from nav_msgs.msg import Path
+    from n01_live_navigation.trajectory_display import TrajectoryDisplay
+
+    node = S(ground=(.02, 0., -.8))
+    node.height = lambda x, y: TrajectoryDisplay.height(node, x, y)
+    source = Path(poses=[PoseStamped()])
+    source.poses[0].pose.position.x = 2.
+    source.poses[0].pose.position.z = 8.
+    display = TrajectoryDisplay.project_path(node, source)
+    assert display.poses[0].pose.position.x == 2.
+    assert display.poses[0].pose.position.z == pytest.approx(-.725)
+    assert source.poses[0].pose.position.z == 8.

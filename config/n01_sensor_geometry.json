@@ -1,7 +1,7 @@
 {
-  "schema": "n01.sensor_geometry.v1",
-  "method": "stationary_floor_plus_four_wheel_contact_kinematics",
-  "captured_utc": "2026-11-12T06:03:39.077212+00:00",
+  "schema": "n01.sensor_geometry.v2",
+  "method": "latest_rsp_with_measured_lidar_mount",
+  "captured_utc": "2026-11-23T05:11:42Z",
   "body_frame": "base_link",
   "lidar_frame": "lidar_link",
   "body_to_lidar_xyz_m": [
@@ -19,13 +19,14 @@
   "fit_frames": 32,
   "mount_height_std_m": 0.005702597304210189,
   "max_four_wheel_contact_spread_m": 0.0067163766677237335,
-  "source_urdf_sha256": "91c89fd4e145c4a0d83aa18a2da9b9cd29c7c365ca1689f977d5c0420733f538",
+  "source_urdf_sha256": "8cf520719a5ab559adec5df7c1e662315a942a140453a294cde01b3688079379",
   "assumptions": [
-    "four wheels contact the same locally planar floor",
-    "current URDF leg lengths, wheel radius and encoder zero points are valid",
-    "body and horizontal lidar axes have zero relative roll/pitch",
-    "horizontal lidar offset remains the declared 0.295m; not independently calibrated"
+    "latest RSP base_link is the authority",
+    "old map and old footprint were built under the legacy frame and must not be reused",
+    "ground reference is dynamic map-plane projection at body XY"
   ],
   "independent_mount_measurement": false,
-  "note": "Model-constrained estimate, not an independent physical measurement; floor systematic uncertainty remains."
+  "note": "Model-constrained estimate, not an independent physical measurement; floor systematic uncertainty remains.",
+  "frame_contract": "latest RSP base_link; lidar_mount_joint=0.295 0 0.146366 (measured)",
+  "legacy_note": "RSP source was patched to the measured legacy-compatible lidar mount after vendor regression to z=0."
 }

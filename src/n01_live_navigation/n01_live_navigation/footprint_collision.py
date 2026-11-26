@@ -3,7 +3,9 @@ import math
 import numpy as np
 from scipy.spatial import cKDTree
 
-ENVIRONMENT_MARGIN = .06
+from .core import GROUND_CLEARANCE_M
+
+ENVIRONMENT_MARGIN = .02
 
 
 class FootprintCollision:
@@ -18,7 +20,7 @@ class FootprintCollision:
             raise ValueError('invalid_collision_geometry')
         p = p[np.isfinite(p).all(axis=1)]
         floor = p[:, :2] @ plane[:2] + plane[2]
-        p = p[(p[:, 2] > floor+.03) & (p[:, 2] >= z-.90-height_margin) & (p[:, 2] <= z+.25+height_margin)]
+        p = p[(p[:, 2] > floor+GROUND_CLEARANCE_M) & (p[:, 2] >= z-.90-height_margin) & (p[:, 2] <= z+.25+height_margin)]
         self.points=p[:,:2]
         if footprint is None:raise ValueError("urdf_footprint_required")
         self.polygon=np.asarray(footprint,float)

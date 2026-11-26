@@ -45,7 +45,7 @@ def occupancy_colors(occupied, live, resolution):
         sub=occupied[y0:y1,x0:x1]
         reference=binary_closing(sub,iterations=1)|sub
         view=rgb[y0:y1,x0:x1]
-        view[reference]=(116,151,182)
+        view[reference]=(190,150,255)
     if live.any():
         pad=int(math.ceil(.22/max(float(resolution),1e-6)))
         y0,y1,x0,x1=_bbox(live,pad)

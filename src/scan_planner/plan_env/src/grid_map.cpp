@@ -1,3 +1,4 @@
+#include "plan_env/grid_fusion.h"
 #include "plan_env/grid_map.h"
 #include "plan_env/environment_inflation.h"
 #include <unordered_set>
@@ -120,6 +121,8 @@ void GridMap::initMap(rclcpp::Node *node)
   load_parameter(node_, "grid_map.observation_ttl_s", observation_ttl_s_, 3.);
   if(!std::isfinite(observation_ttl_s_) || observation_ttl_s_<1. || observation_ttl_s_>30.)throw std::runtime_error("invalid observation TTL");
   load_parameter(node_, "grid_map.static_observation_refresh", static_observation_refresh_, false);
+  load_parameter(node_, "grid_map.fused_2d_enabled", fused_2d_enabled_, false);
+  load_parameter(node_, "grid_map.pcd_bounds_free", pcd_bounds_free_enabled_, false);
   load_parameter(node_, "grid_map.static_ego_filter_enabled", static_ego_filter_enabled_, true);
   load_parameter(node_, "grid_map.static_ego_filter_radius", static_ego_filter_radius_, 0.30);
   load_parameter(node_, "grid_map.static_ego_filter_margin", static_ego_filter_margin_, 0.06);
@@ -285,8 +288,8 @@ void GridMap::initMap(rclcpp::Node *node)
                                         std::bind(&GridMap::updateOccupancyCallback, this));
   // Visualization shares the executor with collision/map updates and the FSM.
   // Keep the control/map update rates intact; only decimate display exports.
-  double vis_period_s = 0.2;
-  load_parameter(node_, "grid_map.visualization_period_s", vis_period_s, 0.2);
+  double vis_period_s = 0.5;
+  load_parameter(node_, "grid_map.visualization_period_s", vis_period_s, 0.5);
   if (!std::isfinite(vis_period_s) || vis_period_s < 0.05 || vis_period_s > 2.0)
     throw std::runtime_error("grid_map.visualization_period_s must be in [0.05, 2.0]");
   vis_timer_ = node_->create_wall_timer(std::chrono::duration<double>(vis_period_s),
@@ -304,6 +307,7 @@ void GridMap::initMap(rclcpp::Node *node)
         auto data=nlohmann::json::parse(msg->data);const auto& p=data.at("plane");
         double a=p.at("a"),b=p.at("b"),c=p.at("c"),residual=p.at("residual");
         if(data.at("state")!="ground_projection_ready" || !std::isfinite(a+b+c+residual) || residual<0 || residual>.04 || std::hypot(a,b)>std::tan(2.*M_PI/180.))return;
+        if (fused_2d_enabled_ && !reference_updates_enabled_) return;
         const double delta=std::abs(c-mp_.ground_height_)+std::abs(a-mp_.ground_slope_x_)+std::abs(b-mp_.ground_slope_y_);
         mp_.ground_slope_x_=a;mp_.ground_slope_y_=b;mp_.ground_height_=c;
         if(delta>1e-5){
@@ -319,7 +323,7 @@ void GridMap::initMap(rclcpp::Node *node)
     [this](sensor_msgs::msg::PointCloud2::ConstSharedPtr msg){
       int64_t stamp=rclcpp::Time(msg->header.stamp).nanoseconds();
       double age=(node_->now().nanoseconds()-stamp)*1e-9;
-      if(msg->header.frame_id!="map" || stamp<=prediction_stamp_ns_ || age<-.1 || age>.6 || msg->width>20000)return;
+      if(msg->header.frame_id!="map" || stamp<=prediction_stamp_ns_ || age<-.1 || age>2.0 || msg->width>20000)return;
       if(msg->height!=1 || msg->is_bigendian || msg->point_step<12 || msg->row_step<msg->width*msg->point_step || msg->data.size()<msg->row_step)return;
       for(const char* name:{"x","y","z"}) {
         bool valid=false;for(const auto& field:msg->fields)if(field.name==name && field.datatype==sensor_msgs::msg::PointField::FLOAT32 && field.count==1 && field.offset+4<=msg->point_step)valid=true;
@@ -998,6 +1002,141 @@ int GridMap::globalCellState(double x, double y) const
   return v>=100?100:0;
 }
 
+int GridMap::fusedCellState(double x, double y) const
+{
+  if(!fused_2d_enabled_ || !std::isfinite(x) || !std::isfinite(y) ||
+     fused_w_<=0 || fused_h_<=0 || fused_2d_.empty()) return -2;
+  const int ix=static_cast<int>(std::floor((x-fused_origin_.x())/fused_res_));
+  const int iy=static_cast<int>(std::floor((y-fused_origin_.y())/fused_res_));
+  if(ix<0||ix>=fused_w_||iy<0||iy>=fused_h_)return -2;
+  const int8_t v=fused_2d_[static_cast<size_t>(iy)*fused_w_+ix];
+  return v<0 ? -1 : (v>=100 ? 100 : 0);
+}
+
+void GridMap::rebuildFusedGrid()
+{
+  if(!fused_2d_enabled_)return;
+  const double res=mp_.resolution_;
+  if(!(res>1e-3))return;
+  const Eigen::Vector3d lo=mp_.map_min_boundary_;
+  const Eigen::Vector3d hi=mp_.map_max_boundary_;
+  const int w=std::max(1,static_cast<int>(std::ceil((hi.x()-lo.x())/res)));
+  const int h=std::max(1,static_cast<int>(std::ceil((hi.y()-lo.y())/res)));
+  if(static_cast<long long>(w)*h>1000000LL)return;
+  std::vector<int8_t> local(static_cast<size_t>(w)*h,-1);
+  const auto set=[&](double x,double y,int8_t value){
+    if(!std::isfinite(x)||!std::isfinite(y))return;
+    const int ix=static_cast<int>(std::floor((x-lo.x())/res));
+    const int iy=static_cast<int>(std::floor((y-lo.y())/res));
+    if(ix<0||iy<0||ix>=w||iy>=h)return;
+    local[static_cast<size_t>(iy)*w+ix]=value;
+  };
+  // Short-term local free evidence. It is never written to the global grid.
+  for(const auto& entry:observed_columns_){
+    const int32_t kx=static_cast<int32_t>(entry.first>>32);
+    const int32_t ky=static_cast<int32_t>(entry.first&0xffffffffULL);
+    set(kx*.1+.05,ky*.1+.05,0);
+  }
+  // Current local returns always win over the global reference.
+  for(const auto& p:getLiveObstaclePoints()){
+    if(!p.allFinite())continue;
+    set(p.x(),p.y(),100);
+  }
+  // Feed short-horizon dynamic obstacle predictions into the local fused
+  // planning grid (excluding the robot's immediate ego radius so predictions
+  // never falsely trap the start cell) so SCAN proactively plans around
+  // approaching/crossing humans before close-range emergency stops.
+  if(predictionFresh()){
+    const auto& body=md_.sliding_map_frame_pos_;
+    for(const auto& p:predicted_points_){
+      if(!p.allFinite())continue;
+      if(std::hypot(p.x()-body.x(),p.y()-body.y())<0.65)continue;
+      set(p.x(),p.y(),100);
+    }
+  }
+  fused_origin_=lo.head<2>();fused_res_=res;fused_w_=w;fused_h_=h;
+  fused_2d_.assign(static_cast<size_t>(w)*h,-1);
+  for(int iy=0;iy<h;++iy)for(int ix=0;ix<w;++ix){
+    const int8_t l=local[static_cast<size_t>(iy)*w+ix];
+    if(l==100){fused_2d_[static_cast<size_t>(iy)*w+ix]=100;continue;}
+    if(l==0){fused_2d_[static_cast<size_t>(iy)*w+ix]=0;continue;}
+    const double wx=lo.x()+(ix+.5)*res,wy=lo.y()+(iy+.5)*res;
+    const int g=globalCellState(wx,wy);
+    fused_2d_[static_cast<size_t>(iy)*w+ix]=static_cast<int8_t>(fuseOccupancy2D(l,g==-2?-1:g));
+    if(l==0 && known_free_cells_.size()<500000) known_free_cells_.insert(coverageKey(wx,wy));
+  }
+  planning_dirty_=true;
+  rebuildPlanningGrid();
+}
+
+void GridMap::rebuildPlanningGrid()
+{
+  if(!fused_2d_enabled_) return;
+  const bool has_global=hasGlobalGrid();
+  const bool has_local=!fused_2d_.empty() && fused_w_>0 && fused_h_>0 && fused_res_>1e-6;
+  if(!has_global && !has_local) return;
+  planning_res_=has_global ? global_res_ : fused_res_;
+  Eigen::Vector2d lo,hi;
+  if(has_global){lo=global_origin_;hi=global_origin_+Eigen::Vector2d(global_w_*global_res_,global_h_*global_res_);}
+  if(has_local){
+    const Eigen::Vector2d llo=fused_origin_,lhi=fused_origin_+Eigen::Vector2d(fused_w_*fused_res_,fused_h_*fused_res_);
+    if(has_global){lo=lo.cwiseMin(llo);hi=hi.cwiseMax(lhi);}else{lo=llo;hi=lhi;}
+  }
+  planning_origin_=lo;
+  planning_w_=std::max(1,static_cast<int>(std::ceil((hi.x()-lo.x())/planning_res_)));
+  planning_h_=std::max(1,static_cast<int>(std::ceil((hi.y()-lo.y())/planning_res_)));
+  if(static_cast<long long>(planning_w_)*planning_h_>4000000LL)return;
+  planning_grid_.assign(static_cast<size_t>(planning_w_)*planning_h_,-1);
+  const auto put=[&](double x,double y,int8_t value){
+    const int ix=static_cast<int>(std::floor((x-lo.x())/planning_res_));
+    const int iy=static_cast<int>(std::floor((y-lo.y())/planning_res_));
+    if(ix<0||iy<0||ix>=planning_w_||iy>=planning_h_)return;
+    planning_grid_[static_cast<size_t>(iy)*planning_w_+ix]=value;
+  };
+  // Global base is copied, never modified.
+  if(has_global){
+    for(int iy=0;iy<global_h_;++iy)for(int ix=0;ix<global_w_;++ix){
+      const int8_t v=global_grid_[static_cast<size_t>(iy)*global_w_+ix];
+      put(global_origin_.x()+ix*global_res_,global_origin_.y()+iy*global_res_,v);
+    }
+  }
+  // Session-only free memory: unknown -> free, but never clear a global 100.
+  for(const auto key:known_free_cells_){
+    const int32_t kx=static_cast<int32_t>(key>>32);
+    const int32_t ky=static_cast<int32_t>(key&0xffffffffULL);
+    const int ix=static_cast<int>(std::floor((kx*.1+.05-lo.x())/planning_res_));
+    const int iy=static_cast<int>(std::floor((ky*.1+.05-lo.y())/planning_res_));
+    if(ix>=0&&ix<planning_w_&&iy>=0&&iy<planning_h_){
+      auto&c=planning_grid_[static_cast<size_t>(iy)*planning_w_+ix];
+      if(c<100)c=0;
+    }
+  }
+  // Local overlay: explicit 0/100 wins; -1 leaves global unchanged. This is
+  // what lets local free outside the PCD extent participate in planning.
+  if(has_local){
+    for(int ly=0;ly<fused_h_;++ly)for(int lx=0;lx<fused_w_;++lx){
+      const int8_t v=fused_2d_[static_cast<size_t>(ly)*fused_w_+lx];
+      if(v<0)continue;
+      put(fused_origin_.x()+(lx+.5)*fused_res_,fused_origin_.y()+(ly+.5)*fused_res_,v);
+    }
+  }
+  planning_cloud_.clear();
+  planning_cloud_.reserve(static_cast<size_t>(planning_w_)*planning_h_/16+16);
+  const auto z=md_.sliding_map_frame_pos_.z();
+  for(int iy=0;iy<planning_h_;++iy)for(int ix=0;ix<planning_w_;++ix){
+    if(planning_grid_[static_cast<size_t>(iy)*planning_w_+ix]!=100)continue;
+    planning_cloud_.push_back(pcl::PointXYZ(lo.x()+ix*planning_res_,lo.y()+iy*planning_res_,z));
+  }
+  planning_cloud_.width=planning_cloud_.size();planning_cloud_.height=1;planning_cloud_.is_dense=true;
+  planning_dirty_=false;
+}
+
+const pcl::PointCloud<pcl::PointXYZ>& GridMap::getPlanningOccupancyCloud()
+{
+  if(planning_dirty_)rebuildPlanningGrid();
+  return planning_cloud_;
+}
+
 int GridMap::globalFreeComponentSize(double x, double y) const
 {
   if(globalCellState(x,y)!=0)return 0;
@@ -1025,6 +1164,7 @@ int GridMap::globalFreeComponentSize(double x, double y) const
 
 bool GridMap::clearGlobalStart(double x, double y, double radius)
 {
+  if (fused_2d_enabled_) return false;
   if(!hasGlobalGrid())return false;
   const int cx=static_cast<int>(std::floor((x-global_origin_.x())/global_res_));
   const int cy=static_cast<int>(std::floor((y-global_origin_.y())/global_res_));
@@ -1072,6 +1212,7 @@ uint32_t GridMap::globalTileVersion(double x,double y) const
 
 void GridMap::rebuildGlobalGrid()
 {
+  if (fused_2d_enabled_ && !reference_updates_enabled_ && hasGlobalGrid()) return;
   if(!static_cloud_enabled_||!static_source_valid_||static_source_decoded_.empty())return;
   const double res=mp_.resolution_;
   if(!(res>1e-3))return;
@@ -1092,15 +1233,14 @@ void GridMap::rebuildGlobalGrid()
     if(ix<0||iy<0||ix>=w||iy>=h)return;
     next[static_cast<size_t>(iy)*w+ix]=value;
   };
-  const auto& static_points=!effective_static_source_.empty()
-      ?effective_static_source_:static_source_decoded_;
+  const auto& static_points = fused_2d_enabled_ ? static_source_decoded_ : effective_static_source_;
   const auto& global_body=md_.sliding_map_frame_pos_;
   std::vector<Eigen::Vector2d> global_ego_poly;
   if(static_ego_filter_enabled_ && urdf_footprint_enabled_ && footprintReady())
     global_ego_poly=footprintPolygon(md_.body_yaw_);
   for(const auto& pt:static_points.points){
     if(!std::isfinite(pt.x)||!std::isfinite(pt.y)||!std::isfinite(pt.z))continue;
-    if(static_ego_filter_enabled_){
+    if(static_ego_filter_enabled_ && !fused_2d_enabled_){
       const double dx=pt.x-global_body.x(),dy=pt.y-global_body.y();
       const double dxy2=dx*dx+dy*dy;
       bool self=false;
@@ -1122,6 +1262,22 @@ void GridMap::rebuildGlobalGrid()
     if(pt.z<=getObstacleGroundCutoff(pt.x,pt.y))continue;
     set(pt.x,pt.y,100);
   }
+  // Static-map semantics: inside the actual PCD XY extent, absence of an
+  // obstacle is treated as free. Outside the PCD extent remains unknown.
+  if(pcd_bounds_free_enabled_ && static_source_valid_){
+    const int x0=static_cast<int>(std::floor((static_source_min_.x()-lo.x())/res));
+    const int x1=static_cast<int>(std::ceil((static_source_max_.x()-lo.x())/res));
+    const int y0=static_cast<int>(std::floor((static_source_min_.y()-lo.y())/res));
+    const int y1=static_cast<int>(std::ceil((static_source_max_.y()-lo.y())/res));
+    for(int iy=std::max(0,y0);iy<std::min(h,y1+1);++iy)
+      for(int ix=std::max(0,x0);ix<std::min(w,x1+1);++ix){
+        auto&c=next[static_cast<size_t>(iy)*w+ix];
+        if(c<0)c=0;
+      }
+  }
+  // In fused 2D mode the global layer is READ-ONLY: local free/obstacle
+  // evidence only affects fusedCellState(), never this persistent layer.
+  if(!fused_2d_enabled_){
   if(std::abs(res-global_hits_res_)>1e-9){global_live_hits_.clear();global_hits_res_=res;}
   const double now_s=node_->now().seconds();
   const double live_ttl=10.0;
@@ -1200,6 +1356,7 @@ void GridMap::rebuildGlobalGrid()
     overlay_local(reference_grid_data_,false);
     overlay_local(live_grid_data_,true);
   }
+  }
   const int tw=std::max(1,static_cast<int>(std::ceil(w/double(global_tile_m_))));
   const int th=std::max(1,static_cast<int>(std::ceil(h/double(global_tile_m_))));
   std::vector<uint32_t> versions(static_cast<size_t>(tw)*th,0);
@@ -1218,11 +1375,12 @@ void GridMap::rebuildGlobalGrid()
     versions[static_cast<size_t>(ty)*tw+tx]=previous+(changed?1u:0u);
   }
   global_grid_.swap(next);global_tile_version_.swap(versions);
+  planning_dirty_=true;
   global_origin_=lo;global_w_=w;global_h_=h;global_res_=res;global_version_++;
   global_cloud_.clear();global_cloud_.reserve(static_cast<size_t>(w)*h/16+16);
   for(int iy=0;iy<h;++iy)for(int ix=0;ix<w;++ix){
     if(global_grid_[static_cast<size_t>(iy)*w+ix]!=100)continue;
-    global_cloud_.push_back(pcl::PointXYZ(lo.x()+ix*res,lo.y()+iy*res,body_z));
+    global_cloud_.push_back(pcl::PointXYZ(lo.x()+ix*res,lo.y()+iy*res,md_.sliding_map_frame_pos_.z()));
   }
   global_cloud_.width=global_cloud_.size();global_cloud_.height=1;global_cloud_.is_dense=true;
   if(global_grid_pub_){
@@ -1285,7 +1443,7 @@ void GridMap::publishProjectedGrids()
     for (const auto& p : points) {
       if (!p.allFinite() || !isInMap(p)) continue;
       const double cutoff = getObstacleGroundCutoff(p.x(), p.y());
-      if (p.z() <= cutoff || p.z() > cutoff + 1.57) continue;
+      if (p.z() <= cutoff || p.z() > getObstacleHeightMax(p.x(), p.y())) continue;
       const int x = static_cast<int>(std::floor((p.x() - lo.x()) / res));
       const int y = static_cast<int>(std::floor((p.y() - lo.y()) / res));
       if (x >= 0 && y >= 0 && x < w && y < h)
@@ -1315,7 +1473,7 @@ void GridMap::publishProjectedGrids()
 }
 
 void GridMap::ageStaticPriors(){
-  if(!static_observation_refresh_ || latest_scan_stamp_ns_<=last_prior_scan_stamp_ns_)return;
+  if(fused_2d_enabled_ || !static_observation_refresh_ || latest_scan_stamp_ns_<=last_prior_scan_stamp_ns_)return;
   last_prior_scan_stamp_ns_=latest_scan_stamp_ns_;
   for(const auto& id:static_window_prior_cells_){
     if(!isInMap(id))continue;
@@ -1499,7 +1657,7 @@ void GridMap::cloudPoseCallback(
   sensorPoseCallback(pose);
   const int64_t stamp=static_cast<int64_t>(cloud->header.stamp.sec)*1000000000LL+cloud->header.stamp.nanosec;
   const double age=(node_->now().nanoseconds()-stamp)*1e-9;
-  free_evidence_frame_valid_=cloud->header.frame_id==mp_.frame_id_ && stamp>last_free_evidence_stamp_ && age>=-0.1 && age<=0.9;
+  free_evidence_frame_valid_=cloud->header.frame_id==mp_.frame_id_ && stamp>last_free_evidence_stamp_ && age>=-0.1 && age<=2.0;
   free_evidence_stamp_=stamp;
   if(free_evidence_frame_valid_) last_free_evidence_stamp_=stamp;
   cloudCallback(cloud);
@@ -1704,7 +1862,8 @@ void GridMap::refreshStaticObservations(bool global_request)
   // Local collision checking uses the live layer in reference mode. Refresh
   // historical costs lazily for global planning, not on every sensor frame.
   if(static_prior_as_cost_ && !global_request) return;
-  if(static_refresh_pending_ && (static_restore_urgent_ || now-last_static_rebuild_s_>=0.5))
+  if ((fused_2d_enabled_ && now-last_static_rebuild_s_>=0.5) ||
+      (static_refresh_pending_ && (static_restore_urgent_ || now-last_static_rebuild_s_>=0.5)))
     rebuildStaticOverlay();
 }
 
@@ -1760,24 +1919,30 @@ void GridMap::rebuildStaticOverlay()
   for (const auto& pt : cloud.points) {
     if (!std::isfinite(pt.x) || !std::isfinite(pt.y) || !std::isfinite(pt.z))
       continue;
-    if (pt.x < mp_.map_min_boundary_.x() || pt.x > mp_.map_max_boundary_.x() ||
-        pt.y < mp_.map_min_boundary_.y() || pt.y > mp_.map_max_boundary_.y())
+    if (!fused_2d_enabled_ && (pt.x < mp_.map_min_boundary_.x() || pt.x > mp_.map_max_boundary_.x() ||
+        pt.y < mp_.map_min_boundary_.y() || pt.y > mp_.map_max_boundary_.y()))
       continue;
     if (ego_point(pt)) continue;
     const Eigen::Vector3d p(pt.x, pt.y, pt.z);
     Eigen::Vector3i world;posToIndex(p,world);
-    bool observed_free=static_observation_refresh_ && world_changes_.suppressed({world.x(),world.y(),world.z()});
+    bool observed_free=!fused_2d_enabled_ && static_observation_refresh_ && world_changes_.suppressed({world.x(),world.y(),world.z()});
     if(isInMap(p)) {
       Eigen::Vector3i cell;posToIndex(p,cell);const int addr=toAddress(cell);
-      if(p.z()>getObstacleGroundCutoff(p.x(),p.y())) {
+      if(p.z()>getObstacleGroundCutoff(p.x(),p.y()) &&
+         p.z()<=getObstacleHeightMax(p.x(),p.y())) {
         static_prior_mask_[addr]=1;
       }
-      observed_free=observed_free || (static_observation_refresh_ && static_free_evidence_.suppressesPrior(addr));
+      if (static_observation_refresh_) {
+        observed_free = observed_free || (fused_2d_enabled_
+            ? static_free_evidence_.free(addr, evidence_now)
+            : static_free_evidence_.suppressesPrior(addr));
+      }
     }
-    const bool unconfirmed=isInMap(p) && world_changes_.uncertain({world.x(),world.y(),world.z()});
+    const bool unconfirmed=!fused_2d_enabled_ && isInMap(p) && world_changes_.uncertain({world.x(),world.y(),world.z()});
     if(!observed_free && !unconfirmed) effective_static_source_.push_back(pt);
     if(observed_free || unconfirmed) continue;
-    if (p.z() <= getObstacleGroundCutoff(p.x(), p.y())) continue;
+    if (p.z() <= getObstacleGroundCutoff(p.x(), p.y()) ||
+        p.z() > getObstacleHeightMax(p.x(), p.y())) continue;
     if (!isInMap(p)) continue;
     ++static_window_points_;
     Eigen::Vector3i id;
@@ -1939,6 +2104,7 @@ void GridMap::cloudCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr 
 
   md_.use_cloud_update_ = true;
   md_.occ_need_update_ = true;
+  rebuildFusedGrid();
 }
 
 void GridMap::publishPlanningView(){
@@ -1950,8 +2116,8 @@ void GridMap::publishPlanningView(){
     pcl::PointCloud<pcl::PointXYZ> view;
     for(const auto& p:points){
       Eigen::Vector3d v(p.x,p.y,p.z);
-      if(v.z()<=getObstacleGroundCutoff(v.x(),v.y()) || v.z()<md_.sliding_map_frame_pos_.z()-mp_.obstacles_inflation_z_up ||
-          v.z()>md_.sliding_map_frame_pos_.z()+mp_.obstacles_inflation_z_down)continue;
+      if(v.z()<=getObstacleGroundCutoff(v.x(),v.y()) ||
+         v.z()>getObstacleHeightMax(v.x(),v.y()))continue;
       view.push_back(p);
     }
     sensor_msgs::msg::PointCloud2 msg;pcl::toROSMsg(view,msg);msg.header.frame_id=mp_.frame_id_;msg.header.stamp=node_->now();pub->publish(msg);
@@ -2018,8 +2184,8 @@ void GridMap::publishMap()
     pcl::PointCloud<pcl::PointXYZ> environment;
     const double body_z=md_.sliding_map_frame_pos_.z();
     for(const auto& p:cloud.points) {
-      if(p.z<=getObstacleGroundCutoff(p.x,p.y) || p.z<body_z-mp_.obstacles_inflation_z_up ||
-         p.z>body_z+mp_.obstacles_inflation_z_down) continue;
+      if(p.z<=getObstacleGroundCutoff(p.x,p.y) ||
+         p.z>getObstacleHeightMax(p.x,p.y)) continue;
       const int ix=static_cast<int>(std::floor(p.x/mp_.resolution_));
       const int iy=static_cast<int>(std::floor(p.y/mp_.resolution_));
       for(const auto& offset:offsets) {

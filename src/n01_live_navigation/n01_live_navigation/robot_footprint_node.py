@@ -36,7 +36,9 @@ class RobotFootprintNode(Node):
             if self.model is None:raise ValueError('robot_description_unavailable')
             now=time.monotonic();j={k:v for k,v in self.positions.items()if now-self.times[k]<=1.}
             j=sweep_joints(self.model,j)
-            key=tuple((k,j[k])for k in sorted(j)if not k.startswith('wheel_')and not k.endswith('_ankle_yaw'))
+            # 1 mm quantization prevents encoder noise from re-hulling every
+            # 20 ms while retaining the measured stance within a safe margin.
+            key=tuple((k,round(float(j[k]),3))for k in sorted(j)if not k.startswith('wheel_')and not k.endswith('_ankle_yaw'))
             if key!=self.cached_key:
                 self.cached=steering_hull(self.model,j);self.cached_key=key
             for x,y in self.cached:msg.polygon.points.append(Point32(x=float(x),y=float(y),z=0.))

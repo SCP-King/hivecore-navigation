@@ -3,16 +3,48 @@
   ros__parameters:
     max_speed_mps: 0.4
     max_accel_mps2: 0.25
-    max_yaw_rate_radps: 0.45
-    final_yaw_tolerance_rad: 0.10472
+    max_yaw_rate_radps: 0.22
+    final_yaw_tolerance_rad: 0.087266
     # Feedback freshness gates: our own limits, declared parameters and live.
     feedback.pose_max_age_s: 3.0
     feedback.pose_stamp_max_age_s: 3.0
     feedback.odom_max_age_s: 3.0
     feedback.joints_max_age_s: 3.0
-    feedback.packet_max_age_s: 3.0
-    feedback.scene_max_age_s: 3.0
-    arrival.confirm_s: 3.0
+    feedback.packet_max_age_s: 5.0
+    feedback.scene_max_age_s: 5.0
+    arrival.confirm_s: 0.3
+    # Match the vendor teleop gate: when the legs are outside Home, standalone
+    # 4WS pivot is forbidden; vx+omega (Ackermann-style) remains allowed.
+    # Steering-derived speed reduction. v and w are scaled together; keep
+    # enabled for normal operation. Test-only false disables this factor.
+    speed_safety_scale_enabled: true
+    # Stop a MOVING command that is only creeping while commanding a large
+    # yaw rate; request a fresh trajectory instead of scrubbing the wheels.
+    low_speed_scrub_guard_s: 1.0
+    min_moving_speed_mps: 0.05
+    final_approach_radius_m: 0.50
+    final_approach_stop_m: 0.08
+    final_approach_speed_mps: 0.12
+    watchdog.feedback_timeout_s: 5.0
+    watchdog.replan_timeout_s: 5.0
+    watchdog.steering_timeout_s: 4.0
+    watchdog.align_timeout_s: 8.0
+    recovery.reverse_enabled: true
+    recovery.reverse_speed_mps: 0.12
+    recovery.reverse_distance_m: 0.60
+    recovery.reverse_timeout_s: 10.0
+    recovery.reverse_max_attempts: 3
+    recovery.reverse_require_observed_free: true
+    recovery.reverse_use_trajectory_history: true
+    recovery.reverse_history_age_s: 10.0
+    leg_gate_enabled: true
+    leg_home_tolerance_rad: 0.08
+    leg_home_joint_names: [fl_leg_pitch1, fl_leg_pitch2, fr_leg_pitch1, fr_leg_pitch2,
+                           rl_leg_pitch1, rl_leg_pitch2, rr_leg_pitch1, rr_leg_pitch2]
+    leg_home_joint_positions: [0.7853981633974483, -1.3089969389957472,
+                               0.7853981633974483, -1.3089969389957472,
+                               0.7853981633974483, -1.3089969389957472,
+                               0.7853981633974483, -1.3089969389957472]
     execution_preview_m: 1.0
     enabled: false
     dry_run: false
@@ -31,20 +63,21 @@
     # Bounded recovery ladder (REC-01/SAFE-01). Read live, editable in the GUI.
     recovery.local_attempts: 15
     recovery.global_attempts: 5
-    recovery.wait_timeout_s: 0.0   # 0 = wait for operator resume
+    recovery.wait_timeout_s: 5.0   # bounded auto retry; 0 = operator only
     recovery.auto_resume: true
+    recovery.max_auto_resumes: 3
     grid_map.observation_ttl_s: 3.0
     grid_map.footprint_max_age_s: 3.0
     perception.self_margin_m: 0.005
     perception.ground_patch_size_m: 1.0
     perception.ground_band_m: 0.015
     perception.ground_max_prior_shift_m: 0.02
-    perception.prediction_horizons_s: [0.25, 0.5, 0.75]
+    perception.prediction_horizons_s: [0.5, 1.0, 1.5, 2.0]
     # Internal freshness gates for trajectory review, not contractual values.
     # Header stamp is the source scan time; raise only after measuring real lag.
-    perception.scene_max_age_s: 3.0
+    perception.scene_max_age_s: 5.0
     perception.body_pose_max_age_s: 3.0
     perception.joint_max_age_s: 3.0
-    perception.ground_max_age_s: 3.0
+    perception.ground_max_age_s: 5.0
     # Soft advice only; unconfirmed history/forecasts are not measured hard occupancy.
     perception.risk_speed_scale: 0.5

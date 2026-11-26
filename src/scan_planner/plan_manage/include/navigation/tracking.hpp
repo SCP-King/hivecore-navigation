@@ -68,12 +68,18 @@ inline double braking_speed(double limit,double accel,double available,double re
 }
 struct Command {double v=0,w=0;};
 inline Command feedback(const Sample& p,const Sample& ahead,double x,double y,double yaw,
-                        double speed,double yaw_limit,double gain=1.2) {
+                        double speed,double yaw_limit,double gain=1.4) {
   double dx=ahead.x-x,dy=ahead.y-y;
   double error=wrap(p.yaw-yaw),cross=-std::sin(yaw)*dx+std::cos(yaw)*dy;
   double curvature=wrap(ahead.yaw-p.yaw)/std::max(.02,ahead.s-p.s);
   double v=speed*std::max(0.,std::cos(error));
-  return {v,limit(v*curvature+gain*error+1.1*cross,yaw_limit)};
+  double w_raw=v*curvature+gain*error+1.8*cross;
+  // When curvature or cross-track error saturates yaw_limit, slow v proportionally
+  // so the actual turn radius R = v / w stays tight on the path instead of drifting wide.
+  if(yaw_limit>1e-3&&std::abs(w_raw)>yaw_limit){
+    v*=yaw_limit/std::abs(w_raw);
+  }
+  return {v,limit(w_raw,yaw_limit)};
 }
 // Polygon Minkowski query: physical URDF hull plus the environment margin once.
 inline bool hits(double x,double y,const std::vector<std::array<double,2>>& polygon,double margin){

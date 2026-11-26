@@ -23,27 +23,35 @@ Visualization Manager:
       Durability Policy: Transient Local
       History Policy: Keep Last
       Depth: 1
-  - Class: rviz_default_plugins/MarkerArray
-    Name: 参考环境曲面（历史回波，蓝灰）
+  - Class: rviz_default_plugins/PointCloud2
+    Name: 静态障碍点云（蓝灰）
+    Style: Points
+    Size (Pixels): 3
+    Color Transformer: FlatColor
+    Color: 139; 172; 203
     Enabled: true
     Topic:
-      Value: /n01/navigation/reference_surfaces
+      Value: /n01/navigation/reference_obstacle_points
       Reliability Policy: Reliable
       Durability Policy: Transient Local
       History Policy: Keep Last
       Depth: 1
-  - Class: rviz_default_plugins/MarkerArray
-    Name: 实时物体曲面（实测轮廓，青绿）
+  - Class: rviz_default_plugins/PointCloud2
+    Name: 实时障碍点云（青绿）
+    Style: Points
+    Size (Pixels): 3
+    Color Transformer: FlatColor
+    Color: 79; 239; 219
     Enabled: true
     Topic:
-      Value: /n01/navigation/live_surfaces
+      Value: /n01/navigation/live_obstacle_points
       Reliability Policy: Best Effort
       Durability Policy: Volatile
       History Policy: Keep Last
       Depth: 1
   - Class: rviz_default_plugins/Marker
     Name: 拟合地面网格
-    Enabled: true
+    Enabled: false
     Topic:
       Value: /n01/navigation/environment_grid
       Reliability Policy: Reliable
@@ -98,7 +106,7 @@ Visualization Manager:
     Name: 统一执行路径
     Enabled: true
     Topic:
-      Value: /n01/navigation/path
+      Value: /n01/navigation/rviz/execution_path
       Reliability Policy: Reliable
       Durability Policy: Transient Local
       History Policy: Keep Last
@@ -129,27 +137,37 @@ Visualization Manager:
       History Policy: Keep Last
       Depth: 1
   - Class: rviz_default_plugins/Path
-    Name: Global reference (debug)
-    Enabled: false
+    Name: 全局路径（蓝色）
+    Enabled: true
+    Line Style: Billboards
     Topic:
-      Value: /planning/global_path
+      Value: /n01/navigation/rviz/global_path
       Reliability Policy: Reliable
       Durability Policy: Transient Local
       History Policy: Keep Last
       Depth: 1
-    Color: 240; 195; 60
+    Color: 55; 125; 255
     Line Width: 0.02
   - Class: rviz_default_plugins/Path
-    Name: Local candidate (debug)
-    Enabled: false
+    Name: 局部 SCAN 轨迹（青色）
+    Enabled: true
+    Line Style: Billboards
     Topic:
-      Value: /n01/live_navigation/hive2_candidate_path
+      Value: /n01/navigation/rviz/local_path
       Reliability Policy: Best Effort
       Durability Policy: Volatile
       History Policy: Keep Last
       Depth: 5
-    Color: 180; 100; 255
+    Color: 35; 220; 220
     Line Width: 0.02
+  - Class: rviz_default_plugins/MarkerArray
+    Name: 目标机身包络与朝向
+    Enabled: true
+    Topic:
+      Value: /n01/navigation/rviz/goal
+      Reliability Policy: Reliable
+      Durability Policy: Transient Local
+      Depth: 1
   Tools:
   - Class: rviz_default_plugins/Interact
   - Class: rviz_default_plugins/MoveCamera

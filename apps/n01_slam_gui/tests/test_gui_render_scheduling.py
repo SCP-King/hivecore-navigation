@@ -1,6 +1,7 @@
 """Exercise the production map scheduler without starting ROS or a web server."""
 import ast
 import asyncio
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -13,14 +14,14 @@ def test_slow_frames_coalesce_and_do_not_block_browser_heartbeat():
 
     async def run():
         view = SimpleNamespace(caches={}, tasks=set())
-        owner = SimpleNamespace(available=True, view=lambda: view)
+        owner = SimpleNamespace(available=True, view=lambda: view, get=lambda _:None)
         started = []
         async def frame(force):
             started.append(force)
             # Same scheduling boundary used by the real renderer.
             import time
             await asyncio.to_thread(time.sleep, .08)
-        scope = dict(asyncio=asyncio, UI=owner, _draw_grid_async=frame,
+        scope = dict(asyncio=asyncio, time=time, _GRID_MIN_INTERVAL_S=0., UI=owner, _draw_grid_async=frame,
                      push_log=lambda *args: None)
         exec(compile(ast.Module(body=selected, type_ignores=[]), str(source), 'exec'), scope)
         scope['draw_grid'](True)
@@ -45,7 +46,7 @@ def test_background_frame_encodes_real_png_without_widgets():
     source = Path(__file__).resolve().parents[1] / 'slam_lite_gui.py'
     functions = [n for n in ast.parse(source.read_text()).body
                  if isinstance(n, ast.FunctionDef) and n.name in ('_render_grid_frame','_finish_frame')]
-    scope = dict(np=np, Image=Image, io=io, base64=base64, GRID_IMAGE_PX=64,
+    scope = dict(np=np, Image=Image, io=io, base64=base64, GRID_IMAGE_PX=64, _GRID_BASE_PTS={},
                  _rasterize=lambda *args: (np.zeros((10, 10, 3), dtype=np.uint8), .03, 1.6),
                  paint_robot=lambda img, *args, **kwargs: img,
                  _grid_overlay=lambda img, *args: img)
@@ -78,12 +79,12 @@ def test_grid_only_frame_reaches_png_encoder_with_and_without_robot_pose():
                 nav_inflated_pts=None,nav_inflated_seq=0,nav_dyn_pts=None,nav_risk_pts=None,
                 nav_risk_seq=0,feasibility={},plan_goal_ns=0,ref_grid=layer,live_grid=None,
                 age_of=lambda _:None)
-        ui=Widgets(map_image=Mock(),grid_info=Mock(),src=S(value='导航'),range=S(value='20m'))
+        ui=Widgets(map_image=Mock(),grid_info=Mock(),src=S(value='导航'),range=S(value=20.))
         scope=dict(UI=ui,STATE=state,_GRID_CACHE={},_GRID_VIEW={},_BLANK_PNG='black-pixel',
-                   GRID_RES=.05,GRID_MAX_N=100,GRID_IMAGE_PX=100,_GRID_UNKNOWN=(8,12,20),
-                   _GRID_FREE=(26,40,62),_GRID_REF=(116,151,182),_GRID_LIVE=(79,239,219),
+                   GRID_RES=.05,GRID_MAX_N=100,GRID_IMAGE_PX=100,GROUND_CLEARANCE_M=.06,_GRID_UNKNOWN=(8,12,20),
+                   _GRID_BASE_PTS={},_GRID_REACHABLE=(246,246,242),_GRID_FREE=(26,40,62),_GRID_REF=(190,150,255),_GRID_LIVE=(79,239,219),_GRID_UNASSESSED=(76,86,105),
                    asyncio=asyncio,np=np,Image=Image,io=io,base64=base64,math=math,time=time,
-                   model_visual_key=lambda *a:'model',_nav_paths_live=lambda:(False,False),
+                   _goal_footprint_status=lambda *a:None, model_visual_key=lambda *a:'model',_nav_paths_live=lambda:(False,False),
                    _grid_ground=lambda:0.,paint_robot=lambda img,*a,**k:img,
                    _grid_overlay=lambda img,*a:img,
                    _grid_source=lambda:(None,'导航栅格',(),None,pose,0.,[],(layer,None),None))
@@ -92,4 +93,4 @@ def test_grid_only_frame_reaches_png_encoder_with_and_without_robot_pose():
         encoded=ui['map_image'].set_source.call_args.args[0]
         assert encoded.startswith('data:image/png;base64,')
         rgb=np.asarray(Image.open(io.BytesIO(base64.b64decode(encoded.split(',',1)[1]))))
-        assert np.any(np.all(rgb==[116,151,182],axis=2)), 'occupied cells lost in grid-only frame'
+        assert np.any(np.all(rgb==[190,150,255],axis=2)), 'occupied cells lost in grid-only frame'

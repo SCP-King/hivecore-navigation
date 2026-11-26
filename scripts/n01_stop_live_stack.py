@@ -25,6 +25,7 @@ MANAGED_EXECUTABLES = {
     "n01_live_dynamic_obstacle_tracker",
     "n01_hive2_trajectory_monitor",
     "n01_live_goal_gate",
+    "n01_navigation_diagnostics",
     "scan_planner_node",
 }
 LAUNCH_SCRIPT = "live_scan.launch.py"

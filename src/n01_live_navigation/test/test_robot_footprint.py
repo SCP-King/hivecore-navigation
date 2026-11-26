@@ -23,16 +23,16 @@ def test_urdf_sweep_contains_random_steering_and_spin_at_tilted_leg_pose():
         points=np.concatenate([p for _,p in m.polygons(j)])
         assert polygon_hits(points,hull,0).all()
 
-def test_exact_six_cm_rounded_margin_and_no_double_inflation():
-    assert polygon_hits([[0,.209]],BOX).all()
-    assert not polygon_hits([[0,.211]],BOX).any()
-    assert not polygon_hits([[.45,.20]],BOX).any() # diagonal 7.07cm away
-    assert polygon_hits([[.44,.19]],BOX).all()
+def test_exact_two_cm_rounded_margin_and_no_double_inflation():
+    assert polygon_hits([[0,.169]],BOX).all()
+    assert not polygon_hits([[0,.171]],BOX).any()
+    assert not polygon_hits([[.43,.17]],BOX).any() # diagonal 2.9cm away
+    assert polygon_hits([[.41,.16]],BOX).all()
 
 def test_narrow_corridor_and_rotated_body_use_polygon_not_three_disks():
     wall=np.array([[x,y,.4]for x in np.linspace(-3,3,100)for y in [-.27,.27]])
     c=FootprintCollision(wall,[0,0,0],.5,[[-3,-2],[3,2]],footprint=BOX)
-    assert c.radius==.06 and c.free([[0,0,0]])
+    assert c.radius==.02 and c.free([[0,0,0]])
     assert not c.free([[0,0,math.pi/2]])
     import pytest
     with pytest.raises(ValueError,match='urdf_footprint_required'):

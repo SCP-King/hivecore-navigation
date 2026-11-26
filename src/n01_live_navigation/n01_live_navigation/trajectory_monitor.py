@@ -21,7 +21,7 @@ from .core import four_wheel_steer_screen, trajectory_window_is_active
 from .pose_policy import control_pose_fresh
 from .footprint_collision import FootprintCollision
 from .scan_handoff import SplineEvents, sample_native_prefix
-from .core import decode_pointcloud_xyz
+from .core import GROUND_CLEARANCE_M, decode_pointcloud_xyz
 
 
 PITCH1_JOINTS = (
@@ -69,6 +69,7 @@ class Hive2TrajectoryMonitor(Node):
             "pitch1_home_reference_rad": 0.7853981633974483,
             "pitch2_home_reference_rad": -1.3089969389957472,
             "pitch_reference_tolerance_rad": 0.08,
+            "environment_margin": 0.06,
             "max_bspline_receive_age_s": 3.0,
         }
         for name, value in defaults.items():
@@ -89,6 +90,7 @@ class Hive2TrajectoryMonitor(Node):
         self.pitch1_ref = float(get("pitch1_home_reference_rad"))
         self.pitch2_ref = float(get("pitch2_home_reference_rad"))
         self.pitch_tol = float(get("pitch_reference_tolerance_rad"))
+        self.environment_margin = max(0.0, min(0.1, float(get("environment_margin"))))
         self.max_bspline_receive_age = float(get("max_bspline_receive_age_s"))
         if not 0.2 <= self.max_bspline_receive_age <= 5.0:
             raise ValueError("max_bspline_receive_age_s outside bounded limits")
@@ -129,10 +131,13 @@ class Hive2TrajectoryMonitor(Node):
         from .scene_perception import setup as setup_scene_perception
         self.scene_perception=setup_scene_perception(self,None)
         from .dynamic_obstacles import ObstacleTracks
-        self.dynamic_tracks=ObstacleTracks(self.declare_parameter("perception.prediction_horizons_s",[.25,.5,.75]).value)
+        self.dynamic_tracks=ObstacleTracks(self.declare_parameter("perception.prediction_horizons_s",[.5,1.0,1.5,2.0]).value)
         self.risk_speed_scale=float(self.declare_parameter('perception.risk_speed_scale',.5).value)
         # Scene freshness for trajectory review. These are our internal gates,
         # not a contractual number; the header stamp is the source scan time.
+        self.final_handoff_radius_m=float(self.declare_parameter('final_handoff_radius_m',0.50).value)
+        if not .1 <= self.final_handoff_radius_m <= 1.0:
+            self.final_handoff_radius_m = .50
         self.scene_max_age_s=float(self.declare_parameter('perception.scene_max_age_s',3.0).value)
         self.ground_max_age_s=float(self.declare_parameter('perception.ground_max_age_s',3.0).value)
         self.observed_free_max_age_s=float(self.declare_parameter('perception.observed_free_max_age_s',3.0).value)
@@ -203,7 +208,7 @@ class Hive2TrajectoryMonitor(Node):
         now_mono = time.monotonic()
         if self.accepted_goal_xy is not None and self.body_pose is not None:
             p=self.body_pose.pose.pose.position
-            if math.hypot(p.x-self.accepted_goal_xy[0],p.y-self.accepted_goal_xy[1])<=.08:
+            if math.hypot(p.x-self.accepted_goal_xy[0],p.y-self.accepted_goal_xy[1])<=self.final_handoff_radius_m:
                 try:
                     q=self.body_pose.pose.pose.orientation;yaw=self._yaw_from_quaternion(q)
                     states=[(p.x,p.y,p.z,yaw)]
@@ -350,7 +355,8 @@ class Hive2TrajectoryMonitor(Node):
         if self.joint_rx is None or self.joint_stamp_ns is None:issue('wheel_feedback_missing')
         else:
             age=(ns-self.joint_stamp_ns)/1e9;rx=now-self.joint_rx
-            if rx>.5 or not -.2<=age<=.5:issue('wheel_feedback_stale',stamp_age_s=age,receive_age_s=rx,limit_s=.5)
+            lim_joint=_joint_limit(self)
+            if rx>lim_joint or not -.2<=age<=lim_joint:issue('wheel_feedback_stale',stamp_age_s=age,receive_age_s=rx,limit_s=lim_joint)
         if self._pitch_reference_match()is not True:issue('leg_feedback_reference_mismatch')
         return issues
 
@@ -370,7 +376,7 @@ class Hive2TrajectoryMonitor(Node):
             # Name the missing input instead of one generic code.
             missing=[]
             if self.obstacles is None:missing.append('occupancy_missing')
-            elif now-self.obstacles_rx > .6 or not -.1 <= stamp_age <= .6:missing.append('occupancy_stale')
+            elif now-self.obstacles_rx > scene_limit or not -.1 <= stamp_age <= scene_limit:missing.append('occupancy_stale')
             if self.ground_plane is None:missing.append('ground_plane_unavailable')
             elif now-self.plane_rx > ground_limit:missing.append('ground_plane_stale')
             if self.map_window is None:missing.append('local_window_missing')
@@ -683,7 +689,12 @@ class Hive2TrajectoryMonitor(Node):
             "actuator_output": "DISABLED",
             "safety_authorization": "NEVER",
         }
-        self.publish_trajectory(msg, curve, states, screen, candidate_review_ready)
+        try:
+            self.publish_trajectory(msg, curve, states, screen, candidate_review_ready)
+        except (ValueError, TypeError, KeyError) as exc:
+            self.last_error = str(exc)
+            data['candidate_review_ready'] = False
+            data['reason'] = str(exc)
         data['risk_speed_advice_active']=getattr(self,'risk_advice_active',False)
         data['dynamic_predictions']=getattr(getattr(self,'dynamic_tracks',None),'stats',{})
         self.diag_pub.publish(String(data=json.dumps(data, sort_keys=True)))
@@ -703,7 +714,7 @@ class Hive2TrajectoryMonitor(Node):
         out.goal_yaw=float(self.accepted_goal_yaw)
         out.max_speed=float(screen.get('recommended_speed_mps',self.max_speed))
         out.max_speed=min(out.max_speed,self.max_speed,getattr(self,"current_prefix_speed",self.max_speed))
-        out.max_accel=self.max_accel;out.environment_margin=.06
+        out.max_accel=self.max_accel;out.environment_margin=self.environment_margin
         out.chassis_geometry=self.native_model_sync.geometry().array().tolist()
         limits=self.native_model_sync.limits()
         out.max_steering_rate=float(limits['chassis.steer.max_speed'])
@@ -746,10 +757,14 @@ class Hive2TrajectoryMonitor(Node):
                         self.map_window,footprint=self.footprint_client.get())
                     if not risk.free([(x,y,yaw)for x,y,z,yaw in states]):
                         out.max_speed=min(out.max_speed,self.max_speed*_live_param(self, 'perception.risk_speed_scale',self.risk_speed_scale));self.risk_advice_active=True
+                        now_m=time.monotonic()
+                        if now_m-getattr(self,'last_dynamic_replan_at',0.)>=0.5:
+                            if getattr(self,'replan_pub',None) is not None:self.replan_pub.publish(Bool(data=True))
+                            self.last_dynamic_replan_at=now_m
         except ValueError:out.rotation_observed=False
         p=self.body_pose.pose.pose.position
         floor=scene[:,:2]@np.asarray(self.ground_plane)[:2]+self.ground_plane[2]
-        mask=(scene[:,2]>floor+.03)&(scene[:,2]>=p.z-.90)&(scene[:,2]<=p.z+.25)
+        mask=(scene[:,2]>floor+GROUND_CLEARANCE_M)&(scene[:,2]>=p.z-.90)&(scene[:,2]<=p.z+.25)
         mask&=(np.hypot(scene[:,0]-p.x,scene[:,1]-p.y)<=4.)
         scene=scene[mask]
         if len(scene):

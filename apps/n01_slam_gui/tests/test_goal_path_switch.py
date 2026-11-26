@@ -7,7 +7,7 @@ from unittest.mock import Mock
 def test_waits_for_matching_endpoint_after_newly_stamped_previous_path():
  source=(Path(__file__).resolve().parents[1]/'slam_lite_gui.py').read_text()
  function=next(n for n in ast.parse(source).body if isinstance(n,ast.AsyncFunctionDef)and n.name=='send_goal')
- state=S(lock=threading.Lock(),ros_ready=True,plan_pending=False,global_pending=False,
+ state=S(lock=threading.Lock(),ros_ready=True,control_pose=(0.,0.,0.),plan_pending=False,global_pending=False,
          goal_seq=1,plan_goal_ns=1000,global_success_ns=0,global_pts=502,
          global_goal_distance=None,goal_status={},plan_success_ns=0,plan_pts=501,plan_active=True)
  calls=[]
@@ -34,7 +34,7 @@ def test_waits_for_matching_endpoint_after_newly_stamped_previous_path():
 def test_backend_failure_is_reported_without_waiting_for_three_minute_timeout():
  source=(Path(__file__).resolve().parents[1]/'slam_lite_gui.py').read_text()
  function=next(n for n in ast.parse(source).body if isinstance(n,ast.AsyncFunctionDef)and n.name=='send_goal')
- state=S(lock=threading.Lock(),ros_ready=True,plan_pending=False,global_pending=False,
+ state=S(lock=threading.Lock(),ros_ready=True,control_pose=(0.,0.,0.),plan_pending=False,global_pending=False,
          goal_seq=1,plan_goal_ns=time.time_ns(),global_success_ns=0,global_pts=0,
          global_goal_distance=None,goal_status={},plan_success_ns=0,plan_pts=0,plan_active=False)
  calls=[]
@@ -51,4 +51,23 @@ def test_backend_failure_is_reported_without_waiting_for_three_minute_timeout():
  asyncio.run(scope['send_goal']())
  assert len(calls)==1 and state.goal_failed
  assert not state.plan_pending and not state.global_pending
- assert '终点落在已知障碍内'in ui['goal_result'].set_text.call_args.args[0]
+ assert '终点在膨胀障碍内'in ui['goal_result'].set_text.call_args.args[0]
+
+
+def test_accepted_rviz_goal_registers_position_and_heading_for_gui_execution():
+    source = Path(__file__).resolve().parents[1] / 'slam_lite_gui.py'
+    fn = next(n for n in ast.walk(ast.parse(source.read_text()))
+              if isinstance(n, ast.FunctionDef) and n.name == '_on_accepted_goal')
+    state = S(lock=threading.Lock(), plan_goal_ns=1, goal_seq=4,
+              clear_task_display=Mock(), navigation_task=Mock())
+    scope = dict(STATE=state, math=math)
+    exec(compile(ast.Module(body=[fn], type_ignores=[]), str(source), 'exec'), scope)
+    msg = S(header=S(frame_id='map', stamp=S(sec=5,nanosec=0)),
+            pose=S(position=S(x=2.,y=3.),
+                   orientation=S(x=0.,y=0.,z=math.sqrt(.5),w=math.sqrt(.5))))
+    scope['_on_accepted_goal'](None,msg)
+    assert state.goal_target == (2.,3.)
+    assert math.isclose(state.external_goal_yaw, math.pi/2)
+    state.navigation_task.begin_goal.assert_called_once_with(5)
+    scope['_on_accepted_goal'](None,msg)
+    assert state.goal_seq == 5

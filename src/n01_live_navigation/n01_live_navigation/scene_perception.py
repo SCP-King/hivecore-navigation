@@ -6,7 +6,7 @@ uncertain returns remain obstacles. Never modifies the SLAM input or shared YAML
 import math
 import xml.etree.ElementTree as ET
 import numpy as np
-from .urdf_projection import RobotProjection
+from .urdf_projection import RobotProjection, mesh_vertices, origin
 from .core import transform_points, invert_transform
 
 
@@ -25,6 +25,19 @@ class BodyGeometry:
                     kind='cylinder';g=geometry.find('cylinder');size=np.array([float(g.get('radius')),float(g.get('length'))/2])
                 elif geometry.find('sphere') is not None:
                     kind='sphere';size=np.array([float(geometry.find('sphere').get('radius'))])
+                elif geometry.find('mesh') is not None:
+                    m=geometry.find('mesh');vals=[float(v) for v in (m.get('scale') or '1 1 1').split()]
+                    if len(vals)!=3:vals=[1.,1.,1.]
+                    pts=mesh_vertices(m.get('filename',''),*vals)
+                    lo=pts.min(axis=0);hi=pts.max(axis=0);center=(lo+hi)/2
+                    size=(hi-lo)/2
+                    if not np.isfinite(size).all() or np.any(size<=0):raise ValueError('invalid_mesh_bounds')
+                    # Collision meshes are represented by their conservative
+                    # oriented AABB in the link frame; exact mesh self-filtering
+                    # is not needed to remove the robot's own returns.
+                    offset=origin(collision.find('origin'));offset[:3,3]+=center
+                    self.primitives.append((link.get('name'),offset,'box',size))
+                    continue
                 else:raise ValueError('unsupported_body_geometry')
                 if not np.isfinite(size).all() or np.any(size<=0):raise ValueError('invalid_body_geometry')
                 self.primitives.append((link.get('name'),origin(collision.find('origin')),kind,size))
@@ -38,7 +51,7 @@ class BodyGeometry:
             joints=dict(joints)
             for _,name,kind,_,_ in self.model.parents.values():
                 if kind=='continuous':joints.setdefault(name,0.)
-            self.model.polygons(joints)
+            self.model.transforms_for(joints)
             self.frames=[]
             for link,offset,kind,size in self.primitives:
                 frame=self.model.transforms[link]@offset

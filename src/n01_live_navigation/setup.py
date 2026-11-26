@@ -31,6 +31,8 @@ setup(
     entry_points={
         "console_scripts": [
             "n01_robot_footprint = n01_live_navigation.robot_footprint_node:main",
+            "n01_run_cmd_logger = n01_live_navigation.run_cmd_logger:main",
+            "n01_perception_consistency = n01_live_navigation.perception_consistency:main",
             "n01_mapping_scan_sampler = n01_live_navigation.mapping_scan_sampler:main",
             "n01_environment_display = n01_live_navigation.environment_display:main",
             "n01_realtime_reference = n01_live_navigation.realtime_reference:main",
@@ -46,6 +48,7 @@ setup(
             "n01_trajectory_display = n01_live_navigation.trajectory_display:main",
             "n01_live_safety_supervisor = n01_live_navigation.safety_supervisor:main",
             "n01_navigation_acceptance = n01_live_navigation.acceptance:main",
+            "n01_navigation_diagnostics = n01_live_navigation.navigation_diagnostics:main",
         ],
     },
 )

@@ -32,7 +32,7 @@ def test_robot_and_environment_envelopes_use_distinct_colors():
     result=paint_robot(base,view,(0,0,0),RobotProjection(XML).polygons({'steer':0}),
         {'centers_x_m':[-.43,-.10,.23],'radius_m':.385},np.array([[.8,.8]]))
     a=np.array(result)
-    assert np.any(np.all(a==[223,235,246],axis=-1))
+    assert np.any(np.all(a==[226,116,42],axis=-1))
     assert np.any(np.all(a==[202,150,255],axis=-1))
     assert np.any(np.all(a!=[12,20,31],axis=-1))
     # Removing both real layer inputs removes their colors, not the URDF body.

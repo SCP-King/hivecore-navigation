@@ -41,6 +41,37 @@ REASONS={
  'observed_space_stale':'执行观测覆盖过期',
  'packet_scene_inputs_not_ready':'执行器收到轨迹，但其场景输入未就绪',
  'packet_or_scene_stale':'执行器收到的轨迹或场景已经过期',
+ 'scan_local_yaw_rate_exceeded':'局部轨迹角速度超过底盘 yaw 限制',
+ 'scan_local_curvature_exceeded':'局部轨迹曲率半径小于最小转弯半径',
+ 'scan_local_velocity_limit':'局部轨迹速度超过限制',
+ 'scan_local_acceleration_limit':'局部轨迹加速度超过限制',
+ 'a_star_init_zero_paths':'局部 A* 初始化返回 0 条路径',
+ 'a_star_init_short_path':'局部 A* 初始化只有 1 个路径点',
+ 'global_path_curvature_exceeds_min_turn_radius':'全局路径曲率超过最小转弯半径',
+ 'reverse_recovery_start':'进入受限倒车恢复',
+ 'reverse_recovery':'正在受限倒车',
+ 'reverse_complete_replan':'倒车完成，重新规划',
+ 'reverse_timeout_replan':'倒车超时，重新规划',
+ 'reverse_not_safe':'后方不安全，停止倒车',
+ 'reverse_rear_footprint_not_clear':'后方机身包络不安全',
+ 'reverse_native_model_rejected':'原生模型拒绝倒车',
+ 'safety_hold_released':'安全保持已解除',
+ 'feedback_timeout':'反馈等待超时',
+ 'replan_timeout':'重规划等待超时',
+ 'steering_timeout':'转向等待超时',
+ 'alignment_timeout':'对准等待超时',
+ 'settling_after_rotation':'旋转后停稳确认',
+ 'braking_after_rotation':'旋转后仍在减速',
+ 'leg_home_gate_released_settle':'腿未回 Home，退出停稳',
+ 'heading_changed_during_settle':'停稳期间朝向变化，重新对准',
+ 'final_approach_distance_increased':'最终进近距离变大，重新规划',
+ 'final_approach_no_safe_direct_command':'最终进近无安全直行指令',
+ 'native wheel model rejected rotation at all feasible rates':'原生模型拒绝所有可行旋转',
+ 'waiting for full-azimuth scan':'等待全向扫描覆盖',
+ 'rotation swept volume occupied; SCAN replan requested':'旋转扫掠体积被占用，请求重规划',
+
+
+
  'packet_goal_frame_or_revision_mismatch':'轨迹目标、坐标系或版本不匹配',
  'new_observation_or_alternative_frontier':'新观测到达后自动重选可达前沿', 'local_detour_retry':'局部绕行重试：只调整当前段，不改全局参考',
  'local_detour_exhausted':'局部绕行已用尽，改为全局重规划',
@@ -304,14 +335,16 @@ def build_flow(goal_id,planning=None,review=None,execution=None,scene=None,readi
 def render_flow(flow):
     esc=lambda value:html.escape(str(value),quote=True)
     colors={'idle':'#64748b','active':'#38bdf8','waiting':'#f59e0b','failed':'#f87171','done':'#4ade80'}
+    bgs={'idle':'rgba(15,23,42,.55)','active':'rgba(14,42,68,.55)','waiting':'rgba(56,36,10,.45)','failed':'rgba(62,18,24,.55)','done':'rgba(8,42,28,.45)'}
     names={'idle':'未开始','active':'进行中','waiting':'等待','failed':'失败／重试','done':'已完成'}
     cards=[]
-    for node in flow['stages']:
+    for idx,node in enumerate(flow['stages'],start=1):
+        st=node['state']
         facts=json.dumps(node['facts'],ensure_ascii=False,indent=2)
-        cards.append(f'''<details style="flex:1;min-width:140px;border:1px solid #334155;border-top:3px solid {colors[node['state']]};border-radius:7px;padding:8px">
-<summary style="cursor:pointer"><b>{esc(node['label'])}</b><small style="display:block;color:{colors[node['state']]}">{names[node['state']]}</small></summary>
-<div style="font-size:12px;margin-top:6px">{esc(node['detail'])}</div><pre style="font-size:10px;white-space:pre-wrap;overflow-wrap:anywhere">{esc(facts if node['facts']else'')}</pre></details>''')
-    return ('<div style="display:flex;gap:7px;overflow-x:auto;align-items:flex-start">'+
-            '<span style="padding-top:15px;color:#64748b">→</span>'.join(cards)+'</div>'+
-            '<div style="font-size:12px;margin-top:10px;color:#fbbf24">原因链：'+esc(' ← '.join(reversed(flow['causes'])))+'</div>'+
-            '<div style="font-size:11px;color:#94a3b8">恢复：'+esc(flow['recovery'])+' · '+esc(flow['loops'])+' · 回路：执行→局部延伸；通路受阻→全局重规划</div>')
+        cards.append(f'''<details style="border:1px solid rgba(148,163,184,.16);border-left:3px solid {colors[st]};background:{bgs[st]};border-radius:7px;padding:6px 8px">
+<summary style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:6px"><span style="font-size:11px;font-weight:600;color:#e2e8f0">{idx}. {esc(node['label'])}</span><small style="color:{colors[st]};font-size:10px;font-weight:600">{names[st]}</small></summary>
+<div style="font-size:11px;margin-top:5px;color:#cbd5e1">{esc(node['detail'])}</div><pre style="font-size:10px;margin:4px 0 0;color:#94a3b8;white-space:pre-wrap;overflow-wrap:anywhere">{esc(facts if node['facts']else'')}</pre></details>''')
+    return ('<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:6px;align-items:start">'+
+            ''.join(cards)+'</div>'+
+            '<div style="font-size:11px;margin-top:7px;color:#fbbf24">原因链：'+esc(' ← '.join(reversed(flow['causes'])))+'</div>'+
+            '<div style="font-size:11px;color:#94a3b8">恢复：'+esc(flow['recovery'])+' · '+esc(flow['loops'])+'</div>')

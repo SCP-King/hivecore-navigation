@@ -133,7 +133,7 @@ def rotate_translate(point, translation, quaternion):
     return out
 
 
-def decode_pointcloud_xyz(msg, max_points=100000, max_range_m=None):
+def decode_pointcloud_xyz(msg, max_points=100000, max_range_m=None, *, exclude_ground=False):
     """Decode x/y/z FLOAT32 or FLOAT64 fields, honoring offsets, endian and row padding."""
     width, height = int(msg.width), int(msg.height)
     point_step, row_step = int(msg.point_step), int(msg.row_step)
@@ -151,7 +151,10 @@ def decode_pointcloud_xyz(msg, max_points=100000, max_range_m=None):
     fields = {str(f.name): f for f in msg.fields}
     names, formats, offsets = [], [], []
     endian = ">" if bool(msg.is_bigendian) else "<"
-    for name in ("x", "y", "z"):
+    coordinate_fields = ("x", "y", "z")
+    if exclude_ground and "ground" in fields:
+        coordinate_fields += ("ground",)
+    for name in coordinate_fields:
         if name not in fields:
             raise ValueError("cloud_missing_xyz")
         field = fields[name]
@@ -188,6 +191,8 @@ def decode_pointcloud_xyz(msg, max_points=100000, max_range_m=None):
         records["z"].reshape(-1),
     ))
     mask = np.isfinite(points).all(axis=1)
+    if "ground" in records.dtype.names:
+        mask &= ~(records["ground"].reshape(-1) > .5)
     if max_range_m is not None:
         max_range = float(max_range_m)
         if not math.isfinite(max_range) or max_range <= 0:
@@ -692,14 +697,17 @@ def stamped_data_is_fresh(stamp_ns, now_ns, max_age_s, future_tolerance_s=0.2):
     return bool(-future_tolerance <= age_s <= max_age), float(age_s)
 
 
+GROUND_CLEARANCE_M = 0.06
+
+
 def ground_plane_height_band(points, ground_z, body_height, slope_x=0.0, slope_y=0.0):
     """Filter each point above its local floor; return JSON-safe display bounds."""
     points = np.asarray(points)
     floor = ground_z+slope_x*points[:, 0]+slope_y*points[:, 1]
-    lower, upper = floor+.03, floor+body_height+.30
-    band = points[(points[:, 2] >= lower) & (points[:, 2] <= upper)]
+    lower, upper = floor+GROUND_CLEARANCE_M, floor+body_height+.30
+    band = points[(points[:, 2] > lower) & (points[:, 2] <= upper)]
     bounds = ([float(np.min(lower)), float(np.max(upper))] if len(points)
-              else [float(ground_z+.03), float(ground_z+body_height+.30)])
+              else [float(ground_z+GROUND_CLEARANCE_M), float(ground_z+body_height+.30)])
     return band, bounds
 
 

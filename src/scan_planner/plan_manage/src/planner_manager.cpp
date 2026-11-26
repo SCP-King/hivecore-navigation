@@ -6,8 +6,11 @@
 #include <chrono>
 #include <thread>
 #include <queue>
+#include <deque>
 #include <limits>
 #include <cstdint>
+#include <filesystem>
+#include <sstream>
 
 namespace scan_planner
 {
@@ -68,11 +71,12 @@ namespace scan_planner
       const std::vector<Eigen::Vector3d>& uncertain_points={},
       std::function<bool(const Eigen::Vector3d&)>* free_check=nullptr,
       bool allow_start_clear=false, double start_clear_radius=0.40,
-      bool allow_goal_clear=false, double goal_clear_radius=0.40)
+      bool allow_goal_clear=false, double goal_clear_radius=0.40,
+      nav_msgs::msg::OccupancyGrid* preview=nullptr, bool has_reference=false)
   {
     if(error)error->clear();
     const auto fail=[&](const char* reason){if(error)*error=reason;return std::vector<Eigen::Vector3d>{};};
-    if (cloud.empty())return fail("map_reference_unavailable");
+    if (cloud.empty() && live_points.empty() && !has_reference)return fail("map_reference_unavailable");
     if (!std::isfinite(resolution) || resolution <= 1e-6 ||
         !start.allFinite() || !end.allFinite() || !source_min.allFinite() || !source_max.allFinite())
       return fail("invalid_global_inputs");
@@ -171,6 +175,35 @@ namespace scan_planner
     };
     auto inflated=inflate_layer(occupied);
     const auto reference_inflated=inflate_layer(reference);
+
+    // Prefer the middle of a free corridor instead of hugging the inflated
+    // obstacle boundary. BFS distance is measured in grid cells from the
+    // inflated obstacle set; the extra edge cost decays with clearance.
+    std::vector<int> clearance(static_cast<size_t>(width)*height, -1);
+    std::deque<int> clearance_queue;
+    for(int i=0;i<width*height;++i) if(inflated[static_cast<size_t>(i)]) {
+      clearance[static_cast<size_t>(i)]=0;clearance_queue.push_back(i);
+    }
+    while(!clearance_queue.empty()) {
+      const int cur=clearance_queue.front();clearance_queue.pop_front();
+      const int cx=cur%width,cy=cur/width;
+      const int dirs4[4][2]={{1,0},{-1,0},{0,1},{0,-1}};
+      for(const auto &d:dirs4) {
+        const int nx=cx+d[0],ny=cy+d[1];
+        if(nx<0||ny<0||nx>=width||ny>=height)continue;
+        const int nid=ny*width+nx;
+        if(clearance[static_cast<size_t>(nid)]>=0)continue;
+        clearance[static_cast<size_t>(nid)]=clearance[static_cast<size_t>(cur)]+1;
+        clearance_queue.push_back(nid);
+      }
+    }
+    const int desired_clearance=std::max(1,static_cast<int>(std::ceil(.60/resolution)));
+    auto clearance_cost=[&](int id,double step) {
+      const int d=id>=0?clearance[static_cast<size_t>(id)]:-1;
+      if(d<0)return step*2.0;
+      const double shortage=std::max(0,desired_clearance-d)/double(desired_clearance);
+      return step*(1.0+0.9*shortage);
+    };
     const int start_id = index(start.x(), start.y());
     const int goal_id = index(end.x(), end.y());
     if (start_id < 0 || goal_id < 0) return fail("start_or_goal_outside_map_bounds");
@@ -205,6 +238,42 @@ namespace scan_planner
                   goal_clear_radius);
     }
     if(free_check)*free_check=[index,inflated](const Eigen::Vector3d& p){int id=index(p.x(),p.y());return id>=0 && !inflated[id];};
+    if (preview) {
+      preview->header.frame_id = "map";
+      preview->info.width = width;
+      preview->info.height = height;
+      preview->info.resolution = resolution;
+      preview->info.origin.position.x = min_x;
+      preview->info.origin.position.y = min_y;
+      preview->info.origin.orientation.w = 1.;
+      preview->data.assign(inflated.size(), -1);
+      for (size_t i = 0; i < inflated.size(); ++i)
+        if (inflated[i]) preview->data[i] = 100;
+      std::vector<int> queue;
+      if (!inflated[start_id]) {
+        queue.push_back(start_id);
+        preview->data[start_id] = 0;
+      }
+      const int dirs[8][2] = {{1,0},{-1,0},{0,1},{0,-1},
+                              {1,1},{1,-1},{-1,1},{-1,-1}};
+      for (size_t i = 0; i < queue.size(); ++i) {
+        const int id = queue[i], x = id % width, y = id / width;
+        for (const auto& d : dirs) {
+          const int nx=x+d[0], ny=y+d[1];
+          if (nx<0||ny<0||nx>=width||ny>=height) continue;
+          const int next=ny*width+nx;
+          if (preview->data[next] != -1) continue;
+          // Same diagonal corner rule as the real A*: do not cut a corner
+          // between two blocked cells. Otherwise preview connectivity would
+          // disagree with the planner.
+          if (d[0] != 0 && d[1] != 0 &&
+              (inflated[y*width+nx] || inflated[ny*width+x])) continue;
+          preview->data[next] = 0;
+          queue.push_back(next);
+        }
+      }
+      return {};
+    }
     if (inflated[start_id] || inflated[goal_id])
     {
       RCLCPP_ERROR(rclcpp::get_logger("path_searching"),
@@ -247,8 +316,7 @@ namespace scan_planner
             (inflated[cy * width + nx] || inflated[ny * width + cx]))
           continue;
         const double step = (d[0] != 0 && d[1] != 0) ? std::sqrt(2.0) : 1.0;
-        const double prior_cost=1.0;  // unconfirmed history is no longer priced
-        const double tentative = g_score[current] + step*prior_cost;
+        const double tentative = g_score[current] + clearance_cost(nid,step);
         if (tentative + 1e-9 < g_score[nid])
         {
           g_score[nid] = tentative;
@@ -335,6 +403,8 @@ namespace scan_planner
   void SCANPlannerManager::initPlanModules(rclcpp::Node *node, PlanningVisualization::Ptr vis)
   {
     node_ = node;
+    search_grid_pub_ = node_->create_publisher<nav_msgs::msg::OccupancyGrid>(
+        "/planning/search_grid", rclcpp::QoS(1).transient_local());
     /* read algorithm parameters */
     const auto get_double = [node](const std::string &name, double default_value) {
       if (!node->has_parameter(name)) node->declare_parameter<double>(name, default_value);
@@ -352,6 +422,12 @@ namespace scan_planner
     // 0.05 m grid path gives ~20 points per metre, which costs ~1 s for a 6 m
     // goal; collision-free resampling to a few decimetres costs microseconds.
     pp_.global_waypoint_spacing_ = get_double("manager.global_waypoint_spacing", 0.30);
+    pp_.min_turn_radius_ = get_double("manager.min_turn_radius", 0.60);
+    if (!std::isfinite(pp_.min_turn_radius_) || pp_.min_turn_radius_ < .1 || pp_.min_turn_radius_ > 5.)
+      pp_.min_turn_radius_ = .60;
+    pp_.max_yaw_rate_ = get_double("manager.max_yaw_rate", 0.45);
+    if (!std::isfinite(pp_.max_yaw_rate_) || pp_.max_yaw_rate_ <= 0. || pp_.max_yaw_rate_ > 2.)
+      pp_.max_yaw_rate_ = .45;
 
     local_data_.traj_id_ = 0;
     grid_map_.reset(new GridMap);
@@ -370,11 +446,93 @@ namespace scan_planner
 
   // SECTION rebond replanning
 
+  namespace {
+  // Smooth dense A* waypoints with the same inflated grid used for search.
+  // This is a local corner-rounding pass; it cannot move a point through an
+  // obstacle and does not replace the later min-snap trajectory.
+  bool smoothGlobalPath(std::vector<Eigen::Vector3d>& path, double min_turn_radius,
+                        double resolution,
+                        const std::function<bool(const Eigen::Vector3d&)>& free_check)
+  {
+    if (path.size() < 3 || !(min_turn_radius > 0.)) return true;
+    const auto segment_free = [&](const Eigen::Vector3d& a, const Eigen::Vector3d& b) {
+      const double d = (b-a).head<2>().norm();
+      const int steps = std::max(2, int(std::ceil(d / std::max(0.02, resolution * 0.5))));
+      for (int i=0;i<=steps;++i) {
+        const double t=double(i)/steps;
+        if (!free_check(a + t*(b-a))) return false;
+      }
+      return true;
+    };
+    for (int iter=0; iter<40; ++iter) {
+      bool changed=false;
+      for (size_t i=1;i+1<path.size();++i) {
+        Eigen::Vector3d cand=0.25*path[i-1]+0.5*path[i]+0.25*path[i+1];
+        if (free_check(cand) && segment_free(path[i-1],cand) && segment_free(cand,path[i+1])) {
+          if ((cand-path[i]).norm()>1e-4) { path[i]=cand; changed=true; }
+        }
+      }
+      if (!changed) break;
+    }
+    // Reject a path that still contains a tighter corner than the chassis
+    // can track. The caller reports this as a global curvature failure.
+    double worst_k=0.;
+    for (size_t i=1;i+1<path.size();++i) {
+      const Eigen::Vector3d a=path[i-1], b=path[i], c=path[i+1];
+      const double ab=(b-a).head<2>().norm(), bc=(c-b).head<2>().norm(), ca=(c-a).head<2>().norm();
+      if (ab<1e-6 || bc<1e-6 || ca<1e-6) continue;
+      const double area=std::abs((b.x()-a.x())*(c.y()-a.y())-(b.y()-a.y())*(c.x()-a.x()))/2.;
+      if (area<1e-9) continue;
+      const double radius=ab*bc*ca/(4.0*area);
+      if (radius < min_turn_radius) worst_k=std::max(worst_k,1.0/radius);
+    }
+    if (worst_k > 0.) {
+      RCLCPP_WARN(rclcpp::get_logger("path_searching"),
+        "Global polyline curvature: worst_radius=%.3f m (limit %.3f m)",
+        1.0 / worst_k, min_turn_radius);
+    }
+    return worst_k <= 0.;
+  }
+  } // namespace
+
   bool SCANPlannerManager::reboundReplan(Eigen::Vector3d start_pt, Eigen::Vector3d start_vel,
                                         Eigen::Vector3d start_acc, Eigen::Vector3d local_target_pt,
                                         Eigen::Vector3d local_target_vel, bool flag_polyInit, bool flag_randomPolyTraj)
   {
     last_local_error_.clear();
+    // Structured per-attempt telemetry. The stock logs only report a few
+    // generic strings and cannot answer why an individual local attempt failed.
+    static int attempt_no = 0;
+    static std::ofstream attempt_log = [] {
+      std::error_code ec;
+      std::filesystem::create_directories("/home/demo/lyy/n01_runtime/local_attempts", ec);
+      std::ostringstream name;
+      name << "/home/demo/lyy/n01_runtime/local_attempts/attempts_"
+           << std::chrono::duration_cast<std::chrono::milliseconds>(
+                  std::chrono::system_clock::now().time_since_epoch()).count()
+           << ".jsonl";
+      return std::ofstream(name.str(), std::ios::app);
+    }();
+    const int this_attempt = ++attempt_no;
+    size_t point_count = 0, ctrl_cols = 0, path_count = 0, first_path_points = 0;
+    auto log_attempt = [&](const char* stage, bool ok, const char* detail) {
+      if (!attempt_log.is_open()) return;
+      attempt_log << "{\"attempt\":" << this_attempt
+                  << ",\"stage\":\"" << stage << "\""
+                  << ",\"ok\":" << (ok ? "true" : "false")
+                  << ",\"reason\":\"" << (detail ? detail : "") << "\""
+                  << ",\"last_error\":\"" << last_local_error_ << "\""
+                  << ",\"start\":[" << start_pt.x() << "," << start_pt.y() << "," << start_pt.z() << "]"
+                  << ",\"target\":[" << local_target_pt.x() << "," << local_target_pt.y() << "," << local_target_pt.z() << "]"
+                  << ",\"distance\":" << (start_pt-local_target_pt).norm()
+                  << ",\"point_set\":" << point_count
+                  << ",\"ctrl_cols\":" << ctrl_cols
+                  << ",\"a_star_paths\":" << path_count
+                  << ",\"first_path_points\":" << first_path_points
+                  << ",\"continuous_failures\":" << continuous_failures_count_
+                  << "}\n";
+      attempt_log.flush();
+    };
 
     static int count = 0;
     std::cout << endl
@@ -390,6 +548,7 @@ namespace scan_planner
       last_local_error_="local_target_too_close_without_arrival";
       cout << "Close to goal" << endl;
       continuous_failures_count_++;
+      log_attempt("too_close", false, "local_target_too_close_without_arrival");
       return false;
     }
 
@@ -503,6 +662,7 @@ namespace scan_planner
               last_local_error_="local_initialization_has_no_path";
               RCLCPP_ERROR(node_->get_logger(), "pseudo_arc_length is empty; aborting replan");
               continuous_failures_count_++;
+              log_attempt("init", false, "local_initialization_has_no_path");
               return false;
             }
           }
@@ -551,6 +711,10 @@ namespace scan_planner
 
     vector<vector<Eigen::Vector3d>> a_star_paths;
     a_star_paths = bspline_optimizer_rebound_->initControlPoints(ctrl_pts, true);
+    point_count = point_set.size();
+    ctrl_cols = static_cast<size_t>(ctrl_pts.cols());
+    path_count = a_star_paths.size();
+    if (!a_star_paths.empty()) first_path_points = a_star_paths.front().size();
 
     t_init = std::chrono::duration<double>(std::chrono::steady_clock::now() - t_start).count();
 
@@ -565,9 +729,18 @@ namespace scan_planner
     cout << "first_optimize_step_success=" << flag_step_1_success << endl;
     if (!flag_step_1_success)
     {
-      last_local_error_="scan_optimizer_no_collision_free_solution";
+      // Separate an empty/short A* initialization from a genuine optimizer
+      // collision failure. The controller previously collapsed all of these
+      // into the same generic string.
+      if (first_path_points == 0)
+        last_local_error_ = "a_star_init_zero_paths";
+      else if (first_path_points < 2)
+        last_local_error_ = "a_star_init_short_path";
+      else
+        last_local_error_ = "scan_optimizer_no_collision_free_solution";
       // visualization_->displayOptimalList( ctrl_pts, vis_id );
       continuous_failures_count_++;
+      log_attempt("optimize", false, last_local_error_.c_str());
       return false;
     }
     //visualization_->displayOptimalList( ctrl_pts, vis_id );
@@ -593,9 +766,11 @@ namespace scan_planner
 
     if (!flag_step_2_success || !checkDynamicFeasibility(pos))
     {
-      last_local_error_="scan_refinement_or_dynamic_limit_failed";
+      if (last_local_error_.empty())
+        last_local_error_ = "scan_refinement_or_dynamic_limit_failed";
       printf("\033[34mThis refined trajectory is unsafe or dynamically infeasible. Skip publishing it.\n\033[0m");
       continuous_failures_count_++;
+      log_attempt("refine", false, last_local_error_.c_str());
       return false;
     }
 
@@ -609,6 +784,7 @@ namespace scan_planner
 
     // success. YoY
     continuous_failures_count_ = 0;
+    log_attempt("done", true, "success");
     return true;
   }
 
@@ -672,39 +848,65 @@ namespace scan_planner
 
     inter_points.push_back(points.back());
 
-    // for ( int i=0; i<inter_points.size(); i++ )
-    // {
-    //   cout << inter_points[i].transpose() << endl;
-    // }
-
-    // write position matrix
-    int pt_num = inter_points.size();
-    Eigen::MatrixXd pos(3, pt_num);
-    for (int i = 0; i < pt_num; ++i)
-      pos.col(i) = inter_points[i];
-
-    Eigen::Vector3d zero(0, 0, 0);
-    Eigen::VectorXd time(pt_num - 1);
-    for (int i = 0; i < pt_num - 1; ++i)
-    {
-      time(i) = (pos.col(i + 1) - pos.col(i)).norm() / (pp_.max_vel_);
-    }
-
-    time(0) *= 2.0;
-    time(time.rows() - 1) *= 2.0;
-
-    PolynomialTraj gl_traj;
-    if (pos.cols() >= 3)
-      gl_traj = PolynomialTraj::minSnapTraj(pos, start_vel, end_vel, start_acc, end_acc, time);
-    else if (pos.cols() == 2)
-      gl_traj = PolynomialTraj::one_segment_traj_gen(start_pos, start_vel, start_acc, pos.col(1), end_vel, end_acc, time(0));
-    else
-      return false;
-
     auto time_now = node_->now();
-    global_data_.setGlobalTraj(gl_traj, time_now);
-
+    global_data_.setPolyline(inter_points, pp_.max_vel_, time_now);
     return true;
+  }
+
+  void SCANPlannerManager::refreshSearchPreview(const Eigen::Vector3d &position)
+  {
+    const double now = node_->now().seconds();
+    if (!grid_map_->hasStaticSource() || !grid_map_->footprintReady() ||
+        (last_preview_s_ >= 0. && now - last_preview_s_ < 1.))
+      return;
+    last_preview_s_ = now;
+    searchGlobal(position, position, nullptr, true);
+  }
+
+  std::vector<Eigen::Vector3d> SCANPlannerManager::searchGlobal(
+      const Eigen::Vector3d &start_pos, const Eigen::Vector3d &end_pos,
+      std::function<bool(const Eigen::Vector3d&)>* free_check, bool preview)
+  {
+    grid_map_->refreshGlobalGrid();
+    grid_map_->rebuildPlanningGrid();
+    const bool planning_ready = grid_map_->hasPlanningGrid();
+    const bool global_grid_ready = grid_map_->hasGlobalGrid();
+    nav_msgs::msg::OccupancyGrid grid;
+    auto path = globalAStar2D(
+          planning_ready ? grid_map_->getPlanningOccupancyCloud()
+                         : ((global_grid_ready && !grid_map_->usesTransientFusion())
+                                ? grid_map_->getGlobalOccupancyCloud()
+                                : grid_map_->getStaticSourceCloud()),
+          planning_ready ? std::vector<Eigen::Vector3d>{} : grid_map_->getLiveObstaclePoints(),
+          planning_ready ? grid_map_->getPlanningMin()
+                         : (global_grid_ready?grid_map_->getGlobalMin():grid_map_->getStaticSourceMin()),
+          planning_ready ? grid_map_->getPlanningMax()
+                         : (global_grid_ready?grid_map_->getGlobalMax():grid_map_->getStaticSourceMax()),
+          planning_ready ? grid_map_->getPlanningResolution()
+                         : (global_grid_ready?grid_map_->getGlobalResolution():grid_map_->getResolution()),
+          grid_map_->getFootprintRadius(),
+          start_pos.z() - grid_map_->getBodyDown(),
+          start_pos.z() + grid_map_->getBodyUp(),
+          pp_.global_waypoint_spacing_,
+          start_pos, end_pos, grid_map_->getFootprintCenters(), grid_map_->getGroundCutoffPlane(),
+          grid_map_->usesStaticReferenceCost(),grid_map_->getLocalMinimum(),grid_map_->getLocalMaximum(),grid_map_->getFootprintPolygon(),(grid_map_->usesRealtimeReference()||grid_map_->extendsReferenceToGoal()),preview ? nullptr : &last_global_error_,grid_map_->getUnconfirmedPoints(),free_check,
+          preview,0.40,false,0.40,preview ? &grid : nullptr,
+          planning_ready || grid_map_->hasStaticSource());
+    if (preview && !grid.data.empty()) {
+      // BFS is allowed to traverse unknown, but unknown must not be painted as
+      // known-free/reachable. White comes only from the planning grid's 0.
+      for(int iy=0;iy<grid.info.height;++iy)for(int ix=0;ix<grid.info.width;++ix){
+        auto&v=grid.data[static_cast<size_t>(iy)*grid.info.width+ix];
+        if(v==100)continue;
+        const double wx=grid.info.origin.position.x+(ix+.5)*grid.info.resolution;
+        const double wy=grid.info.origin.position.y+(iy+.5)*grid.info.resolution;
+        const int state=grid_map_->planningCellState(wx,wy);
+        if(state!=0)v=static_cast<int8_t>(state);
+      }
+      grid.header.stamp = node_->now();
+      search_grid_pub_->publish(grid);
+    }
+    return path;
   }
 
   bool SCANPlannerManager::planGlobalTraj(const Eigen::Vector3d &start_pos, const Eigen::Vector3d &start_vel, const Eigen::Vector3d &start_acc,
@@ -729,28 +931,14 @@ namespace scan_planner
           end_pos.y()<grid_map_->getStaticSourceMin().y() || end_pos.y()>grid_map_->getStaticSourceMax().y()))
         RCLCPP_INFO_THROTTLE(node_->get_logger(),*node_->get_clock(),2000,
           "Realtime far goal retained: extending optimistic global reference; local execution still needs current scene");
-      grid_map_->refreshGlobalGrid(true);
-      grid_map_->clearGlobalStart(start_pos.x(),start_pos.y(),0.40);
-      const bool global_grid_ready=grid_map_->hasGlobalGrid();
-      RCLCPP_INFO_THROTTLE(node_->get_logger(),*node_->get_clock(),2000,
-        "Global A* source=%s global_cells=%zu static_points=%zu",
-        global_grid_ready?"persistent_global":"static_fallback",
-        global_grid_ready?grid_map_->getGlobalOccupancyCloud().size():0,
-        grid_map_->getStaticSourceCloud().size());
-      inter_points = globalAStar2D(
-          global_grid_ready?grid_map_->getGlobalOccupancyCloud():grid_map_->getStaticSourceCloud(),
-          global_grid_ready?std::vector<Eigen::Vector3d>{}:grid_map_->getLiveObstaclePoints(),
-          global_grid_ready?grid_map_->getGlobalMin():grid_map_->getStaticSourceMin(),
-          global_grid_ready?grid_map_->getGlobalMax():grid_map_->getStaticSourceMax(),
-          global_grid_ready?grid_map_->getGlobalResolution():grid_map_->getResolution(),
-          grid_map_->getFootprintRadius(),
-          std::min(start_pos.z(), end_pos.z()) - grid_map_->getBodyDown(),
-          std::max(start_pos.z(), end_pos.z()) + grid_map_->getBodyUp(),
-          pp_.global_waypoint_spacing_,
-          start_pos, end_pos, grid_map_->getFootprintCenters(), grid_map_->getGroundCutoffPlane(),
-          grid_map_->usesStaticReferenceCost(),grid_map_->getLocalMinimum(),grid_map_->getLocalMaximum(),grid_map_->getFootprintPolygon(),(grid_map_->usesRealtimeReference()||grid_map_->extendsReferenceToGoal()),&last_global_error_,grid_map_->getUnconfirmedPoints(),&reference_free,
-          true,0.40,
-          grid_map_->getInflateOccupancy(end_pos,0.,false)<=0,0.40);
+      inter_points = searchGlobal(start_pos, end_pos, &reference_free, false);
+      if (inter_points.size() >= 3 &&
+          !smoothGlobalPath(inter_points, pp_.min_turn_radius_, grid_map_->getResolution(), reference_free)) {
+        last_global_error_ = "global_path_curvature_exceeds_min_turn_radius";
+        RCLCPP_ERROR(node_->get_logger(),
+          "Global path rejected: curvature exceeds min_turn_radius=%.2f m", pp_.min_turn_radius_);
+        return false;
+      }
       if (inter_points.size() < 2)
       {
         RCLCPP_ERROR(node_->get_logger(),
@@ -780,75 +968,19 @@ namespace scan_planner
     }
 
     const auto t_smooth_start = std::chrono::steady_clock::now();
-    // write position matrix
-    int pt_num = inter_points.size();
-    Eigen::MatrixXd pos(3, pt_num);
-    for (int i = 0; i < pt_num; ++i)
-      pos.col(i) = inter_points[i];
-
-    Eigen::Vector3d zero(0, 0, 0);
-    Eigen::VectorXd time(pt_num - 1);
-    for (int i = 0; i < pt_num - 1; ++i)
-    {
-      time(i) = (pos.col(i + 1) - pos.col(i)).norm() / (pp_.max_vel_);
-    }
-
-    time(0) *= 2.0;
-    time(time.rows() - 1) *= 2.0;
-
-    PolynomialTraj gl_traj;
-    if (pos.cols() >= 3 && pos.cols()<=160)
-      gl_traj = PolynomialTraj::minSnapTraj(pos, start_vel, end_vel, start_acc, end_acc, time);
-    else if (pos.cols() == 2)
-      gl_traj = PolynomialTraj::one_segment_traj_gen(start_pos, start_vel, start_acc, end_pos, end_vel, end_acc, time(0));
-    else if(pos.cols()<2)return false;
-
-    auto line_reference=[&](){
-      PolynomialTraj line;line.reset();
-      for(int i=0;i<pt_num-1;++i){
-        const auto delta=(pos.col(i+1)-pos.col(i))/time(i);
-        line.addSegment({0,0,0,0,delta.x(),pos(0,i)},
-                        {0,0,0,0,delta.y(),pos(1,i)},
-                        {0,0,0,0,delta.z(),pos(2,i)},time(i));
-      }
-      line.init();return line;
-    };
-    if(pt_num>160)gl_traj=line_reference();
-    // Bound the polynomial speed by its coefficients on each segment. Sampling
-    // at <=quarter-cell arc distance checks the final smooth reference itself.
-    auto reference_valid=[&](PolynomialTraj& traj){
-      if(!reference_free)return false;
-      const auto durations=traj.getTimes();const auto cx=traj.getCoef(0),cy=traj.getCoef(1),cz=traj.getCoef(2);
-      double offset=0.;size_t samples=0;
-      for(size_t seg=0;seg<durations.size();++seg){
-        const double duration=durations[seg];double velocity_bound=0.;
-        for(const auto* axis:{&cx,&cy,&cz})for(size_t j=0;j+1<(*axis)[seg].size();++j){
-          const size_t power=(*axis)[seg].size()-1-j;
-          velocity_bound+=std::abs((*axis)[seg][j])*power*std::pow(duration,power-1);
-        }
-        const double count=std::ceil(duration*velocity_bound/(grid_map_->getResolution()*.25));
-        if(!std::isfinite(count)||count>300000. || samples+count>300000.)return false;
-        const size_t steps=std::max<size_t>(1,size_t(count));samples+=steps;
-        for(size_t k=0;k<=steps;++k)if(!reference_free(traj.evaluate(offset+duration*k/steps)))return false;
-        offset+=duration;
-      }
-      return true;
-    };
-    if(!reference_valid(gl_traj)){
-      gl_traj=line_reference();
-      if(!reference_valid(gl_traj)){last_global_error_="global_reference_collision";return false;}
-      RCLCPP_WARN(node_->get_logger(),"Global smoothing crossed occupancy or exceeded sampling budget; retaining collision-free A* polyline reference");
-    }
-
+    // The global reference is intentionally a collision-checked polyline with
+    // rounded corners, not a min-snap polynomial through every A* waypoint.
+    // This preserves long straight segments and avoids introducing extra
+    // curvature that the local 4WS controller cannot track.
+    if (inter_points.size() < 2) return false;
+    auto time_now = node_->now();
+    global_data_.setPolyline(inter_points, pp_.max_vel_, time_now);
     const auto t_smooth_done = std::chrono::steady_clock::now();
     RCLCPP_INFO(node_->get_logger(),
-                "Global trajectory smooth: pts=%d smooth_ms=%.1f total_ms=%.1f",
-                pt_num,
+                "Global polyline reference: pts=%zu smooth_ms=%.1f total_ms=%.1f",
+                inter_points.size(),
                 std::chrono::duration<double, std::milli>(t_smooth_done - t_smooth_start).count(),
                 std::chrono::duration<double, std::milli>(t_smooth_done - t_global_start).count());
-    auto time_now = node_->now();
-    global_data_.setGlobalTraj(gl_traj, time_now);
-
     return true;
   }
 
@@ -899,6 +1031,7 @@ namespace scan_planner
       Eigen::Vector3d vel = vel_traj.evaluateDeBoorT(tc);
       if (vel.norm() > vel_limit)
       {
+        last_local_error_ = "scan_local_velocity_limit";
         RCLCPP_WARN(node_->get_logger(),
                     "Dynamic feasibility failed: velocity at t=%.3f is %.3f > %.3f",
                     tc, vel.norm(), vel_limit);
@@ -908,10 +1041,31 @@ namespace scan_planner
       Eigen::Vector3d acc = acc_traj.evaluateDeBoorT(tc);
       if (acc.norm() > acc_limit)
       {
+        last_local_error_ = "scan_local_acceleration_limit";
         RCLCPP_WARN(node_->get_logger(),
                     "Dynamic feasibility failed: acceleration at t=%.3f is %.3f > %.3f",
                     tc, acc.norm(), acc_limit);
         return false;
+      }
+
+      // 4WS chassis supports in-place pivot at start/end and speed-scaled
+      // turning (w = v * k) in trajectory_monitor/navigation_controller.
+      // Only reject pathological mid-trajectory geometric cusps; do not
+      // reject low-speed start/end transients or nominal-speed yaw rate.
+      const double vxy = vel.head<2>().norm();
+      if (vxy > 0.15 && tc >= 0.4 && tc <= duration - 0.4)
+      {
+        const double yaw_rate = std::abs(vel.x() * acc.y() - vel.y() * acc.x()) / (vxy * vxy);
+        const double curvature = yaw_rate / vxy;
+        const double min_r = std::max(0.05, std::min(pp_.min_turn_radius_, 0.15));
+        if (curvature > 1.0 / min_r)
+        {
+          last_local_error_ = "scan_local_curvature_exceeded";
+          RCLCPP_WARN(node_->get_logger(),
+                      "Local curvature feasibility failed: t=%.3f R=%.3f < %.3f",
+                      tc, 1.0 / std::max(1e-6, curvature), min_r);
+          return false;
+        }
       }
     }
 

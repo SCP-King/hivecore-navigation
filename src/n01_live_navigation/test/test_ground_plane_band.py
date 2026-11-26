@@ -8,7 +8,7 @@ def test_sloped_floor_filters_locally_and_summary_is_json_serializable():
     band,bounds=ground_plane_height_band(points,-.9,.9,.01,0.)
     np.testing.assert_allclose(band,points[:2])
     data=json.loads(json.dumps({'z_band_map_m':bounds}))
-    np.testing.assert_allclose(data['z_band_map_m'],[-.87,.4])
+    np.testing.assert_allclose(data['z_band_map_m'],[-.84,.4])
 
 
 def test_empty_and_horizontal_clouds_have_scalar_diagnostic_bounds():
@@ -18,7 +18,7 @@ def test_empty_and_horizontal_clouds_have_scalar_diagnostic_bounds():
         json.dumps(bounds)
 
 
-def test_small_objects_above_three_centimeters_survive_ground_band():
+def test_only_objects_above_six_centimeters_survive_ground_band():
     points=np.array([[0,0,.0],[0,0,.02],[0,0,.04],[0,0,.055],[0,0,.10]])
     band,_=ground_plane_height_band(points,0.,.9)
-    np.testing.assert_allclose(band,points[2:])
+    np.testing.assert_allclose(band,points[4:])

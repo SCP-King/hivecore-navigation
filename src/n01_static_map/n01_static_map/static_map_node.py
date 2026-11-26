@@ -14,6 +14,7 @@
 # PCD 解析:仅支持 header 中 FIELDS=SIZE=4 TYPE=F COUNT=1 的纯 xyz binary。
 # 占用格 = 把点归入 resolution 立方体体素,每个 3D 体素发布一个中心点。
 # 地面/墙面/顶部保持各自高度层,供 SCAN 静态占用层和可视化使用。
+import json
 import math
 import struct
 
@@ -82,6 +83,9 @@ class StaticMapNode(Node):
         super().__init__("n01_static_map", **kwargs)
         # ---- parameters ----
         self.declare_parameter("pcd_path", "")
+        # Optional same-stem map_server grid from the offline exporter. When
+        # present it is the static obstacle source; PCD remains the fallback.
+        self.declare_parameter("occupancy_grid_path", "")
         self.declare_parameter("resolution", 0.05)      # m/体素
         self.declare_parameter("publish_rate", 2.0)     # legacy compatibility; one-shot retained map
         self.declare_parameter("frame_id", "map")
@@ -123,6 +127,8 @@ class StaticMapNode(Node):
         if not math.isfinite(min_z) or not math.isfinite(max_z) or min_z > max_z:
             raise ValueError("min_z must be <= max_z")
         self._pcd_path = str(path)
+        self._occupancy_grid_path = str(
+            self.get_parameter("occupancy_grid_path").value or "").strip()
         self._resolution = float(res)
         self._publish_rate = publish_rate
         self._frame_id = str(self.get_parameter("frame_id").value)
@@ -132,7 +138,7 @@ class StaticMapNode(Node):
 
     def _on_param_change(self, params):
         for p in params:
-            if p.name in ("pcd_path", "resolution", "publish_rate",
+            if p.name in ("pcd_path", "occupancy_grid_path", "resolution", "publish_rate",
                           "frame_id", "min_z", "max_z", "seed"):
                 try:
                     self._apply_params()
@@ -144,6 +150,14 @@ class StaticMapNode(Node):
 
     def load_and_publish(self):
         t0 = self.get_clock().now()
+        if self._occupancy_grid_path:
+            from pathlib import Path
+            gp = Path(self._occupancy_grid_path)
+            if gp.is_file():
+                self._load_occupancy_grid(gp)
+                return
+            self.get_logger().warning(
+                f"occupancy_grid_path 不存在，回退 PCD: {gp}")
         try:
             xs, ys, zs = parse_pcd_xyz(self._pcd_path)
         except Exception as e:
@@ -191,6 +205,51 @@ class StaticMapNode(Node):
             f"体素化完成: 独立3D体素={n}  @res={self._resolution}  "
             f"耗时{dt:.1f}s 发布到 {PUBLISH_TOPIC} (frame={self._frame_id}, "
             f"z窗口[{self._min_z},{self._max_z}])")
+
+    def _load_occupancy_grid(self, pgm_path):
+        """Turn map_server occupied cells into solid 3D static voxels.
+
+        The 2D grid is authoritative for obstacle/boundary/closed-unknown
+        semantics; this adapter only projects those black cells through the
+        configured z window so the existing 3D SCAN static layer consumes them.
+        """
+        from pathlib import Path
+        import numpy as np
+        from PIL import Image
+        meta_path = pgm_path.with_suffix('.json')
+        if not meta_path.is_file():
+            raise ValueError(f"occupancy grid metadata missing: {meta_path}")
+        m = json.loads(meta_path.read_text(encoding='utf-8'))
+        ox, oy, _ = m.get('origin', [0., 0., 0.])[:3]
+        res = float(m.get('resolution_m', self._resolution))
+        if not math.isfinite(res) or not .01 <= res <= .5:
+            raise ValueError('invalid occupancy grid resolution')
+        img = np.asarray(Image.open(pgm_path).convert('L'), dtype=np.uint8)
+        grid = np.flipud(img)
+        # 0 = occupied (our exporter writes solid black); unknown=205/free=254.
+        yy, xx = np.nonzero(grid <= 50)
+        if xx.size == 0:
+            raise ValueError('occupancy grid has no occupied cells')
+        cx = ox + (xx + .5) * res
+        cy = oy + (yy + .5) * res
+        # Solid columns through the configured static z window. This is a 2D
+        # source, so it must not infer a passable gap between z layers.
+        zs = np.arange(self._min_z + res * .5, self._max_z + 1e-9, res,
+                       dtype=np.float64)
+        if zs.size == 0:
+            raise ValueError('empty z window')
+        # Meshgrid order is cell-major; keep xyz triples aligned.
+        X = np.repeat(cx, zs.size)
+        Y = np.repeat(cy, zs.size)
+        Z = np.tile(zs, cx.size)
+        self._out_x = X.astype(np.float32)
+        self._out_y = Y.astype(np.float32)
+        self._out_z = Z.astype(np.float32)
+        self._payload = np.column_stack((self._out_x, self._out_y, self._out_z)).astype('<f4')
+        self.get_logger().info(
+            f"占据栅格加载成功: {pgm_path} cells={xx.size} res={res:.3f} "
+            f"z[{self._min_z:.2f},{self._max_z:.2f}] 3D体素={self._payload.shape[0]} "
+            f"发布到 {PUBLISH_TOPIC} (frame={self._frame_id})")
 
     def _publish(self):
         if self._payload is None:

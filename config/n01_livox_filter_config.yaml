@@ -1,0 +1,30 @@
+# N-01 override for imu_complementary_filter (keeps vendor package untouched).
+# Enables publish_debug_topics so /imu/rpy/filtered is published for
+# static_tf_publisher_node and IMU-assisted orientation monitoring.
+complementary_filter_gain_node:
+  ros__parameters:
+    gain_acc: 0.01
+    gain_mag: 0.01
+    bias_alpha: 0.01
+    do_bias_estimation: true
+    do_adaptive_gain: true
+    use_mag: false
+    fixed_frame: "fixed_frame"
+    publish_tf: true
+    reverse_tf: false
+    tf_child_frame: "imu_filtered"
+    constant_dt: 0.0
+    publish_debug_topics: true
+    qos_overrides:
+      /livox/imu:
+        subscription:
+          depth: 10
+          durability: volatile
+          history: keep_last
+          reliability: best_effort
+      /imu/mag:
+        subscription:
+          depth: 10
+          durability: volatile
+          history: keep_last
+          reliability: best_effort
