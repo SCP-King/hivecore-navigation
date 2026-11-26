@@ -404,15 +404,23 @@ class Hive2TrajectoryMonitor(Node):
             if allow_prefix:
                 prefix,speed=executable_prefix(states,valid,self.max_speed,self.max_accel,.6)
                 self.current_prefix_speed=speed;self.prefix_limited=True
-                key=(self.accepted_goal_ns,getattr(getattr(self,'last_bspline',None),'traj_id',-1),tuple(np.round(states[i,:2]/.05).astype(int)))
-                if getattr(self,'last_prefix_replan_key',None)!=key:
-                    if getattr(self,'replan_pub',None) is not None:self.replan_pub.publish(Bool(data=True))
-                    self.last_prefix_replan_key=key
+                self._request_replan_throttled(1.5)
                 return prefix
+            self._request_replan_throttled(1.5)
             raise ValueError('scan_footprint_enters_unknown_space; frontier_required'if not observed[i]
                 else'scan_prefix_collision_or_outside_window; replan_required')
         self.failure_context={}
         return states.tolist()
+
+    def _request_replan_throttled(self, min_period_s=1.5):
+        pub = getattr(self, 'replan_pub', None)
+        if pub is None:
+            return
+        now = time.monotonic()
+        if now - getattr(self, '_last_replan_pub_mono', 0.0) < min_period_s:
+            return
+        self._last_replan_pub_mono = now
+        pub.publish(Bool(data=True))
 
     def on_body_pose(self, msg):
         self.body_pose = msg
@@ -553,6 +561,7 @@ class Hive2TrajectoryMonitor(Node):
             if event == 'new' and not committed and self.last_bspline is not None:
                 self.get_logger().warning('Ignoring malformed/inactive SCAN replacement: '+str(exc))
                 return
+            self._request_replan_throttled(1.5)
             self._clear_candidate_visualization()
             if self.last_bspline is not None:
                 try:self.publish_trajectory(self.last_bspline,self.last_curve,[],{},False)
@@ -625,6 +634,8 @@ class Hive2TrajectoryMonitor(Node):
         candidate_review_ready = bool(
             trajectory_active and screen["necessary_conditions_pass"]
             and body_feedback_fresh and joint_feedback_fresh and pitch_match is True)
+        if trajectory_active and not screen["necessary_conditions_pass"]:
+            self._request_replan_throttled(1.5)
         data = {
             "schema": "n01.hive2_candidate_feasibility.v1",
             "goal_id": self.accepted_goal_ns,

@@ -34,13 +34,13 @@
     milestone_scan_to_map_enable: true
     milestone_linear_m: 2.0
     milestone_angular_deg: 15.0
-    milestone_local_multires_enable: true
+    milestone_local_multires_enable: false
     recover_score_map_mode: residual
     recover_prior_topk: 3
     tracking_local_hunt_timeout_sec: 10.0
-    recover_debug_viz_enable: true
+    recover_debug_viz_enable: false
     tracking_debug_clouds_enable: false
-    milestone_local_escalate_fitness_ratio: 0.3
+    milestone_local_escalate_fitness_ratio: 1.0
     milestone_local_hunt_mode: yaw_first
     milestone_local_xy_enable: true
     milestone_local_xy_half_m: 0.25
@@ -63,7 +63,7 @@
     reloc_ndt_max_iterations: 35
     reloc_ndt_step_size: 0.1
     reloc_ndt_transformation_epsilon: 1.0e-06
-    reloc_fitness_score_threshold: 0.03
+    reloc_fitness_score_threshold: 0.05
     reloc_unseated_hunt_enable: false
     reloc_seated_fail_reopen_scans: 3
     reloc_unseated_hunt_oneshot_first: true

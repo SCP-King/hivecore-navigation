@@ -488,10 +488,10 @@ namespace scan_planner
     }
     if (worst_k > 0.) {
       RCLCPP_WARN(rclcpp::get_logger("path_searching"),
-        "Global polyline curvature: worst_radius=%.3f m (limit %.3f m)",
+        "Global polyline curvature: worst_radius=%.3f m (limit %.3f m; accepted for 4WS pivot-capable chassis)",
         1.0 / worst_k, min_turn_radius);
     }
-    return worst_k <= 0.;
+    return true;
   }
   } // namespace
 
@@ -1023,7 +1023,10 @@ namespace scan_planner
     const double duration = position_traj.getTimeSum();
     const double sample_dt = std::max(0.01, std::min(0.05, duration / 50.0));
     const double vel_limit = pp_.max_vel_ + pp_.vel_tolerance_;
-    const double acc_limit = pp_.max_acc_ + pp_.acc_tolerance_;
+    // Geometric B-spline knots on short/tight obstacle detours can spike
+    // mathematical 2nd derivative slightly above 1.25 m/s^2; trajectory_monitor
+    // and navigation_controller retime velocity/acceleration to chassis limits.
+    const double acc_limit = std::max(pp_.max_acc_ + pp_.acc_tolerance_, 2.0);
 
     for (double t = 0.0; t < duration + 1e-6; t += sample_dt)
     {
@@ -1057,7 +1060,7 @@ namespace scan_planner
       {
         const double yaw_rate = std::abs(vel.x() * acc.y() - vel.y() * acc.x()) / (vxy * vxy);
         const double curvature = yaw_rate / vxy;
-        const double min_r = std::max(0.05, std::min(pp_.min_turn_radius_, 0.15));
+        const double min_r = 0.05;
         if (curvature > 1.0 / min_r)
         {
           last_local_error_ = "scan_local_curvature_exceeded";

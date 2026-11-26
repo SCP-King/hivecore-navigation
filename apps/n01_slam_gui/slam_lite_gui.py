@@ -1294,19 +1294,37 @@ class RosWorker:
             STATE.loc_seq += 1
         STATE.recv("loc_map")
 
+    def _allow_cloud_decode(self, key: str, min_period_s: float) -> bool:
+        ts = getattr(self, '_cloud_decode_ts', None)
+        if ts is None:
+            ts = {}
+            self._cloud_decode_ts = ts
+        now = time.monotonic()
+        if now - ts.get(key, 0.0) < min_period_s:
+            return False
+        ts[key] = now
+        return True
+
     def _on_cloud(self, msg: PointCloud2) -> None:
+        STATE.recv("cloud_map")
+        if not self._allow_cloud_decode("cloud_map", 0.45):
+            return
         xyz = pc2_to_xyz(msg)
         with STATE.lock:
             STATE.cloud_pts = xyz
             STATE.cloud_frame = msg.header.frame_id.lstrip("/")
             STATE.cloud_seq += 1
-        STATE.recv("cloud_map")
 
     def _on_input_cloud(self, msg: PointCloud2) -> None:
         STATE.recv("input_cloud")
 
     def _on_live_map_cloud(self, msg: PointCloud2) -> None:
         if msg.header.frame_id.lstrip('/')!='map':return
+        STATE.recv('bridge_cloud')
+        with STATE.lock:
+            in_mapping = (STATE.mapping.get('session') == 'mapping')
+        if not self._allow_cloud_decode("bridge_cloud", 0.20 if in_mapping else 0.45):
+            return
         xyz=pc2_to_xyz(msg)
         with STATE.lock:
             STATE.live_pts=xyz
@@ -1324,7 +1342,6 @@ class RosWorker:
 
             if xyz is not None:STATE.ground_live_frames.append((time.monotonic(),xyz))
             STATE.live_seq+=1
-        STATE.recv('bridge_cloud')
 
     def _on_robot_description(self,msg):
         try:
@@ -1338,6 +1355,9 @@ class RosWorker:
 
     def _on_nav_inflated(self,msg):
         if msg.header.frame_id.lstrip('/')!='map':return
+        STATE.recv('nav_inflated')
+        if not self._allow_cloud_decode("nav_inflated", 0.45):
+            return
         xyz=pc2_to_xyz(msg)
         with STATE.lock:
             body=getattr(STATE,'body_pose_xyz',None)
@@ -1348,22 +1368,25 @@ class RosWorker:
                 xyz=xyz[ids]
         with STATE.lock:
             STATE.nav_inflated_pts=xyz;STATE.nav_inflated_seq+=1
-        STATE.recv('nav_inflated')
 
     def _on_nav_static(self, msg: PointCloud2) -> None:
+        STATE.recv("nav_static")
+        if not self._allow_cloud_decode("nav_static", 0.45):
+            return
         xyz = pc2_to_xyz(msg)
         with STATE.lock:
             STATE.nav_static_pts = xyz
             STATE.nav_map_seq += 1
-        STATE.recv("nav_static")
 
     def _on_nav_dynamic(self, msg: PointCloud2) -> None:
+        STATE.recv("nav_dynamic")
+        if not self._allow_cloud_decode("nav_dynamic", 0.45):
+            return
         xyz = pc2_to_xyz(msg)
         with STATE.lock:
             STATE.nav_dyn_pts = xyz
             STATE.nav_scan_stamp_ns = int(msg.header.stamp.sec)*1_000_000_000+int(msg.header.stamp.nanosec)
             STATE.nav_map_seq += 1
-        STATE.recv("nav_dynamic")
 
     def _on_nav_ready(self, msg) -> None:
         with STATE.lock:
@@ -1960,18 +1983,33 @@ class ProcManager:
             with self.lock:
                 item = self.procs.get(key)
                 unexpected = bool(item and item['proc'] is proc)
+            # Give the ROS subscriber thread a brief window to deliver the
+            # terminal ARRIVED execution_status before classifying process exit.
+            if unexpected:
+                for _ in range(5):
+                    with STATE.lock:
+                        if STATE.motion_feedback.terminal:
+                            break
+                    time.sleep(0.1)
+            arrived_by_log = (rc == 0 and any('Terminal state ARRIVED published' in ln for ln in recent_output))
             with STATE.lock:
                 unfinished = not STATE.motion_feedback.terminal
+                exec_arrived = (str(getattr(STATE.motion_feedback, 'state', '')).upper() == 'ARRIVED')
                 if unexpected and unfinished:
                     STATE.motion_feedback.terminal = True
-                    detail = next((line for line in reversed(recent_output)
-                                   if 'Error:' in line or 'Exception:' in line),
-                                  recent_output[-1] if recent_output else '无进程输出')
-                    STATE.motion_result = f'行驶失败：执行器退出 rc={rc}，未确认到达目标；原因：{detail}'
-                    STATE.navigation_task.finish('FAILED',STATE.motion_result)
-                    result = STATE.motion_result
+                    if arrived_by_log or exec_arrived:
+                        STATE.motion_result = '已确认到达目标（执行器已安全退出）'
+                        STATE.navigation_task.finish('ARRIVED', STATE.motion_result)
+                        result, level = STATE.motion_result, 'info'
+                    else:
+                        detail = next((line for line in reversed(recent_output)
+                                       if 'Error:' in line or 'Exception:' in line),
+                                      recent_output[-1] if recent_output else '无进程输出')
+                        STATE.motion_result = f'行驶失败：执行器退出 rc={rc}，未确认到达目标；原因：{detail}'
+                        STATE.navigation_task.finish('FAILED', STATE.motion_result)
+                        result, level = STATE.motion_result, 'err'
             if unexpected and unfinished:
-                publish_motion_events([dict(text=result, level='err', notify=True, terminal=True)])
+                publish_motion_events([dict(text=result, level=level, notify=True, terminal=True)])
         if key == "desk":
             was_mapping = self.desk_mode in (
                 "mapping", "fast_lio_mapping", "fast_lio_realtime")
@@ -4560,7 +4598,7 @@ def _grid_source():
     loc_live=loc_session in ('tracking','relocalization') or fresh('loc_map')
     # An observed empty room (0) is valid; an entirely unknown (-1) grid is not.
     def grid_has_data(layer):
-        return (layer is not None and now_mono-layer[4]<2. and bool(np.any(layer[0]>=0)))
+        return (layer is not None and now_mono-layer[4]<4. and bool(np.any(layer[0]>=0)))
     nav_grid_ready=grid_has_data(ref_grid) or grid_has_data(live_grid)
     if requested in ('导航','占据栅格'):
         source='导航栅格'
@@ -4882,6 +4920,15 @@ def _finish_frame(rgb, view, ground, pose, _pose_z, observed, inflated,
             mask = ((observed[:, 2] > ground + GROUND_CLEARANCE_M)
                     & (observed[:, 2] <= ground + 1.60))
             raw = observed[mask, :2]
+        if raw is not None and len(raw) and _GRID_BASE_PTS.get('mode') in ('导航栅格', '诊断'):
+            # Always render live /grid_map/occupancy obstacles on the map canvas
+            # so anything visible to planner/controller is guaranteed visible in GUI.
+            step = max(1, len(raw) // 4000)
+            draw_obs = ImageDraw.Draw(img)
+            for ox, oy in raw[::step]:
+                px, py = _map_xy_to_pixel(float(ox), float(oy), view)
+                if 0 <= px < GRID_IMAGE_PX and 0 <= py < GRID_IMAGE_PX:
+                    draw_obs.rectangle([px - 1, py - 1, px + 1, py + 1], fill=(79, 239, 219))
         img = paint_robot(img, view, pose, model_polygons, envelope, env, observed=raw)
     # Inflation is a separate planning layer: show it as translucent orange
     # instead of hiding it inside the robot envelope.
@@ -6128,8 +6175,8 @@ def _maybe_auto_sync_nav_context() -> None:
     with STATE.lock:
         loc = dict(STATE.loc)
         pose = STATE.pose
-        pose_age = STATE.age_of('pose')
         ground_model = getattr(STATE, 'ground_model', None)
+    pose_age = STATE.age_of('pose')
     status = str(loc.get("status", "") or "").lower()
     in_tracking = realtime or status in ("tracking", "tracking_ready")
     if not in_tracking or pose is None or pose_age is None or pose_age > 1.5:
@@ -6379,9 +6426,10 @@ def refresh_console() -> None:
     blockers = nav_health.get("blockers") if isinstance(nav_health, dict) else None
     blockers = blockers if isinstance(blockers, list) else []
     if UI.get("nav_blockers"):
+        from navigation_flow import describe as _desc_blocker
         _set(UI["nav_blockers"],
-             "、".join(str(x) for x in blockers[:4]) if blockers else "无",
-             COL_ERR if blockers else COL_OK)
+             "、".join(_desc_blocker(x) for x in blockers[:4]) if blockers else "无",
+             COL_WARN if blockers else COL_OK)
     if UI.get("nav_gate"):
         if goal_status and goal_status.get("goal_received", False):
             # Heartbeats always carry accepted=false; the real last result is

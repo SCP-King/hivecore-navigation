@@ -257,8 +257,28 @@ class NavigationController:public rclcpp::Node {
     // New scene applies to BOTH the held and candidate curve. Keep the current
     // safe route while extending, avoiding equivalent left/right oscillation.
     adopt_scene(m);
-    if(curve_&&have_pose_&&curve_->length-progress_s_>.5&&
-        clear_curve(*curve_,progress_s_,std::min(curve_->length,progress_s_+1.))){
+    // Keep the current safe route while extending ONLY if the robot is healthy
+    // and the next 3.0 m of the old curve is completely collision-free. If an
+    // obstacle blocks within 3.0 m ahead or the controller is blocked/reversing,
+    // adopt the planner's new detour trajectory immediately instead of waiting
+    // until < 1.0 m nose-to-obstacle.
+    // Pivot commitment hysteresis: while actively pivoting in place, reject
+    // symmetric left<->right side-flips from replans for up to 4.5 s so the
+    // robot finishes its committed turn instead of oscillating left/right.
+    const bool pivoting_now=(state_=="ROTATING"||state_=="ALIGN"||state_=="SETTLING");
+    if(pivoting_now&&curve_&&have_pose_&&pivot_dir_!=0&&state_since_>0.&&(steady()-state_since_<4.5)){
+      const double cs=candidate->nearest(x_,y_);
+      const auto cl=candidate->at(std::min(candidate->length,cs+.45));
+      const double cand_yaw=(std::hypot(cl.x-x_,cl.y-y_)>=.20)?std::atan2(cl.y-y_,cl.x-x_):candidate->at(cs).yaw;
+      const double cand_err=wrap(cand_yaw-yaw_);
+      if(cand_err*pivot_dir_<0.&&std::abs(cand_err)>.35){
+        admitted_speed_=m->max_speed;
+        packet_rx_=steady();return;
+      }
+    }
+    const bool actively_blocked=(state_=="WAITING_FOR_REPLAN"||state_=="SAFETY_HOLD"||state_=="REVERSING");
+    if(!actively_blocked&&curve_&&have_pose_&&curve_->length-progress_s_>1.2&&
+        clear_curve(*curve_,progress_s_,std::min(curve_->length,progress_s_+3.0))){
       // Keep the already-validated geometry, but never keep its old speed
       // advice. Otherwise a low-speed curve can pin admitted_speed below the
       // planner's fresh max_speed indefinitely while the robot keeps moving.
@@ -267,10 +287,9 @@ class NavigationController:public rclcpp::Node {
     }
     if(have_pose_){
       double s=candidate->nearest(x_,y_);auto p=candidate->at(s);
-      if(std::hypot(p.x-x_,p.y-y_)>.35){packet_rx_=steady();request_replan();return;}
-      if(curve_&&measured_v_>.01&&std::abs(wrap(p.yaw-curve_->at(curve_->nearest(x_,y_)).yaw))>.35){
-        packet_rx_=steady();request_replan();return;
-      }
+      if(std::hypot(p.x-x_,p.y-y_)>.60){packet_rx_=steady();request_replan();return;}
+      // Do not reject valid sharp-angle obstacle detours (>0.35 rad): the 4WS
+      // controller smoothly transitions via ALIGN/ROTATING when heading differs.
       progress_s_=s;
     }else progress_s_=0.;
     curve_=candidate;revision_=m->revision;admitted_speed_=m->max_speed;packet_rx_=steady();arrival_since_=0.;
@@ -372,10 +391,11 @@ class NavigationController:public rclcpp::Node {
       if(target_out||!inward||std::abs(drive[j])>packet_->max_wheel_rate||std::abs(qd_[j])>packet_->max_steering_rate*2.){physical_reason_=measured_out&&!target_out?"steering_angle_recovery_required":"live_wheel_angle_speed_or_steering_rate_limit";return false;}
       max_change=std::max(max_change,std::abs(target[j]-q_[j]));
     }
-    // Slew mismatch slows motion; native control handles steering transitions.
+    // Slew mismatch slows motion gently without slamming speed to crawl at
+    // every curve entrance; native control handles steering transitions.
     double rate=0.;for(double r:qd_)rate=std::max(rate,std::abs(r));
-    steering_scale_=std::min(std::clamp(1.-max_change/3.141592653589793,.15,1.),
-      rate>packet_->max_steering_rate?packet_->max_steering_rate/rate:1.);return true;
+    steering_scale_=std::min(std::clamp(1.-max_change/3.141592653589793,.45,1.),
+      rate>packet_->max_steering_rate?std::max(.45,packet_->max_steering_rate/rate):1.);return true;
   }
   // Search the admissible angular-rate interval before discarding a command.
   // The native 4WS solver can reject a requested w because one wheel target
@@ -445,8 +465,8 @@ class NavigationController:public rclcpp::Node {
     double v=0,w=0;std::string reason=finished_?terminal_reason_:(ready?"":feedback_reason_);
     // Preserve the controller state between 20 ms ticks. Resetting to DISABLED
     // here made SETTLING/WAITING unreachable and reset settle timers every tick.
-    if(!enabled_ && !finished_) state_="DISABLED";
-    if(paused_&&!finished_&&enabled_){state_="PAUSED";reason="user_paused";v=w=0.;}
+    if(!enabled_ && !finished_){state_="DISABLED";progress_anchor_s_=0.;blocked_since_s_=0.;}
+    if(paused_&&!finished_&&enabled_){state_="PAUSED";reason="user_paused";v=w=0.;progress_anchor_s_=0.;blocked_since_s_=0.;}
     else if(manual_){state_="MANUAL_OVERRIDE";reason="external command traffic; explicit resume required";}
     else if(estop_||dec_!=0){state_="ESTOP";reason="chassis stop or emergency stop";}
     else if(!finished_&&enabled_){
@@ -474,6 +494,14 @@ class NavigationController:public rclcpp::Node {
           }
         }else arrival_since_=0.;
       }else{
+      if(have_pose_){
+        if(progress_anchor_s_<=0.||
+           std::hypot(x_-progress_anchor_x_,y_-progress_anchor_y_)>=.15){
+          progress_anchor_x_=x_;progress_anchor_y_=y_;progress_anchor_yaw_=yaw_;
+          progress_anchor_s_=began;
+        }
+      }
+      const double stagnation_s=progress_anchor_s_>0.?began-progress_anchor_s_:0.;
       const double state_elapsed=state_since_>0.?began-state_since_:0.;
       if(state_=="WAITING_FOR_FEEDBACK"&&state_elapsed>=watchdog_feedback_s_){
         state_="SAFETY_HOLD";safety_hold_reason_="feedback_timeout";safety_release_since_=0.;
@@ -486,21 +514,32 @@ class NavigationController:public rclcpp::Node {
         state_="SAFETY_HOLD";safety_hold_reason_="alignment_timeout";safety_release_since_=0.;
       }
       if(state_=="SAFETY_HOLD"){
-        v=w=0.;reason=safety_hold_reason_;
+        v=w=0.;reason=stagnation_s>=45.0?"stagnation_blocked_waiting_clearance":safety_hold_reason_;
+        // Dynamic escalation: after 12 s of zero physical progress, grant a
+        // fresh reverse recovery budget so a temporarily boxed-in robot is
+        // never permanently paralyzed once rear space opens up.
+        if(stagnation_s>=12.0&&reverse_attempts_>=reverse_max_attempts_&&began>=reverse_cooldown_until_){
+          reverse_attempts_=0;reverse_cooldown_until_=began+1.0;progress_anchor_s_=began;
+        }
         const bool blockedish =
           (physical_reason_.find("collision")!=std::string::npos||
            physical_reason_.find("curvature")!=std::string::npos||
            physical_reason_.find("yaw_rate")!=std::string::npos||
+           physical_reason_.find("below_minimum")!=std::string::npos||
+           physical_reason_.find("no_safe")!=std::string::npos||
            last_blocked_reason_.find("collision")!=std::string::npos||
            last_blocked_reason_.find("curvature")!=std::string::npos||
            last_blocked_reason_.find("yaw_rate")!=std::string::npos||
            last_blocked_reason_.find("scrub")!=std::string::npos||
+           last_blocked_reason_.find("below_minimum")!=std::string::npos||
+           last_blocked_reason_.find("no_safe")!=std::string::npos||
            last_blocked_reason_.find("occupied")!=std::string::npos);
-        if(reverse_enabled_&&reverse_attempts_<reverse_max_attempts_&&blockedish&&
-           history_reverse_safe(began)){
+        if(reverse_enabled_&&began>=reverse_cooldown_until_&&
+           reverse_attempts_<reverse_max_attempts_&&blockedish&&
+           (history_reverse_safe(began)||!observed_free_.empty())){
           reverse_active_=true;reverse_start_x_=x_;reverse_start_y_=y_;reverse_start_s_=began;
           reverse_reset_travel_=travel_;
-          ++reverse_attempts_;state_="REVERSING";reason="reverse_from_safety_hold";
+          state_="REVERSING";reason="reverse_from_safety_hold";
           safety_hold_reason_.clear();safety_release_since_=0.;
         } else if(ready&&fresh()&&latest_packet_valid_){
           if(!safety_release_since_)safety_release_since_=began;
@@ -525,11 +564,20 @@ class NavigationController:public rclcpp::Node {
         // Terminal homing closes cross-track error instead of exhausting arc
         // length a millimetre outside the arrival zone.
         if(terminal&&distance<.35&&!at_goal)p.yaw=std::atan2(packet_->goal.y-y_,packet_->goal.x-x_);
-        double yaw_error=wrap(p.yaw-yaw_);
+        // Use the chord bearing to 0.45 m ahead on the curve instead of the
+        // noisy s=0 B-spline endpoint tangent so pivoting points cleanly down
+        // the detour corridor rather than jittering at the obstacle nose.
+        double route_yaw=p.yaw;
+        if(curve_&&curve_->length-progress_s_>.30){
+          const auto look=curve_->at(std::min(curve_->length,progress_s_+.45));
+          if(std::hypot(look.x-x_,look.y-y_)>=.20)route_yaw=std::atan2(look.y-y_,look.x-x_);
+        }
+        double yaw_error=wrap(route_yaw-yaw_);
         const bool can_pivot=legs_home();
         const bool near_goal=!at_goal&&distance<=final_approach_radius_;
         const double approach_heading=std::atan2(packet_->goal.y-y_,packet_->goal.x-x_);
-        const bool approach_pivot=near_goal&&distance>.20&&can_pivot&&std::abs(wrap(approach_heading-yaw_))>.65;
+        const double approach_err=wrap(approach_heading-yaw_);
+        const bool approach_pivot=near_goal&&can_pivot&&(distance>.20?std::abs(approach_err)>.65:std::abs(std::cos(approach_err))<.5);
         // Finish position convergence (into arrival_zone_) first, then perform
         // a single in-place final yaw alignment at the goal. Add +3 deg
         // hysteresis once inside VERIFYING_ARRIVAL so tiny pose noise does not
@@ -537,21 +585,32 @@ class NavigationController:public rclcpp::Node {
         const double goal_yaw_gate=(state_=="VERIFYING_ARRIVAL")?(final_yaw_tolerance_+0.052):final_yaw_tolerance_;
         const bool goal_yaw_align=at_goal&&final_yaw_&&
           std::abs(wrap(packet_->goal_yaw-yaw_))>goal_yaw_gate;
-        double desired=at_goal&&final_yaw_?packet_->goal_yaw:(approach_pivot?approach_heading:p.yaw);
-        const double align_tol=at_goal&&final_yaw_?final_yaw_tolerance_:.08;
-        // Bounded reverse escape: only after a blocked/collision forward
-        // command, and only while the rear footprint is clear.
+        double desired=at_goal&&final_yaw_?packet_->goal_yaw:(approach_pivot?approach_heading:route_yaw);
+        const double align_tol=at_goal&&final_yaw_?final_yaw_tolerance_:.18;
+        // Bounded reverse escape with pedestrian yield-wait: wait 2.0 s first
+        // so passing humans can clear (avoiding immediate back-and-forth
+        // waltz livelock), while requesting a forward detour replan.
         const std::string blocked=physical_reason_.empty()?last_blocked_reason_:physical_reason_;
-        if(reverse_enabled_&&!reverse_active_&&state_=="WAITING_FOR_REPLAN"&&
-           reverse_attempts_<reverse_max_attempts_&&
+        const bool wants_reverse_escape=
            (blocked.find("collision")!=std::string::npos||
             blocked.find("curvature")!=std::string::npos||
             blocked.find("yaw_rate")!=std::string::npos||
             blocked.find("scrub")!=std::string::npos||
-            blocked.find("no_safe")!=std::string::npos)){
+            blocked.find("below_minimum")!=std::string::npos||
+            blocked.find("occupied")!=std::string::npos||
+            blocked.find("no_safe")!=std::string::npos);
+        if(state_=="WAITING_FOR_REPLAN"&&wants_reverse_escape){
+          if(blocked_since_s_<=0.)blocked_since_s_=began;
+        }else if(state_=="FINAL_APPROACH"||(state_=="MOVING"&&v_>=min_moving_speed_)){
+          blocked_since_s_=0.;
+        }
+        if(reverse_enabled_&&!reverse_active_&&began>=reverse_cooldown_until_&&
+           state_=="WAITING_FOR_REPLAN"&&wants_reverse_escape&&
+           blocked_since_s_>0.&&(began-blocked_since_s_>=2.0)&&
+           reverse_attempts_<reverse_max_attempts_){
           reverse_active_=true;reverse_start_x_=x_;reverse_start_y_=y_;reverse_start_s_=began;
-          reverse_reset_travel_=travel_;
-          ++reverse_attempts_;state_="REVERSING";reason="reverse_recovery_start";
+          reverse_reset_travel_=travel_;blocked_since_s_=0.;
+          state_="REVERSING";reason="reverse_recovery_start";
         }
         if(state_=="REVERSING"){
           v=w=0.;
@@ -577,6 +636,11 @@ class NavigationController:public rclcpp::Node {
           }
           if(!safe||travelled>=reverse_distance_||elapsed>=reverse_timeout_){
             v=w=0.;state_="WAITING_FOR_REPLAN";
+            if(travelled>=.05){
+              ++reverse_attempts_;
+            }else{
+              reverse_cooldown_until_=began+2.0;
+            }
             reason=travelled>=reverse_distance_?"reverse_complete_replan":
                    (elapsed>=reverse_timeout_?"reverse_timeout_replan":"reverse_not_safe");
             reverse_active_=false;request_replan();
@@ -593,10 +657,12 @@ class NavigationController:public rclcpp::Node {
           }
           else{reason="settling_after_rotation";}
         } else {
-        const bool start_align = can_pivot && !start_aligned_ && progress_s_<.20 && std::abs(yaw_error)>.08;
-        if(can_pivot&&(goal_yaw_align||approach_pivot||(!at_goal&&!near_goal&&(std::abs(yaw_error)>.45||start_align||std::min({vmax_,packet_->max_speed,admitted_speed_})*std::max(0.,std::cos(yaw_error))<=packet_->chassis_geometry[6]+.001)))){
+        const bool start_align = can_pivot && !start_aligned_ && progress_s_<.20 && std::abs(yaw_error)>.18;
+        if(can_pivot&&(goal_yaw_align||approach_pivot||(!at_goal&&!near_goal&&(std::abs(yaw_error)>.65||start_align||std::min({vmax_,packet_->max_speed,admitted_speed_})*std::max(0.,std::cos(yaw_error))<=packet_->chassis_geometry[6]+.001)))){
+          const bool was_rotating=(state_=="ROTATING");
           state_="ALIGN";
-          if(measured_v_>.01||std::abs(v_)>.005){reason="braking before alignment";}
+          const double brake_v_lim=was_rotating?.06:.03;
+          if(measured_v_>brake_v_lim||std::abs(v_)>.005){reason="braking before alignment";}
           else if(sweep(desired)){
             double err=wrap(desired-yaw_);
             // Latch turn direction near +-pi so small pose jitter cannot flip
@@ -615,11 +681,13 @@ class NavigationController:public rclcpp::Node {
           }
           else {
             reason=packet_->rotation_observed?"rotation swept volume occupied; SCAN replan requested":"waiting for full-azimuth scan";
-            if(packet_->rotation_observed&&reverse_enabled_&&reverse_attempts_<reverse_max_attempts_&&
-               state_=="ALIGN"&&state_elapsed>=1.5&&history_reverse_safe(began)){
+            if(packet_->rotation_observed&&reverse_enabled_&&began>=reverse_cooldown_until_&&
+               reverse_attempts_<reverse_max_attempts_&&
+               state_=="ALIGN"&&state_elapsed>=1.5&&
+               (history_reverse_safe(began)||!observed_free_.empty())){
               reverse_active_=true;reverse_start_x_=x_;reverse_start_y_=y_;reverse_start_s_=began;
               reverse_reset_travel_=travel_;
-              ++reverse_attempts_;state_="REVERSING";reason="reverse_for_rotation_clearance";
+              state_="REVERSING";reason="reverse_for_rotation_clearance";
             }else{
               request_replan();
             }
@@ -643,13 +711,22 @@ class NavigationController:public rclcpp::Node {
             const double cos_h=std::cos(heading_err);
             double cap=std::min({vmax_,packet_->max_speed,admitted_speed_,final_approach_speed_});
             double steer_err=heading_err;
+            double v_target=0.;
             if(cos_h>=0.){
-              v=cap*cos_h;
+              v_target=cap*cos_h;
             }else{
               // Overshot slightly past the goal (goal is behind the robot):
               // gently back up instead of deadlocking or spinning 180 deg.
-              v=-std::min(cap,.08)*(-cos_h);
+              v_target=-std::min(cap,.08)*(-cos_h);
               steer_err=wrap(heading+M_PI-yaw_);
+            }
+            // Smoothly ramp velocity when entering FINAL_APPROACH from cruise,
+            // while stepping directly above spin_threshold when starting from
+            // rest so accel*dt (0.005 m/s) never trips |v| < spin_threshold (0.010).
+            const double min_fa_v=packet_->chassis_geometry[6]+.002;
+            v=std::clamp(v_target,v_-accel_*dt,v_+accel_*dt);
+            if(std::abs(v)<min_fa_v&&std::abs(v_target)>=min_fa_v){
+              v=(v_target>=0.?min_fa_v:-min_fa_v);
             }
             const double v_ratio=std::clamp(std::abs(v)/std::max(.001,vmax_),0.,1.);
             w=navigation::limit(1.5*steer_err,wmax_*v_ratio);
@@ -682,10 +759,48 @@ class NavigationController:public rclcpp::Node {
           try{auto bridge=health_.at("bridge");if(bridge.contains("pose_prediction")&&bridge["pose_prediction"].value("source_age_s",0.)>1.5)cap=std::min(cap,.10);}catch(...){}
           double stop=terminal?std::max(0.,distance-.04):remaining;
           cap=navigation::braking_speed(cap,std::min(accel_,packet_->max_accel),std::max(0.,stop-.02));
-          auto ahead=curve_->at(std::min(curve_->length,progress_s_+.25));
+          const double look_dist=std::clamp(.35+.8*std::max(0.,v_),.35,.65);
+          auto ahead=curve_->at(std::min(curve_->length,progress_s_+look_dist));
           if(terminal&&distance<.35){ahead.x=packet_->goal.x;ahead.y=packet_->goal.y;ahead.yaw=p.yaw;}
           auto command=navigation::feedback(p,ahead,x_,y_,yaw_,cap,wmax_);
-          v=std::min(command.v,std::max(v_+accel_*dt,packet_->chassis_geometry[6]+.002));w=command.w;
+          // Prevent tire scrub (tiny linear v with large angular w): switch
+          // cleanly to pure 4WS in-place pivot ONLY when there is an actual
+          // heading error to pivot away; otherwise if we are at the end of a
+          // short segment (cap < min_moving_speed_), request a fresh replan
+          // instead of livelocking ALIGN -> SETTLING -> MOVING -> ALIGN.
+          if(distance>final_approach_radius_&&command.v<min_moving_speed_&&std::abs(command.w)>.08&&
+             (std::abs(wrap(route_yaw-yaw_))>align_tol||cap<min_moving_speed_)){
+            v=w=0.;
+            if(can_pivot&&std::abs(wrap(route_yaw-yaw_))>align_tol){
+              const bool was_rotating=(state_=="ROTATING");
+              state_="ALIGN";
+              const double brake_v_lim=was_rotating?.06:.03;
+              if(measured_v_>brake_v_lim||std::abs(v_)>.005){reason="braking before alignment";}
+              else if(sweep(route_yaw)){
+                const double requested=navigation::limit(command.w,wmax_);
+                double feasible=0.;
+                if(model_limited(0.,requested,feasible)&&std::abs(feasible)>.01){
+                  w=feasible;state_="ROTATING";
+                }else{reason="native wheel model rejected rotation at all feasible rates";request_replan();}
+              }else{
+                reason=packet_->rotation_observed?"rotation swept volume occupied; SCAN replan requested":"waiting for full-azimuth scan";
+                request_replan();
+              }
+            }else{
+              state_="WAITING_FOR_REPLAN";reason="cruise_speed_below_minimum_threshold";physical_reason_=reason;request_replan();
+            }
+          }else{
+          // Ramp BOTH acceleration and deceleration smoothly at curve entrances
+          // so sudden curvature/steering_scale dips never cause a 20 ms step
+          // jerk (collision !safe still brakes immediately below).
+          const double min_start_v=packet_->chassis_geometry[6]+.002;
+          const double v_hi=std::max(v_+accel_*dt,min_start_v);
+          const double v_lo=std::max(0.,v_-accel_*1.5*dt);
+          v=std::clamp(command.v,std::min(command.v,v_lo),v_hi);
+          if(v<v_lo&&command.v<v_)v=std::max(command.v,v_lo);
+          // Smoothly rate-limit w as well to prevent harsh steering snaps.
+          const double raw_w=v<min_moving_speed_?command.w*(v/std::max(.01,min_moving_speed_)):command.w;
+          w=std::clamp(raw_w,w_-1.2*dt,w_+1.2*dt);
           // Check the actual feedback-corrected command, not only the planned tangent.
           bool safe=false;
           for(int reduction=0;reduction<7;reduction++){
@@ -693,14 +808,19 @@ class NavigationController:public rclcpp::Node {
             if(model_limited(v,w,limited_w)){
               const double trial_w=limited_w;
               // Always check at least ~0.35 m ahead even at crawl/startup speed
-              // (v = 0.012 m/s) so the robot stops cleanly in front of a human
-              // instead of micro-inching and braking repeatedly.
+              // (v = 0.012 m/s). Follow full trial_w for the first 0.40 s, then
+              // gently damp w over the remaining horizon so curve-entrance
+              // steering does not over-curl the predicted arc into inside walls.
               const double check_v=std::max(v,.25);
               double px=x_,py=y_,a=yaw_,horizon=.6+check_v/std::min(accel_,packet_->max_accel);safe=true;
-              for(double t=0;t<=horizon;t+=.04){if(!clear(px,py,a,.01)){safe=false;physical_reason_="corrected_command_collision_unknown_or_outside_scene";break;}a+=trial_w*.04;px+=check_v*std::cos(a)*.04;py+=check_v*std::sin(a)*.04;}
+              for(double t=0;t<=horizon;t+=.04){
+                if(!clear(px,py,a,.01)){safe=false;physical_reason_="corrected_command_collision_unknown_or_outside_scene";break;}
+                const double w_t=(t<=.40)?trial_w:trial_w*std::exp(-(t-.40)/.40);
+                a+=w_t*.04;px+=check_v*std::cos(a)*.04;py+=check_v*std::sin(a)*.04;
+              }
               if(safe){w=trial_w;break;}
             }
-            v*=.5;w*=.5;safety_reductions++;
+            v*=.75;w*=.75;safety_reductions++;
             if(distance>final_approach_radius_&&v<min_moving_speed_)break;
           }
           if(!safe||v<packet_->chassis_geometry[6]){v=w=0.;state_="WAITING_FOR_REPLAN";reason=physical_reason_.empty()?"no_safe_command_above_native_translation_threshold":physical_reason_;request_replan();}
@@ -719,7 +839,8 @@ class NavigationController:public rclcpp::Node {
               low_speed_since_=0.;request_replan();
             }
           }else low_speed_since_=0.;
-          if(remaining<.5)request_replan();
+          }
+          if(remaining<1.2)request_replan();
         }
         if(state_!="FINAL_APPROACH")final_approach_active_=false;
         if(state_!="ALIGN"&&state_!="ROTATING")pivot_dir_=0;
@@ -736,7 +857,7 @@ class NavigationController:public rclcpp::Node {
       }
     }
     w=navigation::limit(w,wmax_);v_=v;w_=w;
-    if(state_=="WAITING_FOR_REPLAN")last_blocked_reason_=reason;
+    if(state_=="WAITING_FOR_REPLAN"&&reason!="reverse_not_safe")last_blocked_reason_=reason;
     record_history(began);
     if(state_!=last_state_){last_state_=state_;state_since_=began;}
     auto add_limit=[&](const char* r){
@@ -823,7 +944,8 @@ class NavigationController:public rclcpp::Node {
   double reverse_history_age_s_=10.0;
   struct HistoryPose{double x,y,yaw,t;};std::deque<HistoryPose>history_;
   double reverse_speed_=.08,reverse_distance_=1.50,reverse_timeout_=15.0;
-  double reverse_start_x_=0.,reverse_start_y_=0.,reverse_start_s_=0.,reverse_reset_travel_=0.;
+  double reverse_start_x_=0.,reverse_start_y_=0.,reverse_start_s_=0.,reverse_reset_travel_=0.,reverse_cooldown_until_=0.;
+  double progress_anchor_x_=0.,progress_anchor_y_=0.,progress_anchor_yaw_=0.,progress_anchor_s_=0.,blocked_since_s_=0.;
   std::string last_blocked_reason_,last_state_;double state_since_=0.;
   std::vector<std::string> leg_home_names_;std::vector<double> leg_home_positions_;
   std::unordered_map<std::string,double> leg_positions_;

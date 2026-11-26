@@ -165,6 +165,7 @@ def _nodes(context):
     return [
         Node(package='n01_live_navigation', executable='n01_environment_display',
              name='n01_environment_display', output='screen',
+             prefix='nice -n 10',
              parameters=[{'ground_z_map_m': ground_z, 'ground_slope_x': ground_a,
                           'ground_slope_y': ground_b, 'resolution_m': .06, 'radius_m': 12.}]),
         *([Node(package='n01_live_navigation', executable='n01_realtime_reference',
@@ -177,6 +178,7 @@ def _nodes(context):
              parameters=[{"radius_m": 1.2}]),
         Node(package="n01_live_navigation", executable="n01_trajectory_display",
              name="n01_trajectory_display", output="screen",
+             prefix="nice -n 10",
              parameters=[{"ground_slope_x": ground_a, "ground_slope_y": ground_b,
                           "ground_z_map_m": ground_z}]),
         # The adapter may already be running as an independently supervised process.
@@ -316,17 +318,20 @@ def _nodes(context):
         Node(
             package="n01_live_navigation", executable="n01_navigation_diagnostics",
             name="n01_navigation_diagnostics", output="screen",
+            prefix="nice -n 10",
             parameters=[{"run_log_root": "/home/demo/lyy/n01_runtime/run_logs",
                          "map_path": pcd}],
         ),
         Node(
             package="n01_live_navigation", executable="n01_run_cmd_logger",
             name="n01_run_cmd_logger", output="screen",
+            prefix="nice -n 10",
             parameters=[{"log_dir": "/home/demo/lyy/n01_runtime/run_cmd"}],
         ),
         Node(
             package="rviz2", executable="rviz2", name="n01_live_navigation_rviz",
             condition=IfCondition(LaunchConfiguration("rviz")),
+            prefix="nice -n 10",
             arguments=["-d", rviz_config],
             output="screen",
         ),

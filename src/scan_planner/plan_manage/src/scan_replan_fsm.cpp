@@ -79,7 +79,16 @@ namespace scan_planner
     rviz_height_ready_ = false;
     navigation_replan_sub_ = node_->create_subscription<std_msgs::msg::Bool>(
       "/n01/navigation/replan", 10, [this](std_msgs::msg::Bool::ConstSharedPtr p){
-        if(p->data && have_target_ && exec_state_ == EXEC_TRAJ) changeFSMExecState(REPLAN_TRAJ,"CONTROLLER_PROGRESS");
+        if(!p->data || !have_target_ || exec_state_ != EXEC_TRAJ) return;
+        if(execution_progress_ && execution_progress_->goal_id == navigation_goal_id_) {
+          const std::string &ph = execution_progress_->phase;
+          if((end_pt_ - odom_pos_).head<2>().norm() <= final_handoff_radius_ &&
+             (ph == "VERIFYING_ARRIVAL" || ph == "ARRIVED")) return;
+          if(ph == "WAITING_FOR_REPLAN" || ph == "SAFETY_HOLD" || ph == "REVERSING") {
+            force_global_refresh_ = true;
+          }
+        }
+        changeFSMExecState(REPLAN_TRAJ,"CONTROLLER_PROGRESS");
       });
     execution_progress_sub_ = node_->create_subscription<scan_planner_msgs::msg::ExecutionProgress>(
       "/n01/navigation/progress", 10, [this](scan_planner_msgs::msg::ExecutionProgress::ConstSharedPtr p) {
@@ -694,9 +703,8 @@ namespace scan_planner
     if (have_target_ && execution_progress_ &&
         execution_progress_->goal_id == navigation_goal_id_) {
       const std::string phase = execution_progress_->phase;
-      const bool final_phase = phase == "FINAL_APPROACH" || phase == "ALIGN" ||
-          phase == "ROTATING" || phase == "SETTLING" ||
-          phase == "VERIFYING_ARRIVAL";
+      const bool final_phase = phase == "FINAL_APPROACH" ||
+          phase == "VERIFYING_ARRIVAL" || phase == "ARRIVED";
       if (final_phase && (end_pt_ - odom_pos_).head<2>().norm() <= final_handoff_radius_) {
         if (exec_state_ != EXEC_TRAJ)
           changeFSMExecState(EXEC_TRAJ, "TERMINAL_HOLD");
@@ -1219,18 +1227,22 @@ namespace scan_planner
   {
     if (recovery_ladder_.stage != navigation::RecoveryLadder::WAIT) return;
     if (!node_->get_parameter("recovery.auto_resume").as_bool()) return;
-    const double timeout = node_->get_parameter("recovery.wait_timeout_s").as_double();
-    if (!(timeout > 0.) || node_->now().seconds() - recovery_wait_since_ < timeout) return;
-    if (auto_resume_attempts_ >= auto_resume_max_) {
-      need_hover_stop_ = true;
-      publishPlanningStatus("PLAN_HOLD", "auto_resume_exhausted");
+    const double base_timeout = node_->get_parameter("recovery.wait_timeout_s").as_double();
+    if (!(base_timeout > 0.)) return;
+    const bool exhausted = (auto_resume_attempts_ >= auto_resume_max_);
+    // Never latch permanently into PLAN_HOLD: after exhausting fast retries,
+    // keep probing slowly every >= 5 s so the robot automatically resumes as
+    // soon as a temporary obstacle clears.
+    const double wait_limit = exhausted ? std::max(base_timeout, 5.0) : base_timeout;
+    if (node_->now().seconds() - recovery_wait_since_ < wait_limit) {
+      if (exhausted) publishPlanningStatus("PLAN_HOLD", "auto_resume_slow_probe");
       return;
     }
     ++auto_resume_attempts_;
     resetRecovery();
     need_hover_stop_ = false;
-    RCLCPP_INFO(node_->get_logger(), "Recovery wait timeout elapsed; retrying retained target (%d/%d)",
-                auto_resume_attempts_, auto_resume_max_);
+    RCLCPP_INFO(node_->get_logger(), "Recovery wait timeout elapsed; retrying retained target (attempt=%d)",
+                auto_resume_attempts_);
     changeFSMExecState(have_target_ ? GEN_NEW_TRAJ : WAIT_TARGET, "RECOVERY_TIMEOUT");
   }
 
@@ -1319,9 +1331,28 @@ namespace scan_planner
       if(d<best){best=d;nearest=int(i);}
     }
     int first=-1,last=-1;
+    static double last_live_global_refresh_s = -1e9;
     for(size_t i=size_t(nearest);i<global_path_samples_.size();++i){
-      if(map->globalTileVersion(global_path_samples_[i].x(),global_path_samples_[i].y())!=global_path_versions_[i]){
-        if(first<0)first=int(i);last=int(i);
+      const Eigen::Vector3d &pt = global_path_samples_[i];
+      const bool tile_changed = map->globalTileVersion(pt.x(), pt.y()) != global_path_versions_[i];
+      bool live_blocked = false;
+      if(!tile_changed && (now - last_live_global_refresh_s >= 1.2) &&
+         (pt.head<2>() - odom_pos_.head<2>()).norm() <= 4.0 &&
+         (pt.head<2>() - end_pt_.head<2>()).norm() > 0.35){
+        const double seg_yaw = (i + 1 < global_path_samples_.size())
+            ? estimateYawFromSegment(pt, global_path_samples_[i + 1])
+            : getOdomYaw();
+        live_blocked = (map->getInflateOccupancy(pt, seg_yaw, true, false) > 0);
+      }
+      if(tile_changed || live_blocked){
+        if(first<0)first=int(i);
+        last=int(i);
+        if(live_blocked){
+          last_live_global_refresh_s = now;
+          force_global_refresh_ = true;
+          publishPlanningStatus("GLOBAL_REPAIR", "live_obstacle_blocks_global_path");
+          return true;
+        }
       }
     }
     if(first<0)return false;

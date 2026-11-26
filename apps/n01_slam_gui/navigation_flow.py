@@ -122,6 +122,45 @@ REASONS={
  'invalid_system_health_message':'系统健康消息非法',
  'system_health_missing_or_stale':'系统健康状态缺失或过期',
  'goal_event_recorded':'目标已记录',
+ 'cruise_speed_below_minimum_threshold':'巡航速度低于最低下限，已停车并请求重规划',
+ 'reverse_for_rotation_clearance':'旋转空间受阻，正在安全倒车腾出空间',
+ 'reverse_from_safety_hold':'安全保持中触发受限倒车脱困',
+ 'controller_final_alignment':'控制器正在终点对准朝向',
+ 'map_changed_without_target':'无目标期间地图已变化，旧全局路径作废',
+ 'user_paused':'已人工暂停',
+ 'admitted':'轨迹准入通过',
+ 'bspline_receive_timeout':'长时间未收到新的 B 样条轨迹',
+ 'verified_prefix_retained':'保留有效前段轨迹继续执行',
+ 'feedback_or_native_model_not_ready':'反馈或原生四轮模型暂未就绪',
+ 'auto_resume_exhausted':'自动恢复重试次数已用尽，等待人工介入',
+ 'localization_correction_jump_requires_reset':'定位跳变过大触发保护，需重定位恢复',
+ 'live_scan_inputs_not_ready':'实时扫描输入未就绪',
+ 'static_overlay_not_ready':'静态地图叠加层未就绪',
+ 'body_pose_stale':'机身位姿过期',
+ 'body_pose_missing':'尚未收到机身位姿',
+ 'dynamic_obstacle_status_stale':'动态障碍状态过期',
+}
+
+EXEC_STATE_LABELS = {
+ 'DISABLED': '未使能',
+ 'PAUSED': '已暂停',
+ 'MOVING': '沿路径行驶中',
+ 'FINAL_APPROACH': '终点低速进近中',
+ 'ALIGN': '原地朝向对准中',
+ 'ALIGN_PATH': '路径朝向对准中',
+ 'ROTATING': '原地旋转中',
+ 'SETTLING': '旋转后停稳确认中',
+ 'VERIFYING_ARRIVAL': '到达区停稳确认中',
+ 'REVERSING': '受限倒车脱困中',
+ 'WAITING_FOR_FEEDBACK': '等待反馈／场景就绪',
+ 'WAITING_FOR_REPLAN': '等待重新规划',
+ 'WAITING_FOR_STEERING': '等待转向模型可行解',
+ 'SAFETY_HOLD': '安全保持（零速等待）',
+ 'MANUAL_OVERRIDE': '手动接管中',
+ 'ESTOP': '急停／底盘停车',
+ 'ARRIVED': '已到达目标',
+ 'FAILED': '执行失败',
+ 'GOAL_CHANGED': '目标已变更',
 }
 
 # Controller emits a few English sentences instead of codes; keep the display in
@@ -310,9 +349,20 @@ def build_flow(goal_id,planning=None,review=None,execution=None,scene=None,readi
     add('review','轨迹检查','done'if admitted else'waiting'if goal_id else'idle',
         ('有效前段可执行，已请求局部延伸'if review.get('prefix_limited')else'风险建议降速，当前段可执行'if review.get('risk_speed_advice_active')else'本次轨迹检查通过')if admitted else describe(review.get('reason','等待本次目标的检查结果')),
         {k:review[k]for k in ('issues','failure_context','candidate_review_status','trajectory_id')if k in review})
-    es=execution.get('state','');moving=es in ('MOVING','ROTATING','ALIGN_PATH','ALIGN')
+    es=execution.get('state','')
+    es_zh=EXEC_STATE_LABELS.get(es, describe(es) if es else '')
+    moving=es in ('MOVING','ROTATING','ALIGN_PATH','ALIGN','FINAL_APPROACH','REVERSING','SETTLING','VERIFYING_ARRIVAL')
+    exec_reason=execution.get('reason','')
+    if moving:
+        exec_detail=f'{es_zh}（{describe(exec_reason)}）' if exec_reason else (es_zh or '正在执行当前轨迹')
+    elif es=='ARRIVED':
+        exec_detail='已到达目标并停稳'
+    elif execution:
+        exec_detail=f'{es_zh}：{describe(exec_reason)}' if (es_zh and exec_reason) else (describe(exec_reason) if exec_reason else es_zh)
+    else:
+        exec_detail='执行器未运行或没有本次目标反馈'
     add('execution','跟踪执行','active'if moving else'done'if es=='ARRIVED'else'waiting'if execution else'idle',
-        '正在执行当前轨迹'if moving else describe(execution.get('reason','执行器未运行或没有本次目标反馈')),
+        exec_detail,
         {k:execution[k]for k in ('speed_mps','goal_distance_m','trajectory_id','control_last_ms','trajectory_rejection')if k in execution})
     phase=task.get('phase','')
     add('result','到达／下一站','done'if phase in ('ARRIVED','CANCELLED')else'failed'if phase=='FAILED'else'waiting'if phase in ('PAUSED','MANUAL')else'idle',
@@ -322,11 +372,16 @@ def build_flow(goal_id,planning=None,review=None,execution=None,scene=None,readi
     if gp=='GLOBAL_FAILED':causes.append(describe(gr))
     if target_wait or lp=='LOCAL_FAILED':causes.append(describe(lr))
     if review.get('reason')and not admitted:causes.append(describe(review['reason']))
-    if execution.get('reason')and not moving:causes.append(describe(execution['reason']))
+    if execution.get('reason')and not moving and es!='ARRIVED':
+        prefix=(f'{es_zh}：' if es_zh else '')
+        causes.append(prefix+describe(execution['reason']))
     rejection=execution.get('trajectory_rejection',{})
-    if rejection and not moving:causes.append(describe(rejection.get('reason',''))+'：'+str(rejection.get('source_reason','')))
-    if not causes:causes=['当前无已确认的阻塞原因'if admitted else'尚未取得完整原因链']
-    return dict(stages=stages,causes=list(dict.fromkeys(causes)),
+    if rejection and not moving and es!='ARRIVED':
+        src_r=rejection.get('source_reason','')
+        causes.append(describe(rejection.get('reason',''))+(f'：{describe(src_r)}' if src_r else ''))
+    blocked=bool(causes)
+    if not causes:causes=['当前无阻塞，链路正常'if (admitted or es=='ARRIVED' or moving) else'当前无阻塞（等待目标或状态）']
+    return dict(stages=stages,causes=list(dict.fromkeys(causes)),blocked=blocked,
                 recovery=describe(planning.get('recovery','')) if planning else'等待本次目标诊断',
                 loops=f"局部尝试 {planning.get('local_attempts',0)} 次 · 全局重规划 {planning.get('global_replans',0)} 次",
                 readiness=readiness)
@@ -344,7 +399,10 @@ def render_flow(flow):
         cards.append(f'''<details style="border:1px solid rgba(148,163,184,.16);border-left:3px solid {colors[st]};background:{bgs[st]};border-radius:7px;padding:6px 8px">
 <summary style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:6px"><span style="font-size:11px;font-weight:600;color:#e2e8f0">{idx}. {esc(node['label'])}</span><small style="color:{colors[st]};font-size:10px;font-weight:600">{names[st]}</small></summary>
 <div style="font-size:11px;margin-top:5px;color:#cbd5e1">{esc(node['detail'])}</div><pre style="font-size:10px;margin:4px 0 0;color:#94a3b8;white-space:pre-wrap;overflow-wrap:anywhere">{esc(facts if node['facts']else'')}</pre></details>''')
+    blocked=bool(flow.get('blocked', False))
+    cause_color='#fbbf24' if blocked else '#4ade80'
+    cause_prefix='阻塞原因链：' if blocked else '原因链（无阻塞）：'
     return ('<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:6px;align-items:start">'+
             ''.join(cards)+'</div>'+
-            '<div style="font-size:11px;margin-top:7px;color:#fbbf24">原因链：'+esc(' ← '.join(reversed(flow['causes'])))+'</div>'+
+            f'<div style="font-size:11px;margin-top:7px;color:{cause_color};font-weight:500">{cause_prefix}'+esc(' ← '.join(reversed(flow['causes'])))+'</div>'+
             '<div style="font-size:11px;color:#94a3b8">恢复：'+esc(flow['recovery'])+' · '+esc(flow['loops'])+'</div>')

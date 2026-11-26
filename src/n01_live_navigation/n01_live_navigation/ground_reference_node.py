@@ -56,7 +56,10 @@ class GroundReferenceNode(Node):
         self.static_sub = self.create_subscription(TFMessage, '/tf_static', self.on_static, static_qos)
         self.latched_subs = [self.create_subscription(PointCloud2, t, self.on_latched_map, static_qos)
                              for t in self.cfg['latched_map_topics']]
-        self.ground_frames=deque(maxlen=30)
+        self.ground_frames=deque(maxlen=4)
+        self.last_live_cloud_monotonic = 0.0
+        self.cached_latched_key = None
+        self.cached_latched_points = None
         self.live_sub=self.create_subscription(PointCloud2,'/cloud',self.on_live_cloud,cloud_qos)
         self.model=None;self.joints={};self.joint_times={}
         self.model_sub=self.create_subscription(String,'/robot_description',self.on_model,static_qos)
@@ -65,9 +68,13 @@ class GroundReferenceNode(Node):
         self.create_timer(1., self.report)
 
     def on_live_cloud(self,msg):
+        now = time.monotonic()
+        if now - self.last_live_cloud_monotonic < 0.9:
+            return
         age=(self.get_clock().now().nanoseconds-msg.header.stamp.sec*10**9-msg.header.stamp.nanosec)/1e9
         if msg.header.frame_id.lstrip('/')!=self.cfg['map_frame'] or not -.2<=age<=.6:return
-        try:self.ground_frames.append((time.monotonic(),decode_pointcloud_xyz(msg,100000,None)))
+        self.last_live_cloud_monotonic = now
+        try:self.ground_frames.append((now,decode_pointcloud_xyz(msg,100000,None)))
         except ValueError:pass
 
     def on_model(self,msg):
@@ -99,16 +106,31 @@ class GroundReferenceNode(Node):
 
     def on_map(self, msg):
         now = time.monotonic()
-        if self.pose is None or now-self.last_fit < self.cfg['fit_period_s']:
+        if self.pose is None:
+            return
+        p = self.pose.pose.pose.position
+        fit_period = self.cfg['fit_period_s']
+        if (self.plane is not None and self.reference_xy is not None
+                and np.linalg.norm(np.array([p.x, p.y]) - self.reference_xy) < 0.5):
+            fit_period = max(fit_period, 2.5)
+        if now - self.last_fit < fit_period:
             return
         self.last_fit = now
         if msg.header.frame_id.lstrip('/') != self.cfg['map_frame']:
             self.reason = 'map_cloud_frame_mismatch'
             return
-        p = self.pose.pose.pose.position
         try:
-            points = decode_pointcloud_xyz(msg, 250000, None)
-            frames=[p for t,p in self.ground_frames if now-t<3.]
+            if msg is self.latched_map:
+                key = (msg.header.stamp.sec, msg.header.stamp.nanosec, len(msg.data))
+                if key == self.cached_latched_key and self.cached_latched_points is not None:
+                    points = self.cached_latched_points
+                else:
+                    points = decode_pointcloud_xyz(msg, 250000, None)
+                    self.cached_latched_key = key
+                    self.cached_latched_points = points
+            else:
+                points = decode_pointcloud_xyz(msg, 250000, None)
+            frames=[pt for t,pt in self.ground_frames if now-t<3.]
             if frames:points=np.vstack([points,*frames])
             hint=None
             if self.model is not None:
@@ -124,9 +146,13 @@ class GroundReferenceNode(Node):
             self.plane, self.reference_xy, self.plane_time = plane, np.array([p.x,p.y]), now
             self.fit_error = ""
         except ValueError as exc:
-            self.plane = None  # Never fall back to a fixed 0.9m height.
+            # Keep the last measured valid ground plane while still within
+            # max_plane_age_s so a single noisy/occluded frame does not wipe
+            # ground projection and stall the robot. Never fall back to 0.9 m.
+            if self.plane is None or (now - self.plane_time) > self.cfg['max_plane_age_s']:
+                self.plane = None
+                self.reason = str(exc)
             self.fit_error = str(exc)
-            self.reason = str(exc)
 
     def on_pose(self, msg):
         if (msg.header.frame_id.lstrip('/') != self.cfg['map_frame'] or

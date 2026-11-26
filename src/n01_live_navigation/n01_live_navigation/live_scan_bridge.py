@@ -215,6 +215,8 @@ class LiveScanBridge(Node):
 
         self.pending_clouds = deque()
         self.last_cloud_out_monotonic = 0.0
+        self.last_cloud_accepted_monotonic = 0.0
+        self.min_cloud_process_period_s = 0.18
         self.last_cloud_age_s = None
         self.last_cloud_input_stamp_ns = None
         self.last_cloud_input_rx_monotonic = 0.0
@@ -237,6 +239,7 @@ class LiveScanBridge(Node):
             "drop_status": 0, "drop_frame": 0, "drop_stamp": 0,
             "drop_stale_after_wait": 0, "drop_queue_overflow": 0,
             "drop_superseded": 0, "drop_out_of_order": 0,
+            "drop_throttled": 0,
             "drop_cloud": 0, "body_pose_live_out": 0,
         }
 
@@ -597,11 +600,11 @@ class LiveScanBridge(Node):
         if since is None:
             self._pose_fault_since=now
             since=now
-        if getattr(self,'status_ok',False) and now-since>=2.0:
+        if getattr(self,'status_ok',False) and now-since>=1.0:
             self.pose_fusion.reset()
             self.held_pose_guard=HeldPoseGuard()
             self._pose_fault_since=None
-            self.get_logger().warn('pose correction fault auto-recovered: re-anchored after 2.0 s')
+            self.get_logger().warn('pose correction fault auto-recovered: re-anchored after 1.0 s')
             return True
         return False
 
@@ -628,6 +631,8 @@ class LiveScanBridge(Node):
 
     def _publish_live_body_pose(self):
         """Publish current map<-body from a bounded SLAM anchor and timestamped odometry."""
+        if self.pose_fusion.fault:
+            self._recover_pose_fault()
         now_mono = time.monotonic()
         if now_mono - self.last_live_body_pose_monotonic < self.body_pose_publish_period:
             return
@@ -807,12 +812,19 @@ class LiveScanBridge(Node):
         if not self._status_is_fresh():
             self.counts["drop_status"] += 1
             return
+        now_mono = time.monotonic()
+        proc_s = max(0.0, float(getattr(self, "perception_processing_ms", 0.0))) / 1000.0
+        adaptive_period = min(0.40, max(self.min_cloud_process_period_s, proc_s * 1.6))
+        if (now_mono - self.last_cloud_accepted_monotonic) < adaptive_period:
+            self.counts["drop_throttled"] += 1
+            return
+        self.last_cloud_accepted_monotonic = now_mono
         if self.pending_clouds:
             # Do not let a blocked old scan hold up a newer scan. SCAN needs
             # the freshest obstacle observation, not a FIFO backlog.
             self.counts["drop_superseded"] += len(self.pending_clouds)
             self.pending_clouds.clear()
-        self.pending_clouds.append((msg, time.monotonic(), False))
+        self.pending_clouds.append((msg, now_mono, False))
         self.counts["cloud_queued"] += 1
 
     def process_pending_clouds(self):

@@ -15,6 +15,9 @@ export OPENBLAS_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 export OMP_NUM_THREADS=1
 export OMP_WAIT_POLICY=PASSIVE
+export NUMEXPR_NUM_THREADS=1
+export OPENCV_NUM_THREADS=1
+export VECLIB_MAXIMUM_THREADS=1
 # 可通过 SLAM_ROSK 指向另一份兼容的 SLAM3D Lite 综合包。
 source "$REPO_ROOT/scripts/lib/slam_runtime.sh"
 n01_select_slam_runtime
@@ -44,7 +47,7 @@ if [[ "${N01_GUI_CLEAN_ENV:-0}" != "1" ]]; then
               ROS_SECURITY_STRATEGY ROS_SECURITY_KEYSTORE ROS_LOG_DIR \
               SLAM_GUI_HOST SLAM_GUI_PORT N01_NAV_REPO N01_RUNTIME_DIR \
               N01_RUNTIME_RMW N01_CYCLONE_PREFIX N01_TRANSPORT_ROOT N01_RUNTIME_ROOT \
-              N01_HIVE2_SETUP N01_HIVE2_PREFIX \
+              N01_HIVE2_SETUP N01_HIVE2_PREFIX N01_KEEP_WHEEL_WEB \
               N01_MAPPING_BAG_DIR N01_MAPPING_BAG_TOPICS; do
     if [[ -n "${!name:-}" ]]; then
       clean_env+=("${name}=${!name}")
@@ -136,6 +139,36 @@ if [[ $# -ge 1 && -n "${1:-}" ]]; then
 else
   export SLAM_GUI_PORT="${SLAM_GUI_PORT:-8123}"
 fi
+
+n01_auto_release_performance() {
+  # 1. 精准释放吃满整颗 CPU 核的独立底盘 Web 服务（不影响底盘驱动/舵轮/雷达/腿控）
+  #    如需保留底盘 Web 调试页，启动前设 N01_KEEP_WHEEL_WEB=1 即可跳过。
+  if [[ "${N01_KEEP_WHEEL_WEB:-0}" != "1" ]]; then
+    local web_pids=()
+    while IFS= read -r pid; do
+      [[ -n "${pid}" ]] && web_pids+=("${pid}")
+    done < <(ps -eo pid=,args= | awk '/wheel_controller_web_node/ && /__node:=wheel_controller_web/ && !/awk/ {print $1}')
+    if [[ "${#web_pids[@]}" -gt 0 ]]; then
+      echo "[INFO] [性能释放] 检测到高耗核底盘 Web 服务 wheel_controller_web (PID=${web_pids[*]})，正在精准停止..."
+      kill -TERM "${web_pids[@]}" 2>/dev/null || true
+      sleep 1
+      local still=()
+      for pid in "${web_pids[@]}"; do
+        kill -0 "${pid}" 2>/dev/null && still+=("${pid}")
+      done
+      if [[ "${#still[@]}" -gt 0 ]]; then
+        kill -KILL "${still[@]}" 2>/dev/null || true
+        sleep 0.5
+      fi
+      echo "[INFO] [性能释放] 已释放 wheel_controller_web 占用的 CPU 核心（底盘驱动保持运行）。"
+    fi
+  fi
+  # 2. 清理本用户 12 小时前的过期 launch 临时参数文件，防止 /tmp 堆积
+  find /tmp -maxdepth 1 -user "${USER:-$(id -un)}" -name 'launch_params_*' -mmin +720 -delete 2>/dev/null || true
+  echo "[INFO] [性能释放] 线程池已限单核 (BLAS/OMP/OpenCV=1)，核心导航链 NI=0，可视化节点 NI=10；$(uptime | sed 's/^ *//')"
+}
+
+n01_auto_release_performance
 
 echo "[INFO] SLAM lite GUI 启动: http://${SLAM_GUI_HOST}:${SLAM_GUI_PORT}"
 echo "[INFO] 仅启动界面与监控；建图/定位/导航由按钮手动启动，底盘和雷达由桌面底盘入口独立管理。"
